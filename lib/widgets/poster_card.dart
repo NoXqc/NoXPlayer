@@ -121,6 +121,32 @@ class _PosterCardState extends State<PosterCard> {
                     child: Image.network(
                       widget.imageUrl!,
                       fit: BoxFit.cover,
+                      // Provider posters commonly come in well above this
+                      // card's on-screen size; without this, Flutter decodes
+                      // and caches each one at full source resolution, which
+                      // is the real memory cost of browsing a catalog (not
+                      // the item metadata) — this was still causing
+                      // device-wide OOM kills on a memory-constrained
+                      // Firestick even after capping items per category.
+                      // Forcing decode-time downsampling to roughly the
+                      // card's physical size cuts each cached image's
+                      // memory footprint by an order of magnitude or more.
+                      cacheWidth: (PosterCard.width * MediaQuery.of(context).devicePixelRatio).round(),
+                      cacheHeight: (PosterCard.height * MediaQuery.of(context).devicePixelRatio).round(),
+                      // A poster popping in instantly from the grey
+                      // placeholder reads as a jarring flash, especially
+                      // when scrolling back re-triggers a fetch after the
+                      // tight image cache evicted it. Fading it in instead
+                      // is purely cosmetic — same memory cost either way.
+                      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                        if (wasSynchronouslyLoaded) return child;
+                        return AnimatedOpacity(
+                          opacity: frame == null ? 0 : 1,
+                          duration: const Duration(milliseconds: 250),
+                          curve: Curves.easeOut,
+                          child: child,
+                        );
+                      },
                       errorBuilder: (_, __, ___) => _PosterFallbackLabel(title: widget.title),
                     ),
                   )

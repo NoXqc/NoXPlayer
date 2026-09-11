@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:provider/provider.dart';
@@ -1364,6 +1365,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 height: 40,
                 child: (channel.logoUrl != null && channel.logoUrl!.isNotEmpty)
                     ? Image.network(channel.logoUrl!, fit: BoxFit.contain,
+                        cacheWidth: (40 * MediaQuery.of(context).devicePixelRatio).round(),
+                        cacheHeight: (40 * MediaQuery.of(context).devicePixelRatio).round(),
                         errorBuilder: (_, __, ___) => const Icon(Icons.tv))
                     : const Icon(Icons.tv),
               ),
@@ -1458,8 +1461,23 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // Management still showed up in the actual catalog, just missing from
     // the shortcut list pointing at it.
     final storage = context.read<StorageService>();
-    final groupsWithItems =
-        playlist.vodGroups.where((g) => !g.isHidden && g.channels.isNotEmpty).toList();
+    final visibleGroups = playlist.vodGroups.where((g) => !g.isHidden).toList();
+    // Kick off the first load for every visible category that isn't
+    // loaded yet (fire-and-forget, concurrency-capped — see
+    // ensureCategoriesLoaded's doc comment for why a plain per-category
+    // loop here caused a real ANR on a brand-new provider with hundreds of
+    // categories). Needed since disabling the automatic background warm-up
+    // (a real ANR fix on a large catalog) otherwise left nothing to ever
+    // trigger a category's *first* load on a plain relaunch: this row list
+    // only shows categories that already have items, and the groups
+    // quick-jump column requires the same — with nothing pre-populating
+    // them, Movies/TV Shows was stuck forever on "Loading movie
+    // categories...".
+    unawaited(playlist.ensureCategoriesLoaded(
+      visibleGroups.where((g) => g.channels.isEmpty).map((g) => g.title),
+      'vod',
+    ));
+    final groupsWithItems = visibleGroups.where((g) => g.channels.isNotEmpty).toList();
     final continueRow = _buildContinueWatchingRow(idPrefix: 'xt_vod_', onTap: _openMovie);
     return _buildBrowseScaffold(
       rows: [
@@ -1493,13 +1511,21 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   }
 
   Widget _buildShowsBrowse(PlaylistManager playlist) {
-    final groups = playlist.seriesGroups.where((g) => !g.isHidden);
+    final groups = playlist.seriesGroups.where((g) => !g.isHidden).toList();
     final rows = <Widget>[];
     // Episodes resume straight into playback (no detail screen in between)
     // — the user already picked this episode once, "Continue Watching"
     // means "keep watching it", not "go re-browse its season".
     final continueRow = _buildContinueWatchingRow(idPrefix: 'xt_ep_', onTap: _selectChannel);
     if (continueRow != null) rows.add(continueRow);
+    // See the identical kick-off in _buildMoviesBrowse (concurrency-capped
+    // via ensureCategoriesLoaded — a plain per-category loop here fired
+    // every category's network fetch at once on a brand-new provider,
+    // confirmed to cause a real ANR).
+    unawaited(playlist.ensureCategoriesLoaded(
+      groups.where((g) => playlist.visibleSeries(g.title).isEmpty).map((g) => g.title),
+      'series',
+    ));
     for (final group in groups) {
       final items = playlist.visibleSeries(group.title);
       if (items.isEmpty) continue;
@@ -1899,6 +1925,14 @@ class _CategoryRow<T> extends StatelessWidget {
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 6),
               itemCount: items.length,
+              // Flutter's default (250px, ~2 cards) only starts building/
+              // decoding a card just barely before it's visible, so a
+              // steady scroll still shows the grey-then-fade-in pop-in
+              // right at the edge of the screen. Roughly 5 cards' worth
+              // gives posters a head start decoding before they're seen —
+              // some extra memory (the image cache ceiling still bounds
+              // the total), traded for a visibly smoother scroll.
+              scrollCacheExtent: const ScrollCacheExtent.pixels(PosterCard.width * 5),
               itemBuilder: (context, i) => itemBuilder(items[i], i),
             ),
           ),

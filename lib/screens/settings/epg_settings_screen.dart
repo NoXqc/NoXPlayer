@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
+import '../../services/catalog_database.dart';
 import '../../services/epg_service.dart';
 import '../../services/storage_service.dart';
 import '../../utils/constants.dart';
@@ -50,7 +51,12 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen> {
 
   Future<void> _clearCache() async {
     final storage = context.read<StorageService>();
+    final catalogDb = context.read<CatalogDatabase>();
     await storage.clearCache();
+    // The VOD/series catalog itself lives in its own local database now
+    // (not the JSON-file cache `storage.clearCache()` wipes) — see
+    // CatalogDatabase's doc comment.
+    await catalogDb.clearAll();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cache cleared.')));
   }

@@ -105,21 +105,18 @@ class XtreamApiService {
   /// identically to M3U mode.
   Future<List<Channel>> getLiveStreams({required Map<String, String> categoryNames}) async {
     final raw = await _getList('get_live_streams');
-    return raw.map((item) {
-      final streamId = item['stream_id'];
-      final epgChannelId = item['epg_channel_id']?.toString();
-      final id = (epgChannelId != null && epgChannelId.isNotEmpty)
-          ? epgChannelId
-          : 'xt_live_$streamId';
-      final categoryId = item['category_id']?.toString() ?? '';
-      return Channel(
-        id: id,
-        name: item['name']?.toString() ?? 'Unnamed Channel',
-        group: categoryNames[categoryId] ?? 'Uncategorized',
-        url: '$server/live/$username/$password/$streamId.m3u8',
-        logoUrl: item['stream_icon']?.toString(),
-      );
-    }).toList();
+    // Building a Channel per item is cheap in isolation, but a provider with
+    // hundreds of live categories can mean tens of thousands of channels —
+    // enough synchronous Dart work on the main isolate (no `await` inside
+    // the loop to yield control) to block input dispatch past Android's 5s
+    // ANR watchdog, confirmed on real hardware after "Update Content" was
+    // hit right after a cold launch. One batched `compute()` call (not one
+    // per item — that itself caused a launch-time isolate-spawn-storm
+    // regression earlier this session) moves it off the main isolate.
+    return compute(
+      _buildLiveChannels,
+      _LiveStreamsArgs(raw: raw, categoryNames: categoryNames, server: server, username: username, password: password),
+    );
   }
 
   /// Movies for a single VOD category — call once per category, on demand.
@@ -127,19 +124,14 @@ class XtreamApiService {
   /// the caller (it's what the user just tapped in the sidebar).
   Future<List<Channel>> getVodStreams(String categoryId, String categoryName) async {
     final raw = await _getList('get_vod_streams', {'category_id': categoryId});
-    return raw.map((item) {
-      final streamId = item['stream_id'];
-      final ext = item['container_extension']?.toString() ?? 'mp4';
-      final rating = item['rating']?.toString();
-      return Channel(
-        id: 'xt_vod_$streamId',
-        name: item['name']?.toString() ?? 'Unnamed Movie',
-        group: categoryName,
-        url: '$server/movie/$username/$password/$streamId.$ext',
-        logoUrl: item['stream_icon']?.toString(),
-        rating: (rating != null && rating.isNotEmpty && rating != '0') ? rating : null,
-      );
-    }).toList();
+    // Some providers bundle thousands of items into a single category (the
+    // whole reason `PlaylistManager` caps what it keeps in memory) — the
+    // full list is still built once here before that cap applies, so this
+    // needs the same off-main-isolate treatment as getLiveStreams.
+    return compute(
+      _buildVodChannels,
+      _VodStreamsArgs(raw: raw, categoryName: categoryName, server: server, username: username, password: password),
+    );
   }
 
   /// Plot/description for one movie — a separate on-demand call
@@ -161,14 +153,9 @@ class XtreamApiService {
   /// series into its playable episodes.
   Future<List<XtreamSeries>> getSeriesForCategory(String categoryId) async {
     final raw = await _getList('get_series', {'category_id': categoryId});
-    return raw
-        .map((item) => XtreamSeries(
-              seriesId: int.parse(item['series_id'].toString()),
-              name: item['name']?.toString() ?? 'Unnamed Series',
-              categoryId: categoryId,
-              coverUrl: item['cover']?.toString(),
-            ))
-        .toList();
+    // Same rationale as getVodStreams above — a single category can hold
+    // thousands of series.
+    return compute(_buildSeriesItems, _SeriesArgs(raw: raw, categoryId: categoryId));
   }
 
   /// Episodes for one series, grouped by season number, plus the series'
@@ -223,3 +210,82 @@ class XtreamApiService {
 // Top-level — required by `compute`, which runs this on a separate isolate
 // with no access to instance state.
 dynamic _decodeJsonBody(String body) => jsonDecode(body);
+
+class _LiveStreamsArgs {
+  const _LiveStreamsArgs({
+    required this.raw,
+    required this.categoryNames,
+    required this.server,
+    required this.username,
+    required this.password,
+  });
+  final List<Map<String, dynamic>> raw;
+  final Map<String, String> categoryNames;
+  final String server;
+  final String username;
+  final String password;
+}
+
+List<Channel> _buildLiveChannels(_LiveStreamsArgs args) {
+  return args.raw.map((item) {
+    final streamId = item['stream_id'];
+    final epgChannelId = item['epg_channel_id']?.toString();
+    final id = (epgChannelId != null && epgChannelId.isNotEmpty) ? epgChannelId : 'xt_live_$streamId';
+    final categoryId = item['category_id']?.toString() ?? '';
+    return Channel(
+      id: id,
+      name: item['name']?.toString() ?? 'Unnamed Channel',
+      group: args.categoryNames[categoryId] ?? 'Uncategorized',
+      url: '${args.server}/live/${args.username}/${args.password}/$streamId.m3u8',
+      logoUrl: item['stream_icon']?.toString(),
+    );
+  }).toList();
+}
+
+class _VodStreamsArgs {
+  const _VodStreamsArgs({
+    required this.raw,
+    required this.categoryName,
+    required this.server,
+    required this.username,
+    required this.password,
+  });
+  final List<Map<String, dynamic>> raw;
+  final String categoryName;
+  final String server;
+  final String username;
+  final String password;
+}
+
+List<Channel> _buildVodChannels(_VodStreamsArgs args) {
+  return args.raw.map((item) {
+    final streamId = item['stream_id'];
+    final ext = item['container_extension']?.toString() ?? 'mp4';
+    final rating = item['rating']?.toString();
+    return Channel(
+      id: 'xt_vod_$streamId',
+      name: item['name']?.toString() ?? 'Unnamed Movie',
+      group: args.categoryName,
+      url: '${args.server}/movie/${args.username}/${args.password}/$streamId.$ext',
+      logoUrl: item['stream_icon']?.toString(),
+      rating: (rating != null && rating.isNotEmpty && rating != '0') ? rating : null,
+    );
+  }).toList();
+}
+
+class _SeriesArgs {
+  const _SeriesArgs({required this.raw, required this.categoryId});
+  final List<Map<String, dynamic>> raw;
+  final String categoryId;
+}
+
+List<XtreamSeries> _buildSeriesItems(_SeriesArgs args) {
+  return args.raw
+      .map((item) => XtreamSeries(
+            seriesId: int.parse(item['series_id'].toString()),
+            name: item['name']?.toString() ?? 'Unnamed Series',
+            categoryId: args.categoryId,
+            coverUrl: item['cover']?.toString(),
+          ))
+      .toList();
+}

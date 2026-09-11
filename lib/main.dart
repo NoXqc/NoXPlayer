@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/tv_home_screen.dart';
 import 'services/app_preferences.dart';
+import 'services/catalog_database.dart';
 import 'services/epg_service.dart';
 import 'services/playback_service.dart';
 import 'services/playlist_manager.dart';
@@ -15,6 +16,16 @@ import 'utils/route_observer.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // Flutter's default ImageCache holds up to 1000 decoded images / ~100MB —
+  // fine on a phone, but on a memory-constrained box (some Firesticks have
+  // as little as ~1.7GB total RAM) that alone can be enough to trigger a
+  // device-wide low-memory kill cascade while browsing a large catalog, even
+  // with cacheWidth/cacheHeight shrinking each individual decoded image (see
+  // PosterCard/channel_list_tile). A much tighter ceiling here means old
+  // poster bitmaps actually get evicted instead of accumulating for the
+  // whole session.
+  PaintingBinding.instance.imageCache.maximumSize = 400;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 60 << 20; // 60MB
   runApp(const NoxIptvApp());
 }
 
@@ -31,6 +42,7 @@ class NoxIptvApp extends StatefulWidget {
 
 class _NoxIptvAppState extends State<NoxIptvApp> {
   late final StorageService _storage;
+  late final CatalogDatabase _catalogDb;
   late final AppPreferences _preferences;
   late final PlaylistManager _playlistManager;
   late final EpgService _epgService;
@@ -62,7 +74,9 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
       _preferences = AppPreferences(_storage);
       await _preferences.init();
 
-      _playlistManager = PlaylistManager(_storage);
+      _catalogDb = CatalogDatabase();
+
+      _playlistManager = PlaylistManager(_storage, _catalogDb);
       _epgService = EpgService(_storage);
       _playbackService = PlaybackService(_storage, _preferences);
 
@@ -168,6 +182,7 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
     return MultiProvider(
       providers: [
         Provider<StorageService>.value(value: _storage),
+        Provider<CatalogDatabase>.value(value: _catalogDb),
         ChangeNotifierProvider<AppPreferences>.value(value: _preferences),
         ChangeNotifierProvider<PlaylistManager>.value(value: _playlistManager),
         ChangeNotifierProvider<EpgService>.value(value: _epgService),

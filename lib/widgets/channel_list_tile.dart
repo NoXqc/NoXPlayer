@@ -48,6 +48,11 @@ class ChannelListTile extends StatelessWidget {
               ? Image.network(
                   channel.logoUrl!,
                   fit: BoxFit.contain,
+                  // Live channels are loaded eagerly and uncapped (unlike
+                  // VOD/series) — a large channel list decoding every logo
+                  // at full source resolution is a real memory contributor.
+                  cacheWidth: (48 * MediaQuery.of(context).devicePixelRatio).round(),
+                  cacheHeight: (48 * MediaQuery.of(context).devicePixelRatio).round(),
                   errorBuilder: (_, __, ___) => const Icon(Icons.tv),
                 )
               : const Icon(Icons.tv),

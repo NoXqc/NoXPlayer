@@ -8,6 +8,7 @@ import '../models/m3u_group.dart';
 import '../models/xtream_category.dart';
 import '../models/xtream_series.dart';
 import '../utils/constants.dart';
+import 'catalog_database.dart';
 import 'm3u_parser.dart';
 import 'storage_service.dart';
 import 'xtream_api_service.dart';
@@ -32,9 +33,10 @@ import 'xtream_api_service.dart';
 ///   blob for the entire catalog on every update is itself a
 ///   multi-hundred-MB allocation.
 class PlaylistManager extends ChangeNotifier {
-  PlaylistManager(this._storage);
+  PlaylistManager(this._storage, this._catalogDb);
 
   final StorageService _storage;
+  final CatalogDatabase _catalogDb;
 
   bool isLoading = false;
   String? error;
@@ -255,28 +257,20 @@ class PlaylistManager extends ChangeNotifier {
 
   // --- Xtream mode ----------------------------------------------------------
 
-  String _vodCategoryCacheKey(String categoryId) =>
-      '${AppConstants.cacheFileVodCategoryPrefix}$categoryId';
-  String _seriesCategoryCacheKey(String categoryId) =>
-      '${AppConstants.cacheFileSeriesCategoryPrefix}$categoryId';
+  // Persisted to the local catalog database now, keyed by category *name*
+  // (matching `_vodByCategoryName`/`_seriesByCategoryName`'s in-memory key)
+  // rather than one JSON file per category id — see `CatalogDatabase`'s
+  // doc comment for why: fully deserializing every cached category into
+  // memory on every launch was a genuine memory-capacity problem on a
+  // large provider catalog (confirmed via `lowmemorykiller`/thrashing on
+  // real hardware), not just the CPU-bound JSON-encode/decode cost the
+  // `compute()` isolate approach here used to (and still partially does,
+  // for the network-fetch side — see XtreamApiService) address.
+  Future<void> _persistVodCategory(String categoryName, List<Channel> items) =>
+      _catalogDb.upsertVodCategory(categoryName, items);
 
-  // These run on a background isolate via `compute` — confirmed on real
-  // hardware (pausing the Dart VM mid-freeze found the isolate stuck
-  // inside a single uninterruptible native call the whole time, which
-  // only happens for something like a big synchronous JSON encode/decode,
-  // never a Dart-level loop) that this is exactly what was causing an ANR
-  // just from scrolling Movies/TV Shows: `ensureCategoryLoaded` runs one
-  // of these every time a newly-visible category is opened, and a large
-  // provider's category payload is big enough to block the UI thread for
-  // seconds. Must be top-level/static functions, not closures — `compute`
-  // runs them on a different isolate with no access to `this`.
-  Future<void> _persistVodCategory(String categoryId, List<Channel> items) =>
-      compute(_encodeChannelsJson, items)
-          .then((json) => _storage.writeCacheFile(_vodCategoryCacheKey(categoryId), json));
-
-  Future<void> _persistSeriesCategory(String categoryId, List<XtreamSeries> items) =>
-      compute(_encodeSeriesJson, items)
-          .then((json) => _storage.writeCacheFile(_seriesCategoryCacheKey(categoryId), json));
+  Future<void> _persistSeriesCategory(String categoryName, List<XtreamSeries> items) =>
+      _catalogDb.upsertSeriesCategory(categoryName, items);
 
   Future<bool> _restoreXtreamCache() async {
     try {
@@ -313,38 +307,18 @@ class PlaylistManager extends ChangeNotifier {
         ..clear()
         ..addEntries(_seriesCategories.map((c) => MapEntry(c.name, c.id)));
 
-      // Reading each category's cache file (cheap file I/O) is still fired
-      // concurrently — that was never the problem. What WAS a real
-      // regression, confirmed on real hardware (crashed on launch itself
-      // with 20+ cached categories): decoding used to spawn one
-      // `compute()` background isolate PER category, all at once — every
-      // single launch. Isolate spawning has real overhead; doing it 20+
-      // times concurrently is itself expensive on weak hardware. Reading
-      // stays concurrent (cheap); decoding is now ONE `compute()` call
-      // for the whole batch instead of one per category.
-      final vodRawByName = <String, String>{};
-      await Future.wait(_vodCategories.map((cat) async {
-        final raw = await _storage.readCacheFile(_vodCategoryCacheKey(cat.id));
-        if (raw != null) vodRawByName[cat.name] = raw;
-      }));
-      final vodEntries = vodRawByName.isEmpty
-          ? <MapEntry<String, List<Channel>>>[]
-          : await compute(_decodeChannelsJsonBatch, (vodRawByName, _favoriteIds));
-      _vodByCategoryName
-        ..clear()
-        ..addEntries(vodEntries);
-
-      final seriesRawByName = <String, String>{};
-      await Future.wait(_seriesCategories.map((cat) async {
-        final raw = await _storage.readCacheFile(_seriesCategoryCacheKey(cat.id));
-        if (raw != null) seriesRawByName[cat.name] = raw;
-      }));
-      final seriesEntries = seriesRawByName.isEmpty
-          ? <MapEntry<String, List<XtreamSeries>>>[]
-          : await compute(_decodeSeriesJsonBatch, (seriesRawByName, _favoriteSeriesIds));
-      _seriesByCategoryName
-        ..clear()
-        ..addEntries(seriesEntries);
+      // Deliberately NOT restoring every cached category's items into
+      // memory here anymore — that used to fully deserialize the whole
+      // catalog on every single launch (first via one JSON file read+
+      // decode per category, later via a batched compute() call), which
+      // was a genuine memory-capacity problem on a large provider catalog
+      // (confirmed via lowmemorykiller/thrashing on real hardware, not
+      // just a CPU-bound freeze). `_vodByCategoryName`/
+      // `_seriesByCategoryName` simply start empty every launch now,
+      // exactly like a fresh install — `ensureCategoryLoaded` queries the
+      // local catalog database on demand the moment a category is
+      // actually opened, so nothing is loaded into memory until it's
+      // genuinely being viewed.
 
       lastLoadSummary = {
         'tv': _liveChannels.length,
@@ -469,22 +443,32 @@ class PlaylistManager extends ChangeNotifier {
     // before any fetching begins rather than racing it.
   }
 
+  /// Caps how many items of a single category are held in memory/rendered
+  /// at once — even after tonight's move to a real database, a single
+  /// oversized category (some providers bundle thousands of items under
+  /// one "24/7"-style category) can still be enough to strain a
+  /// memory-constrained device by itself, since the whole category is
+  /// still materialized into Dart objects the moment it's opened. This is
+  /// a blunt cap (silently truncates), not real pagination (load-more-on-
+  /// scroll) — a full pagination UI is a bigger follow-up; this at least
+  /// puts a ceiling on the worst case. The *database* still stores the
+  /// full category (see `_persistVodCategory`/`_persistSeriesCategory`),
+  /// so raising this cap later doesn't need a re-fetch from the network.
+  static const int _maxItemsPerCategory = 300;
+
   /// Fetches a VOD or series category's items the first time it's opened,
-  /// then caches them (in memory for the rest of the session, and to disk
-  /// so they don't need re-fetching next launch either). No-ops for live
-  /// (already loaded whole) and for categories already cached.
+  /// then caches them (in memory for the rest of the session, and to the
+  /// local catalog database so they don't need re-fetching from the
+  /// network next launch either — but also aren't fully reloaded into
+  /// memory on every launch the way the old per-category JSON files were;
+  /// they stay queryable-on-demand, same as this on-demand shape already
+  /// was for the network fetch). No-ops for live (already loaded whole)
+  /// and for categories already cached in memory this session.
   Future<void> ensureCategoryLoaded(String categoryName, String tabCategory) async {
-    final api = _xtreamApi;
-    if (!isXtream || api == null) return;
     if (tabCategory == 'tv') return;
     if (tabCategory == 'vod' && _vodByCategoryName.containsKey(categoryName)) return;
     if (tabCategory == 'series' && _seriesByCategoryName.containsKey(categoryName)) return;
     if (_loadingCategoryNames.contains(categoryName)) return;
-
-    final categoryId = tabCategory == 'vod'
-        ? _vodCategoryIdByName[categoryName]
-        : _seriesCategoryIdByName[categoryName];
-    if (categoryId == null) return;
 
     _loadingCategoryNames.add(categoryName);
     isLoading = true;
@@ -492,19 +476,35 @@ class PlaylistManager extends ChangeNotifier {
 
     try {
       if (tabCategory == 'vod') {
+        final cached = await _catalogDb.getVodCategory(categoryName, limit: _maxItemsPerCategory);
+        if (cached.isNotEmpty) {
+          _vodByCategoryName[categoryName] = cached;
+          return;
+        }
+        final api = _xtreamApi;
+        final categoryId = _vodCategoryIdByName[categoryName];
+        if (!isXtream || api == null || categoryId == null) return;
         final items = await api.getVodStreams(categoryId, categoryName);
         for (final channel in items) {
           channel.isFavorite = _favoriteIds.contains(channel.id);
         }
-        _vodByCategoryName[categoryName] = items;
-        await _persistVodCategory(categoryId, items);
+        await _persistVodCategory(categoryName, items);
+        _vodByCategoryName[categoryName] = items.take(_maxItemsPerCategory).toList();
       } else {
+        final cached = await _catalogDb.getSeriesCategory(categoryName, limit: _maxItemsPerCategory);
+        if (cached.isNotEmpty) {
+          _seriesByCategoryName[categoryName] = cached;
+          return;
+        }
+        final api = _xtreamApi;
+        final categoryId = _seriesCategoryIdByName[categoryName];
+        if (!isXtream || api == null || categoryId == null) return;
         final items = await api.getSeriesForCategory(categoryId);
         for (final series in items) {
           series.isFavorite = _favoriteSeriesIds.contains(series.seriesId.toString());
         }
-        _seriesByCategoryName[categoryName] = items;
-        await _persistSeriesCategory(categoryId, items);
+        await _persistSeriesCategory(categoryName, items);
+        _seriesByCategoryName[categoryName] = items.take(_maxItemsPerCategory).toList();
       }
     } catch (e) {
       error = e.toString();
@@ -514,6 +514,42 @@ class PlaylistManager extends ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// Same first-load-on-demand behavior as [ensureCategoryLoaded], but for
+  /// a whole browse screen's worth of categories at once, with a hard cap
+  /// on how many load concurrently.
+  ///
+  /// [_buildMoviesBrowse]/[_buildShowsBrowse] call this on every build for
+  /// every visible-but-empty category — necessary so a category ever gets
+  /// its first load at all now that the old always-on background warm-up
+  /// is disabled (see that comment for why), but calling
+  /// [ensureCategoryLoaded] directly in a loop there fired one *unawaited*
+  /// network fetch per category with no limit. That's invisible on a
+  /// provider where most categories are already cached from earlier
+  /// testing, but confirmed on real hardware (137% CPU, a 25s+ ANR) the
+  /// moment a *brand-new* provider with hundreds of categories was added —
+  /// every single one is empty on the very first render, so all of them
+  /// fired their network fetch + compute() isolate at once. Capping
+  /// concurrency here keeps the on-demand-load behavior while bounding how
+  /// much work is actually in flight at a time.
+  Future<void> ensureCategoriesLoaded(Iterable<String> categoryNames, String tabCategory) async {
+    const maxConcurrent = 3;
+    final loadedMap = tabCategory == 'vod' ? _vodByCategoryName : _seriesByCategoryName;
+    final pending = categoryNames
+        .where((name) => !loadedMap.containsKey(name) && !_loadingCategoryNames.contains(name))
+        .toList();
+    if (pending.isEmpty) return;
+
+    var index = 0;
+    Future<void> worker() async {
+      while (index < pending.length) {
+        final name = pending[index++];
+        await ensureCategoryLoaded(name, tabCategory);
+      }
+    }
+
+    await Future.wait(List.generate(maxConcurrent.clamp(1, pending.length), (_) => worker()));
   }
 
   /// Fetches one VOD category's items, so the whole catalog eventually
@@ -536,8 +572,8 @@ class PlaylistManager extends ChangeNotifier {
       for (final channel in items) {
         channel.isFavorite = _favoriteIds.contains(channel.id);
       }
-      _vodByCategoryName[cat.name] = items;
-      await _persistVodCategory(cat.id, items);
+      await _persistVodCategory(cat.name, items);
+      _vodByCategoryName[cat.name] = items.take(_maxItemsPerCategory).toList();
     } catch (e) {
       debugPrint('PlaylistManager: background load failed for movies "${cat.name}": $e');
     } finally {
@@ -556,8 +592,8 @@ class PlaylistManager extends ChangeNotifier {
       for (final series in items) {
         series.isFavorite = _favoriteSeriesIds.contains(series.seriesId.toString());
       }
-      _seriesByCategoryName[cat.name] = items;
-      await _persistSeriesCategory(cat.id, items);
+      await _persistSeriesCategory(cat.name, items);
+      _seriesByCategoryName[cat.name] = items.take(_maxItemsPerCategory).toList();
     } catch (e) {
       debugPrint('PlaylistManager: background load failed for TV shows "${cat.name}": $e');
     } finally {
@@ -853,6 +889,9 @@ class PlaylistManager extends ChangeNotifier {
       _favoriteIds.remove(channel.id);
     }
     await _storage.setFavorites(_favoriteIds);
+    // Harmless no-op for a live/M3U channel (no matching row in the
+    // catalog database) — only actually updates a row for a VOD channel.
+    await _catalogDb.setVodFavorite(channel.id, channel.isFavorite);
     notifyListeners();
   }
 
@@ -866,6 +905,7 @@ class PlaylistManager extends ChangeNotifier {
       _favoriteSeriesIds.remove(series.seriesId.toString());
     }
     await _storage.setFavoriteSeries(_favoriteSeriesIds);
+    await _catalogDb.setSeriesFavorite(series.seriesId, series.isFavorite);
     notifyListeners();
   }
 
@@ -936,45 +976,4 @@ class PlaylistManager extends ChangeNotifier {
       await ensureCategoryLoaded(groupTitle, 'series');
     }
   }
-}
-
-// Top-level (not instance methods) — required by `compute`, which runs
-// these on a separate isolate with no access to `this`. See the doc
-// comment on `_persistVodCategory`/`_restoreXtreamCache` for why these
-// specific calls needed to move off the UI thread.
-String _encodeChannelsJson(List<Channel> items) => jsonEncode(items.map((c) => c.toJson()).toList());
-
-String _encodeSeriesJson(List<XtreamSeries> items) => jsonEncode(items.map((s) => s.toJson()).toList());
-
-/// Decodes every cached VOD category's raw JSON in one isolate hop, rather
-/// than one `compute()` call (one isolate spawn) per category — see
-/// `_restoreXtreamCache`.
-List<MapEntry<String, List<Channel>>> _decodeChannelsJsonBatch(
-  (Map<String, String> rawByName, Set<String> favoriteIds) input,
-) {
-  final (rawByName, favoriteIds) = input;
-  return rawByName.entries.map((entry) {
-    final items =
-        (jsonDecode(entry.value) as List).map((e) => Channel.fromJson(e as Map<String, dynamic>)).toList();
-    for (final channel in items) {
-      channel.isFavorite = favoriteIds.contains(channel.id);
-    }
-    return MapEntry(entry.key, items);
-  }).toList();
-}
-
-/// Series counterpart to [_decodeChannelsJsonBatch].
-List<MapEntry<String, List<XtreamSeries>>> _decodeSeriesJsonBatch(
-  (Map<String, String> rawByName, Set<String> favoriteIds) input,
-) {
-  final (rawByName, favoriteIds) = input;
-  return rawByName.entries.map((entry) {
-    final items = (jsonDecode(entry.value) as List)
-        .map((e) => XtreamSeries.fromJson(e as Map<String, dynamic>))
-        .toList();
-    for (final series in items) {
-      series.isFavorite = favoriteIds.contains(series.seriesId.toString());
-    }
-    return MapEntry(entry.key, items);
-  }).toList();
 }

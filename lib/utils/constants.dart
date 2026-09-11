@@ -34,15 +34,16 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.10.12 — found and fixed a real regression from the 3.10.9 '
-      'compute() change: the startup cache-restore path spawned one '
-      'background isolate PER cached category, all concurrently — with '
-      '20+ categories that\'s 20+ simultaneous isolate spawns, confirmed '
-      'severe enough to crash on launch itself. Now decodes the whole '
-      'batch in a single compute() call. Also stopped the automatic '
-      'background catalog pre-fetch from running on every launch — it '
-      'was competing with active browsing; on-demand loading when a '
-      'category is actually opened already covers the real need.';
+      '3.11.6 — fixed a real ANR (137% CPU, 25s+ unresponsive) confirmed '
+      'on real hardware right after connecting a brand-new provider with '
+      'hundreds of categories. The 3.11.1 fix for "Movies/TV Shows stuck '
+      'loading forever" kicked off a network fetch for every visible-but-'
+      'empty category on every rebuild with no concurrency limit — '
+      'invisible on a provider already partly warmed from earlier '
+      'testing, but on a fresh provider every category is empty at once, '
+      'so literally all of them (262 series categories, in this case) '
+      'fired their fetch + compute() isolate simultaneously. '
+      'ensureCategoriesLoaded now caps this at 3 concurrent loads.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
@@ -120,13 +121,9 @@ class AppConstants {
   static const String cacheFileLiveCategories = 'xtream_live_categories';
   static const String cacheFileVodCategories = 'xtream_vod_categories';
   static const String cacheFileSeriesCategories = 'xtream_series_categories';
-  // Per-category VOD/series item caches are named dynamically by category
-  // id (see PlaylistManager) rather than a single combined-blob file — a
-  // provider's full catalog can be 100k+ items, and re-encoding one giant
-  // JSON blob on every category update is exactly the kind of allocation
-  // that caused an OutOfMemoryError previously.
-  static const String cacheFileVodCategoryPrefix = 'xtream_vod_cat_';
-  static const String cacheFileSeriesCategoryPrefix = 'xtream_series_cat_';
+  // Per-category VOD/series *items* (not just the category list above) live
+  // in CatalogDatabase (a real local database) now, not a JSON file per
+  // category — see that class's doc comment for why.
 
   /// EPG programme cache. Was a SharedPreferences string (`keyEpgCache`,
   /// kept below only so `clearCache` can sweep away any leftover value
