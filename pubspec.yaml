@@ -1,0 +1,52 @@
+name: nox_iptv
+description: "NoX IPTV - an M3U/EPG IPTV player for Android phones, boxes, and Firesticks."
+publish_to: 'none'
+version: 3.10.12+50
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  video_player_hdr: ^1.2.0
+  http: ^1.2.0
+  xml: ^6.5.0
+  provider: ^6.1.5+1
+  shared_preferences: ^2.2.0
+  intl: ^0.19.0
+  path_provider: ^2.1.6
+  cupertino_icons: ^1.0.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter:
+  uses-material-design: true
+
+# Generates android/ic_launcher (legacy + adaptive) and the ios/web/macos/
+# windows app icons from assets/icon/*.png (see assets/icon/gen_icon.py for
+# how those source images were built). Run with `dart run
+# flutter_launcher_icons`. The Android TV banner is separate — Android TV's
+# leanback launcher has no adaptive-icon equivalent, so that's just a plain
+# drawable replaced by hand (see android/app/src/main/res/drawable*/banner.png).
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/icon/icon_flat.png"
+  adaptive_icon_background: "assets/icon/icon_background.png"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+  min_sdk_android: 24
+  web:
+    generate: true
+    image_path: "assets/icon/icon_flat.png"
+  windows:
+    generate: true
+    image_path: "assets/icon/icon_flat.png"
+  macos:
+    generate: true
+    image_path: "assets/icon/icon_flat.png"
