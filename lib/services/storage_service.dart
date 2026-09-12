@@ -172,6 +172,11 @@ class StorageService {
   Future<void> setLastFullSyncAt(DateTime time) =>
       _prefs.setString(AppConstants.keyLastFullSyncAt, time.toIso8601String());
 
+  int getSyncFrequencyDays() =>
+      _prefs.getInt(AppConstants.keySyncFrequencyDays) ?? AppConstants.defaultSyncFrequencyDays;
+  Future<void> setSyncFrequencyDays(int days) =>
+      _prefs.setInt(AppConstants.keySyncFrequencyDays, days);
+
   // --- Resume playback ---------------------------------------------------
 
   String? getLastChannelId() => _prefs.getString(AppConstants.keyLastChannelId);

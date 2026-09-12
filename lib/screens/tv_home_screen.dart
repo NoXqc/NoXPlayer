@@ -19,6 +19,7 @@ import '../utils/constants.dart';
 import '../utils/route_observer.dart';
 import '../widgets/catalog_warmup_banner.dart';
 import '../widgets/hold_to_activate.dart';
+import '../widgets/mode_button.dart';
 import '../widgets/player_controls.dart';
 import '../widgets/poster_card.dart';
 import '../widgets/section_label.dart';
@@ -646,9 +647,22 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           'Re-checks every visible category for new content. This can take '
           'a few minutes on a large catalog.',
         ),
+        // Plain TextButton/FilledButton left which one has D-pad focus
+        // ambiguous — confirmed directly on hardware (the FilledButton's
+        // permanent solid fill looked selected regardless of actual
+        // focus). ModeButton is this app's established fix: a solid fill
+        // *only* on real focus.
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Update')),
+          ModeButton(
+            label: 'Cancel',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(false),
+          ),
+          ModeButton(
+            label: 'Update',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(true),
+          ),
         ],
       ),
     );
@@ -690,8 +704,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           'need to reload next time you open it.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Exit')),
+          ModeButton(
+            label: 'Cancel',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(false),
+          ),
+          ModeButton(
+            label: 'Exit',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(true),
+          ),
         ],
       ),
     );
@@ -1677,7 +1699,20 @@ class _SelectableRowState extends State<_SelectableRow> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       child: Material(
         color: _focused ? focusedColor : unfocusedColor,
-        borderRadius: BorderRadius.circular(8),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          // A persistent marker for "this is actually the active tab /
+          // now playing", independent of D-pad focus — confirmed on
+          // hardware as a real gap: once focus moved to a different row,
+          // there was no visible difference between "the cursor is
+          // resting here" and "this is genuinely selected", since both
+          // states used the identical solid fill. Reported directly: the
+          // cursor sat on Movies while TV Shows was still the real
+          // active tab (its content was still on screen) and Movies
+          // looked selected instead. A border persists through focus
+          // changes, unlike the fill.
+          side: widget.selected ? BorderSide(color: scheme.primary, width: 2) : BorderSide.none,
+        ),
         child: InkWell(
           focusNode: widget.focusNode,
           borderRadius: BorderRadius.circular(8),

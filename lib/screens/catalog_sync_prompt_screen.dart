@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../widgets/mode_button.dart';
+
 /// Asks before the automatic full catalog sync runs — this fires from
 /// main.dart's bootstrap (a persisted "last synced" timestamp going stale),
 /// not from a direct user action, so it needs its own explicit confirm
@@ -53,19 +55,35 @@ class CatalogSyncPromptScreen extends StatelessWidget {
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 28),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      OutlinedButton(
-                        onPressed: () => onRespond(false),
-                        child: const Text('Skip for now'),
-                      ),
-                      const SizedBox(width: 16),
-                      FilledButton(
-                        onPressed: () => onRespond(true),
-                        child: const Text('Update'),
-                      ),
-                    ],
+                  // Plain OutlinedButton/FilledButton here left which one
+                  // has D-pad focus ambiguous — the FilledButton's own
+                  // permanent solid fill reads as "this one's selected"
+                  // regardless of actual focus, confirmed directly on
+                  // hardware (focus was on "Skip for now", but "Update"
+                  // visually looked selected). ModeButton is this app's
+                  // established fix for exactly that: a solid fill *only*
+                  // on real focus, distinct from any other visual state.
+                  SizedBox(
+                    width: 320,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: ModeButton(
+                            label: 'Skip for now',
+                            selected: false,
+                            onTap: () => onRespond(false),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: ModeButton(
+                            label: 'Update',
+                            selected: false,
+                            onTap: () => onRespond(true),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),

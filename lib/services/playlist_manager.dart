@@ -539,9 +539,17 @@ class PlaylistManager extends ChangeNotifier {
     if (tabCategory == 'tv') return;
     if (tabCategory == 'vod' && _vodByCategoryName.containsKey(categoryName)) return;
     if (tabCategory == 'series' && _seriesByCategoryName.containsKey(categoryName)) return;
-    if (_loadingCategoryNames.contains(categoryName)) return;
+    // Keyed by type, not just name — a bare category name is only unique
+    // *within* VOD or series, not across both, and this same set also
+    // backs ensureCategoriesLoaded's per-tab concurrency count (see its
+    // doc comment: sharing raw names let one tab's in-flight fetches
+    // starve the other's budget, confirmed on real hardware as Movies
+    // appearing stuck while TV Shows' own fetches were still using up
+    // the whole shared cap).
+    final key = _loadKey(tabCategory, categoryName);
+    if (_loadingCategoryNames.contains(key)) return;
 
-    _loadingCategoryNames.add(categoryName);
+    _loadingCategoryNames.add(key);
     isLoading = true;
     notifyListeners();
 
@@ -581,11 +589,13 @@ class PlaylistManager extends ChangeNotifier {
       error = e.toString();
       debugPrint('PlaylistManager error: $e');
     } finally {
-      _loadingCategoryNames.remove(categoryName);
+      _loadingCategoryNames.remove(key);
       isLoading = false;
       notifyListeners();
     }
   }
+
+  String _loadKey(String tabCategory, String categoryName) => '$tabCategory:$categoryName';
 
   /// Same first-load-on-demand behavior as [ensureCategoryLoaded], but for
   /// a whole browse screen's worth of categories at once, with a hard cap
@@ -603,22 +613,33 @@ class PlaylistManager extends ChangeNotifier {
   /// every single one is empty on the very first render, so all of them
   /// fired their network fetch + compute() isolate at once.
   ///
-  /// This must check the *global*, live [_loadingCategoryNames] count, not
-  /// a count local to one call — a first attempt spawned a fixed pool of 3
-  /// workers *per call*, but every category starting or finishing calls
-  /// `notifyListeners()`, which triggers a screen rebuild, which calls this
-  /// again — so a fresh trio of workers kept stacking on top of whatever
-  /// was already in flight instead of actually staying capped at 3
-  /// (confirmed on real hardware: no longer crashing, but not meaningfully
-  /// faster either, since the throttle wasn't really holding). Checking the
-  /// live count directly means every call — however often it's re-entered
-  /// — only ever tops up to the real ceiling, never past it.
+  /// This must check the *live* [_loadingCategoryNames] count for this
+  /// specific [tabCategory], not a count local to one call — a first
+  /// attempt spawned a fixed pool of 3 workers *per call*, but every
+  /// category starting or finishing calls `notifyListeners()`, which
+  /// triggers a screen rebuild, which calls this again — so a fresh trio
+  /// of workers kept stacking on top of whatever was already in flight
+  /// instead of actually staying capped at 3 (confirmed on real hardware:
+  /// no longer crashing, but not meaningfully faster either, since the
+  /// throttle wasn't really holding). Checking the live count directly
+  /// means every call — however often it's re-entered — only ever tops up
+  /// to the real ceiling, never past it.
+  ///
+  /// Scoped *per tab category* (vod vs. series each get their own budget
+  /// of 3, not a shared 3 between them) — confirmed on real hardware that
+  /// sharing one counter let one tab's in-flight fetches starve the
+  /// other's: switching to Movies while TV Shows' 3 were still loading
+  /// left Movies' own kick-off unable to start anything at all until one
+  /// of those unrelated series fetches finished.
   Future<void> ensureCategoriesLoaded(Iterable<String> categoryNames, String tabCategory) async {
     const maxConcurrent = 3;
     final loadedMap = tabCategory == 'vod' ? _vodByCategoryName : _seriesByCategoryName;
+    final prefix = '$tabCategory:';
     for (final name in categoryNames) {
-      if (_loadingCategoryNames.length >= maxConcurrent) return;
-      if (loadedMap.containsKey(name) || _loadingCategoryNames.contains(name)) continue;
+      if (_loadingCategoryNames.where((k) => k.startsWith(prefix)).length >= maxConcurrent) return;
+      if (loadedMap.containsKey(name) || _loadingCategoryNames.contains(_loadKey(tabCategory, name))) {
+        continue;
+      }
       unawaited(ensureCategoryLoaded(name, tabCategory));
     }
   }
@@ -633,11 +654,11 @@ class PlaylistManager extends ChangeNotifier {
   /// (possibly stale) old items the whole time it's being refetched
   /// instead of going empty first.
   Future<void> _loadOneVodCategory(XtreamApiService api, XtreamCategory cat, {bool force = false}) async {
-    if ((!force && _vodByCategoryName.containsKey(cat.name)) ||
-        _loadingCategoryNames.contains(cat.name)) {
+    final key = _loadKey('vod', cat.name);
+    if ((!force && _vodByCategoryName.containsKey(cat.name)) || _loadingCategoryNames.contains(key)) {
       return;
     }
-    _loadingCategoryNames.add(cat.name);
+    _loadingCategoryNames.add(key);
     try {
       final items = await api.getVodStreams(cat.id, cat.name);
       for (final channel in items) {
@@ -648,16 +669,16 @@ class PlaylistManager extends ChangeNotifier {
     } catch (e) {
       debugPrint('PlaylistManager: background load failed for movies "${cat.name}": $e');
     } finally {
-      _loadingCategoryNames.remove(cat.name);
+      _loadingCategoryNames.remove(key);
     }
   }
 
   Future<void> _loadOneSeriesCategory(XtreamApiService api, XtreamCategory cat, {bool force = false}) async {
-    if ((!force && _seriesByCategoryName.containsKey(cat.name)) ||
-        _loadingCategoryNames.contains(cat.name)) {
+    final key = _loadKey('series', cat.name);
+    if ((!force && _seriesByCategoryName.containsKey(cat.name)) || _loadingCategoryNames.contains(key)) {
       return;
     }
-    _loadingCategoryNames.add(cat.name);
+    _loadingCategoryNames.add(key);
     try {
       final items = await api.getSeriesForCategory(cat.id);
       for (final series in items) {
@@ -668,7 +689,7 @@ class PlaylistManager extends ChangeNotifier {
     } catch (e) {
       debugPrint('PlaylistManager: background load failed for TV shows "${cat.name}": $e');
     } finally {
-      _loadingCategoryNames.remove(cat.name);
+      _loadingCategoryNames.remove(key);
     }
   }
 
@@ -725,12 +746,17 @@ class PlaylistManager extends ChangeNotifier {
   /// This is deliberately infrequent (days, not every launch) — the whole
   /// point of [runFullCatalogSync] is a TiviMate/MyTVOnline3-style
   /// "Updating..." pass that happens a couple of times a week, not
-  /// something that reintroduces a long wait on every single open.
-  bool needsFullSync({Duration maxAge = const Duration(days: 3)}) {
+  /// something that reintroduces a long wait on every single open. The
+  /// actual number of days is user-configurable (Content Manager), not
+  /// hardcoded — [maxAge] is only an override for callers that genuinely
+  /// want a different window (none currently do; it defaults to reading
+  /// the user's own setting).
+  bool needsFullSync({Duration? maxAge}) {
     if (!isXtream) return false;
+    final effectiveMaxAge = maxAge ?? Duration(days: _storage.getSyncFrequencyDays());
     final last = _storage.getLastFullSyncAt();
     if (last == null) return true;
-    return DateTime.now().difference(last) > maxAge;
+    return DateTime.now().difference(last) > effectiveMaxAge;
   }
 
   /// The blocking "Updating..." pass established players like TiviMate and

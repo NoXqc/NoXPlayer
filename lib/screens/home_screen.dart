@@ -16,6 +16,7 @@ import '../utils/constants.dart';
 import '../widgets/catalog_warmup_banner.dart';
 import '../widgets/channel_list_tile.dart';
 import '../widgets/mini_player_bar.dart';
+import '../widgets/mode_button.dart';
 import '../widgets/player_controls.dart';
 import '../widgets/sidebar.dart';
 import 'player_screen.dart';
@@ -83,9 +84,22 @@ class _HomeScreenState extends State<HomeScreen> {
           'Re-checks every visible category for new content. This can take '
           'a few minutes on a large catalog.',
         ),
+        // Plain TextButton/FilledButton left which one has D-pad focus
+        // ambiguous — confirmed directly on hardware (the FilledButton's
+        // permanent solid fill looked selected regardless of actual
+        // focus). ModeButton is this app's established fix: a solid fill
+        // *only* on real focus.
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Update')),
+          ModeButton(
+            label: 'Cancel',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(false),
+          ),
+          ModeButton(
+            label: 'Update',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(true),
+          ),
         ],
       ),
     );

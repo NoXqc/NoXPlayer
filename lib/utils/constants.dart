@@ -34,14 +34,18 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.15.1 — the automatic full catalog sync (3.15.0) now asks first '
-      'instead of just launching straight into a multi-minute blocking '
-      'sync — it\'s triggered by a stale timestamp, not a direct tap, so '
-      'a confirm screen (Update / Skip for now) guards against it firing '
-      'unexpectedly. Skipping leaves the timestamp untouched, so it asks '
-      'again next launch. The manual "Update Content" menu action now '
-      'confirms first too, guarding against a stray remote press kicking '
-      'off a full re-sync by accident.';
+      '3.15.3 — fixed two real bugs found from a hardware screenshot: '
+      '(1) the tabs sidebar (_SelectableRow) only showed "this is the '
+      'active tab" while it also had D-pad focus — the instant focus '
+      'moved to a different tab, there was no way to tell which one was '
+      'actually active, confirmed directly (cursor on Movies, TV Shows '
+      'still the real active tab and still on screen, but Movies looked '
+      'selected). Now a persistent colored border marks the true active '
+      'tab regardless of focus. (2) The category-load concurrency cap '
+      'was shared between VOD and series — switching to Movies while TV '
+      'Shows\' 3 in-flight fetches were still running left Movies unable '
+      'to start anything until one of those unrelated fetches finished. '
+      'Each tab now gets its own budget of 3.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
@@ -65,6 +69,12 @@ class AppConstants {
   /// straight into an already-populated catalog. See
   /// PlaylistManager.needsFullSync/runFullCatalogSync.
   static const String keyLastFullSyncAt = 'nox_last_full_sync_at';
+
+  /// User-configurable "how often" for the above — Content Manager exposes
+  /// this as a dropdown (same pattern as [refreshIntervalOptions] below).
+  static const String keySyncFrequencyDays = 'nox_sync_frequency_days';
+  static const int defaultSyncFrequencyDays = 3;
+  static const List<int> syncFrequencyDaysOptions = [1, 3, 7, 10, 14];
 
   // Playlist source mode: 'm3u' (direct URL) or 'xtream' (Xtream Codes XC API).
   static const String keyPlaylistMode = 'nox_playlist_mode';

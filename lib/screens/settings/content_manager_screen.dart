@@ -5,26 +5,48 @@ import 'package:provider/provider.dart';
 import '../../services/app_preferences.dart';
 import '../../services/playback_service.dart';
 import '../../services/playlist_manager.dart';
+import '../../services/storage_service.dart';
+import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/tv_switch_list_tile.dart';
 import 'group_management_screen.dart';
 
 /// Playlist info (what's loaded, when), a link into Group Management (the
-/// content filter — hide a group and it's genuinely never fetched), and
-/// the enable/disable toggle for freeing up a provider's connection slot
-/// for another device.
+/// content filter — hide a group and it's genuinely never fetched), how
+/// often the full catalog sync runs, and the enable/disable toggle for
+/// freeing up a provider's connection slot for another device.
 ///
 /// No custom D-pad handling — see SettingsMenuScreen's doc comment for
 /// why: plain Flutter default focus traversal is what actually works
 /// reliably on real remote hardware here.
-class ContentManagerScreen extends StatelessWidget {
+class ContentManagerScreen extends StatefulWidget {
   const ContentManagerScreen({super.key});
+
+  @override
+  State<ContentManagerScreen> createState() => _ContentManagerScreenState();
+}
+
+class _ContentManagerScreenState extends State<ContentManagerScreen> {
+  late int _syncFrequencyDays;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncFrequencyDays = context.read<StorageService>().getSyncFrequencyDays();
+  }
+
+  Future<void> _applySyncFrequency(int days) async {
+    setState(() => _syncFrequencyDays = days);
+    await context.read<StorageService>().setSyncFrequencyDays(days);
+  }
 
   @override
   Widget build(BuildContext context) {
     final playlist = context.watch<PlaylistManager>();
     final prefs = context.watch<AppPreferences>();
+    final storage = context.read<StorageService>();
+    final lastFullSync = storage.getLastFullSyncAt();
 
     return withTvThemeIfNeeded(context, (context) => Scaffold(
       appBar: AppBar(title: const Text('Content Manager')),
@@ -70,6 +92,42 @@ class ContentManagerScreen extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
+          if (playlist.isXtream) ...[
+            const Divider(height: 32),
+            const SectionLabel('Full Catalog Sync'),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<int>(
+              initialValue: _syncFrequencyDays,
+              decoration: const InputDecoration(
+                labelText: 'Update content every',
+                border: OutlineInputBorder(),
+              ),
+              items: AppConstants.syncFrequencyDaysOptions
+                  .map((d) => DropdownMenuItem(value: d, child: Text(d == 1 ? '1 day' : '$d days')))
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) _applySyncFrequency(value);
+              },
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                lastFullSync == null
+                    ? 'Full catalog sync never completed yet.'
+                    : 'Last full sync: ${DateFormat('yyyy-MM-dd HH:mm').format(lastFullSync)}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'A stale sync shows a brief "Update content now?" prompt on launch '
+                'instead of running automatically — everyday launches in between '
+                'open straight in with no wait.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ],
           const Divider(height: 32),
           const SectionLabel('This Device'),
           const SizedBox(height: 8),
