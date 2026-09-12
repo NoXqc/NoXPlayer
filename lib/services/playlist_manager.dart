@@ -79,13 +79,22 @@ class PlaylistManager extends ChangeNotifier {
   final Map<String, List<XtreamSeries>> _seriesByCategoryName = {};
   final Set<String> _loadingCategoryNames = {};
 
+  /// The in-flight (or completed) [ensureLiveChannelsLoaded] load, shared
+  /// across every caller — see that method's doc comment for why this
+  /// needs to be a shared Future rather than a plain boolean guard.
+  Future<void>? _liveChannelsFuture;
+
   Set<String> get hiddenGroups => _hiddenGroups;
   Set<String> get favoritedGroups => _favoritedGroups;
   bool isGroupFavorited(String title) => _favoritedGroups.contains(title);
 
   /// "Has anything loaded yet" signal for the empty/loading-state check in
-  /// [HomeScreen] — live channels stand in for the whole catalog in Xtream
-  /// mode, since that's what's fetched eagerly.
+  /// [HomeScreen] — in Xtream mode this is empty until
+  /// [ensureLiveChannelsLoaded] actually runs (see its doc comment for why
+  /// live channels are no longer fetched eagerly), so callers checking for
+  /// "nothing loaded at all yet" should prefer [lastLoadSummary] instead,
+  /// which is set as soon as categories restore regardless of live-channel
+  /// lazy-load state.
   List<Channel> get channels => isXtream ? _liveChannels : _channels;
 
   /// Every VOD item cached so far (grows over time via [ensureCategoryLoaded]
@@ -274,36 +283,25 @@ class PlaylistManager extends ChangeNotifier {
 
   Future<bool> _restoreXtreamCache() async {
     try {
-      final liveRaw = await _storage.readCacheFile(AppConstants.cacheFileLiveChannels);
       final liveCatRaw = await _storage.readCacheFile(AppConstants.cacheFileLiveCategories);
       final vodCatRaw = await _storage.readCacheFile(AppConstants.cacheFileVodCategories);
       final seriesCatRaw = await _storage.readCacheFile(AppConstants.cacheFileSeriesCategories);
-      if (liveRaw == null || liveCatRaw == null || vodCatRaw == null || seriesCatRaw == null) {
+      if (liveCatRaw == null || vodCatRaw == null || seriesCatRaw == null) {
         return false;
       }
 
       // Batched into one compute() call — same reasoning as
-      // XtreamApiService's network-fetch path: this provider's live
-      // channel list alone can run into the tens of thousands of items,
-      // and decoding + constructing that many Channel objects
-      // synchronously on the main isolate on *every single launch* is
-      // long enough to be felt as real relaunch slowness, independent of
-      // anything the database rewrite already fixed (that fixed *category
-      // items* not being fully reloaded on launch — this restores the
-      // live channel list, which was never part of that fix).
+      // XtreamApiService's network-fetch path. Live *channels* themselves
+      // are deliberately NOT read/decoded here at all anymore — see
+      // ensureLiveChannelsLoaded's doc comment for why eagerly restoring
+      // that list (which can run into the tens of thousands of items for a
+      // large provider) on every single launch was still a real,
+      // measurable relaunch-speed cost even off the main isolate. Category
+      // lists are small regardless of catalog size, so they stay eager.
       final decoded = await compute(
-        _decodeXtreamCacheBatch,
-        _XtreamCacheRaw(
-          liveRaw: liveRaw,
-          liveCatRaw: liveCatRaw,
-          vodCatRaw: vodCatRaw,
-          seriesCatRaw: seriesCatRaw,
-        ),
+        _decodeXtreamCategoriesBatch,
+        _XtreamCategoriesRaw(liveCatRaw: liveCatRaw, vodCatRaw: vodCatRaw, seriesCatRaw: seriesCatRaw),
       );
-      for (final channel in decoded.liveChannels) {
-        channel.isFavorite = _favoriteIds.contains(channel.id);
-      }
-      _liveChannels = decoded.liveChannels;
       _liveCategories = decoded.liveCategories;
       _vodCategories = decoded.vodCategories;
       _seriesCategories = decoded.seriesCategories;
@@ -337,6 +335,71 @@ class PlaylistManager extends ChangeNotifier {
     } catch (e) {
       debugPrint('PlaylistManager: failed to restore Xtream cache: $e');
       return false;
+    }
+  }
+
+  /// Loads the live channel list on first need instead of eagerly on every
+  /// launch — the same on-demand shape [ensureCategoryLoaded] already uses
+  /// for VOD/series. Confirmed on real hardware: this provider's live
+  /// channel list alone can run into the tens of thousands of items, and
+  /// even decoding/constructing that off the main isolate (see
+  /// `_restoreXtreamCache`'s old approach) still took real wall-clock time
+  /// on *every single launch* — the compute() call there stopped it from
+  /// freezing the UI, but didn't make the underlying work fast, so it was
+  /// still felt as slow relaunches even when going straight to Movies/TV
+  /// Shows, which never needed this list at all.
+  ///
+  /// Callers: `TvHomeScreen`/`HomeScreen`'s Live TV and Favorites views,
+  /// `SearchScreen`, and `main.dart`'s auto-resume-last-channel (which
+  /// awaits this directly, since it needs the list before it can look
+  /// anything up). No-ops once loaded — safe to call unconditionally from
+  /// any of them on every build.
+  ///
+  /// Returns the *same in-flight Future* to every caller while a load is
+  /// already running, rather than just checking a boolean and returning
+  /// immediately — main.dart's auto-resume awaits this specifically to
+  /// wait for the list to exist, and if it lost a race to start the load
+  /// against one of the fire-and-forget UI callers, a plain "already
+  /// requested, return now" guard would let it fall through to searching
+  /// a still-empty list instead of actually waiting for that other
+  /// caller's load to finish.
+  Future<void> ensureLiveChannelsLoaded() {
+    if (!isXtream || _liveChannels.isNotEmpty) return Future<void>.value();
+    return _liveChannelsFuture ??= _loadLiveChannelsOnce();
+  }
+
+  Future<void> _loadLiveChannelsOnce() async {
+    isLoading = true;
+    notifyListeners();
+    try {
+      List<Channel> channels;
+      final raw = await _storage.readCacheFile(AppConstants.cacheFileLiveChannels);
+      if (raw != null) {
+        channels = await compute(_decodeLiveChannelsBatch, raw);
+      } else {
+        // No cache yet (e.g. a category cache existed but this file
+        // somehow didn't) — fall back to a real fetch, same as
+        // ensureCategoryLoaded does for a VOD/series cache miss.
+        final api = _xtreamApi;
+        if (api == null) return;
+        final categoryNames = {for (final c in _liveCategories) c.id: c.name};
+        channels = await api.getLiveStreams(categoryNames: categoryNames);
+        await _storage.writeCacheFile(
+          AppConstants.cacheFileLiveChannels,
+          jsonEncode(channels.map((c) => c.toJson()).toList()),
+        );
+      }
+      for (final channel in channels) {
+        channel.isFavorite = _favoriteIds.contains(channel.id);
+      }
+      _liveChannels = channels;
+      lastLoadSummary = {...?lastLoadSummary, 'tv': _liveChannels.length};
+    } catch (e) {
+      debugPrint('PlaylistManager: failed to load live channels: $e');
+      _liveChannelsFuture = null; // allow a retry on the next access
+    } finally {
+      isLoading = false;
+      notifyListeners();
     }
   }
 
@@ -987,39 +1050,30 @@ class PlaylistManager extends ChangeNotifier {
 }
 
 // Top-level — required by `compute`, which runs this on a separate isolate
-// with no access to instance state. Mirrors XtreamApiService's batched
-// decode-and-build pattern for the same reason: a large live channel list
-// decoded/constructed synchronously on the main isolate is slow enough to
-// notice on every single app launch.
-class _XtreamCacheRaw {
-  const _XtreamCacheRaw({
-    required this.liveRaw,
+// with no access to instance state.
+class _XtreamCategoriesRaw {
+  const _XtreamCategoriesRaw({
     required this.liveCatRaw,
     required this.vodCatRaw,
     required this.seriesCatRaw,
   });
-  final String liveRaw;
   final String liveCatRaw;
   final String vodCatRaw;
   final String seriesCatRaw;
 }
 
-class _XtreamCacheDecoded {
-  const _XtreamCacheDecoded({
-    required this.liveChannels,
+class _XtreamCategoriesDecoded {
+  const _XtreamCategoriesDecoded({
     required this.liveCategories,
     required this.vodCategories,
     required this.seriesCategories,
   });
-  final List<Channel> liveChannels;
   final List<XtreamCategory> liveCategories;
   final List<XtreamCategory> vodCategories;
   final List<XtreamCategory> seriesCategories;
 }
 
-_XtreamCacheDecoded _decodeXtreamCacheBatch(_XtreamCacheRaw raw) {
-  final liveChannels =
-      (jsonDecode(raw.liveRaw) as List).map((e) => Channel.fromJson(e as Map<String, dynamic>)).toList();
+_XtreamCategoriesDecoded _decodeXtreamCategoriesBatch(_XtreamCategoriesRaw raw) {
   final liveCategories = (jsonDecode(raw.liveCatRaw) as List)
       .map((e) => XtreamCategory.fromJson(e as Map<String, dynamic>))
       .toList();
@@ -1029,10 +1083,14 @@ _XtreamCacheDecoded _decodeXtreamCacheBatch(_XtreamCacheRaw raw) {
   final seriesCategories = (jsonDecode(raw.seriesCatRaw) as List)
       .map((e) => XtreamCategory.fromJson(e as Map<String, dynamic>))
       .toList();
-  return _XtreamCacheDecoded(
-    liveChannels: liveChannels,
+  return _XtreamCategoriesDecoded(
     liveCategories: liveCategories,
     vodCategories: vodCategories,
     seriesCategories: seriesCategories,
   );
 }
+
+// Separate from the categories batch above — deliberately NOT decoded
+// eagerly on every launch anymore, see ensureLiveChannelsLoaded.
+List<Channel> _decodeLiveChannelsBatch(String raw) =>
+    (jsonDecode(raw) as List).map((e) => Channel.fromJson(e as Map<String, dynamic>)).toList();

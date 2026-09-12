@@ -1079,6 +1079,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   // this app has spent this whole session getting stable.
 
   Widget _buildLiveRegion(PlaylistManager playlist, EpgService epg) {
+    // Kick off the live channel list's first load the moment this tab is
+    // actually shown — see ensureLiveChannelsLoaded's doc comment for why
+    // it's no longer loaded eagerly on launch. Fire-and-forget/no-op once
+    // loaded or already loading, same shape as the Movies/TV Shows
+    // category kick-off in _buildMoviesBrowse.
+    unawaited(playlist.ensureLiveChannelsLoaded());
+
     // The Favorites tab's default ("All") view used to fall through to the
     // live-list-plus-video UI below, fed by a list that merged individually-
     // favorited live channels AND movies together — wrong for a movie (tap

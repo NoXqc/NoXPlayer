@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -42,6 +44,11 @@ class _SearchScreenState extends State<SearchScreen> {
     super.initState();
     _scope = widget.initialScope == 'Favorites' ? 'TV' : widget.initialScope;
     _recentSearches = context.read<StorageService>().getRecentSearches();
+    // Needed for a live-channel search to find anything at all — see
+    // PlaylistManager.ensureLiveChannelsLoaded's doc comment. Kicked off
+    // regardless of initial scope (cheap/no-op once loaded) since the user
+    // can switch to TV scope with the pills at any point.
+    unawaited(context.read<PlaylistManager>().ensureLiveChannelsLoaded());
   }
 
   @override

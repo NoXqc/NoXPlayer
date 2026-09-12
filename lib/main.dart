@@ -100,7 +100,7 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
       if (mounted) setState(() => _ready = true);
 
       unawaited(_playlistManager.init().then((_) {
-        _autoResumeLastChannel();
+        unawaited(_autoResumeLastChannel());
         _showToast('Content updated');
       }));
       unawaited(_epgService.init());
@@ -123,10 +123,19 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
   /// deliberate choices to open, a live channel is just "what's on".
   /// No-ops if something's already playing (a real user action on this
   /// launch beat the background load) or there's nothing to resume into.
-  void _autoResumeLastChannel() {
+  ///
+  /// Awaits [ensureLiveChannelsLoaded] directly (unlike every other caller,
+  /// which just kicks it off and lets the UI show a brief loading state) —
+  /// this one has to actually search the list, so it can't run until the
+  /// list exists. Live channels are no longer loaded eagerly during
+  /// PlaylistManager.init() (see that method's doc comment), so without
+  /// this, resume-last-channel would silently find an empty list and do
+  /// nothing on every Xtream launch.
+  Future<void> _autoResumeLastChannel() async {
     if (_playbackService.isPlayingSomething) return;
     final lastId = _storage.getLastChannelId();
     if (lastId == null) return;
+    await _playlistManager.ensureLiveChannelsLoaded();
     for (final channel in _playlistManager.channels) {
       if (channel.id == lastId) {
         _playbackService.play(channel);

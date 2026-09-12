@@ -34,15 +34,14 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.13.2 — raised the image cache ceiling from 400 images/60MB to '
-      '600 images/100MB. The earlier tight ceiling was set while an '
-      'OOM-crashing Firestick looked like a catalog-size problem; since '
-      'then that same build ran stable on a different Firestick, a '
-      'Formuler box handles a much bigger catalog fine, and even a '
-      'pre-rewrite build crashed on that one specific device — pointing '
-      'at that unit\'s own memory/OS state, not catalog size. Combined '
-      'with the disk cache added in 3.12.0 (an eviction now re-decodes '
-      'from disk, not the network), there was real room to loosen this.';
+      '3.14.0 — the live channel list now loads lazily (on first need — '
+      'opening Live TV/Favorites/Search, or resuming the last channel) '
+      'instead of eagerly on every launch. Confirmed the earlier '
+      'compute()-based fix for this stopped it from freezing the UI, but '
+      'didn\'t make the underlying work fast — for a provider with a '
+      'huge live channel list, that was still a real relaunch-speed cost '
+      'even when going straight to Movies/TV Shows, which never needed '
+      'this list at all.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';

@@ -258,9 +258,16 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: (playlist.isLoading && playlist.channels.isEmpty)
+      // Was `playlist.channels.isEmpty` — that's now empty in Xtream mode
+      // until ensureLiveChannelsLoaded actually runs (it's no longer
+      // eager), so this would otherwise block the *entire* app (Movies/TV
+      // Shows included) behind a full-screen spinner just because live
+      // channels specifically hadn't been touched yet. lastLoadSummary is
+      // the right "has anything at all loaded" signal instead — it's set
+      // as soon as categories restore, independent of live-channel state.
+      body: (playlist.isLoading && playlist.lastLoadSummary == null)
           ? _buildLoadingState(playlist)
-          : (playlist.error != null && playlist.channels.isEmpty)
+          : (playlist.error != null && playlist.lastLoadSummary == null)
               ? _buildEmptyState()
               : Column(
                   children: [
@@ -317,6 +324,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildChannelList(PlaylistManager playlist) {
+    // Needed for the live channel list (below) and Favorites (which can
+    // include individually-favorited live channels) to have anything to
+    // show at all — see PlaylistManager.ensureLiveChannelsLoaded's doc
+    // comment for why this isn't loaded eagerly anymore. No-op if this
+    // isn't Xtream mode, already loaded, or already loading.
+    unawaited(playlist.ensureLiveChannelsLoaded());
+
     // Series aren't directly playable — in Xtream mode the TV Shows tab
     // lists series containers that drill down into episodes, not channels.
     if (_tab == 'TV Shows' && playlist.isXtream) {
@@ -358,9 +372,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ? playlist.favoriteChannels
         : playlist.visibleChannels(groupTitle: _selectedGroup, category: _categoryForTab(_tab));
 
-    // Live TV is always fully loaded upfront — catalog warm-up only affects
-    // Movies/TV Shows, so an empty Live TV result is really empty, not
-    // "still loading".
+    // Catalog warm-up only ever affects Movies/TV Shows, never Live TV —
+    // but Live TV can still genuinely be "loading" now (the kick-off
+    // above), which the plain `playlist.isLoading` check below already
+    // covers on its own.
     final warmupMightStillPopulate = _tab != 'TV' && playlist.isWarmingCatalog;
     if (channels.isEmpty && (playlist.isLoading || warmupMightStillPopulate)) {
       return const Center(child: CircularProgressIndicator());
