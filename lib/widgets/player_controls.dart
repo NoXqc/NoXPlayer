@@ -244,12 +244,118 @@ class PlayerControls extends StatelessWidget {
                         controller.seekTo(target > duration ? duration : target);
                       },
                     ),
+                  _AudioTrackButton(controller: controller),
                 ],
               ),
             ],
           );
         },
       ),
+    );
+  }
+}
+
+/// Lets the user pick an audio track — some providers mislabel a stream's
+/// language in its title (confirmed: a title that says "EN" but whose
+/// actual audio track isn't English), and there's no way to tell or fix
+/// that without a picker like this. `video_player_hdr`'s underlying
+/// platform interface already exposes multi-track audio (it wraps
+/// ExoPlayer on Android, which has always supported this internally) —
+/// this is a UI on top of an existing capability, not new plumbing.
+/// Hidden entirely for a stream with only one (or zero known) tracks —
+/// showing a picker with a single, unchangeable option is just noise.
+class _AudioTrackButton extends StatefulWidget {
+  const _AudioTrackButton({required this.controller});
+
+  final VideoPlayerHdrController controller;
+
+  @override
+  State<_AudioTrackButton> createState() => _AudioTrackButtonState();
+}
+
+class _AudioTrackButtonState extends State<_AudioTrackButton> {
+  List<VideoAudioTrack>? _tracks;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTracks();
+  }
+
+  Future<void> _loadTracks() async {
+    if (!widget.controller.isAudioTrackSupportAvailable()) return;
+    try {
+      final tracks = await widget.controller.getAudioTracks();
+      if (mounted) setState(() => _tracks = tracks);
+    } catch (_) {
+      // Not every stream/platform combination actually has track info
+      // available even when the capability check passes — leave the
+      // button hidden (_tracks stays null) rather than show a picker
+      // that can't do anything.
+    }
+  }
+
+  String _trackLabel(VideoAudioTrack track) {
+    final label = track.label;
+    if (label != null && label.isNotEmpty) return label;
+    final language = track.language;
+    if (language != null && language.isNotEmpty && language != 'und') return language.toUpperCase();
+    return 'Track ${track.id}';
+  }
+
+  Future<void> _openPicker() async {
+    // Re-fetch right before showing rather than trusting the initState
+    // snapshot — reflects the actual current selection (isSelected) even
+    // if something else changed it since this button first loaded.
+    List<VideoAudioTrack> tracks;
+    try {
+      tracks = await widget.controller.getAudioTracks();
+    } catch (_) {
+      return;
+    }
+    if (!mounted || tracks.length < 2) return;
+    setState(() => _tracks = tracks);
+
+    final chosen = await showModalBottomSheet<VideoAudioTrack>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1A),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Text(
+                'Audio Track',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
+            for (final track in tracks)
+              ListTile(
+                leading: Icon(
+                  track.isSelected ? Icons.check_circle : Icons.circle_outlined,
+                  color: track.isSelected ? Colors.amber : Colors.white54,
+                ),
+                title: Text(_trackLabel(track), style: const TextStyle(color: Colors.white)),
+                onTap: () => Navigator.of(sheetContext).pop(track),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen != null && mounted) {
+      await widget.controller.selectAudioTrack(chosen.id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tracks = _tracks;
+    if (tracks == null || tracks.length < 2) return const SizedBox.shrink();
+    return IconButton(
+      icon: const Icon(Icons.multitrack_audio, color: Colors.white),
+      tooltip: 'Audio track',
+      onPressed: _openPicker,
     );
   }
 }
