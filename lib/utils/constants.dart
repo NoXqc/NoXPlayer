@@ -34,13 +34,15 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.13.0 — added an audio track picker to the player controls (an '
-      'icon next to play/pause, only shown when a stream actually has '
-      'more than one track) — some providers mislabel a stream\'s '
-      'language, and there was previously no way to see or change which '
-      'audio track was playing. Built on video_player_hdr/video_player_'
-      'android\'s existing ExoPlayer-backed track selection, not new '
-      'native plumbing.';
+      '3.13.1 — fixed the category-load concurrency cap: it capped '
+      'workers per *call*, but every category starting/finishing calls '
+      'notifyListeners(), which triggers a rebuild, which called it '
+      'again — so a fresh batch of 3 kept stacking on top of whatever '
+      'was already loading instead of actually staying capped at 3. '
+      'Confirmed on real hardware as not crashing but not meaningfully '
+      'faster either. Now checks the live in-flight count directly, so '
+      'it holds the real ceiling regardless of how often it\'s re-'
+      'entered.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';

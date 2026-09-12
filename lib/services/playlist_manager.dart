@@ -538,26 +538,26 @@ class PlaylistManager extends ChangeNotifier {
   /// testing, but confirmed on real hardware (137% CPU, a 25s+ ANR) the
   /// moment a *brand-new* provider with hundreds of categories was added —
   /// every single one is empty on the very first render, so all of them
-  /// fired their network fetch + compute() isolate at once. Capping
-  /// concurrency here keeps the on-demand-load behavior while bounding how
-  /// much work is actually in flight at a time.
+  /// fired their network fetch + compute() isolate at once.
+  ///
+  /// This must check the *global*, live [_loadingCategoryNames] count, not
+  /// a count local to one call — a first attempt spawned a fixed pool of 3
+  /// workers *per call*, but every category starting or finishing calls
+  /// `notifyListeners()`, which triggers a screen rebuild, which calls this
+  /// again — so a fresh trio of workers kept stacking on top of whatever
+  /// was already in flight instead of actually staying capped at 3
+  /// (confirmed on real hardware: no longer crashing, but not meaningfully
+  /// faster either, since the throttle wasn't really holding). Checking the
+  /// live count directly means every call — however often it's re-entered
+  /// — only ever tops up to the real ceiling, never past it.
   Future<void> ensureCategoriesLoaded(Iterable<String> categoryNames, String tabCategory) async {
     const maxConcurrent = 3;
     final loadedMap = tabCategory == 'vod' ? _vodByCategoryName : _seriesByCategoryName;
-    final pending = categoryNames
-        .where((name) => !loadedMap.containsKey(name) && !_loadingCategoryNames.contains(name))
-        .toList();
-    if (pending.isEmpty) return;
-
-    var index = 0;
-    Future<void> worker() async {
-      while (index < pending.length) {
-        final name = pending[index++];
-        await ensureCategoryLoaded(name, tabCategory);
-      }
+    for (final name in categoryNames) {
+      if (_loadingCategoryNames.length >= maxConcurrent) return;
+      if (loadedMap.containsKey(name) || _loadingCategoryNames.contains(name)) continue;
+      unawaited(ensureCategoryLoaded(name, tabCategory));
     }
-
-    await Future.wait(List.generate(maxConcurrent.clamp(1, pending.length), (_) => worker()));
   }
 
   /// Fetches one VOD category's items, so the whole catalog eventually
