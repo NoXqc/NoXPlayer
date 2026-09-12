@@ -34,15 +34,15 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.13.1 — fixed the category-load concurrency cap: it capped '
-      'workers per *call*, but every category starting/finishing calls '
-      'notifyListeners(), which triggers a rebuild, which called it '
-      'again — so a fresh batch of 3 kept stacking on top of whatever '
-      'was already loading instead of actually staying capped at 3. '
-      'Confirmed on real hardware as not crashing but not meaningfully '
-      'faster either. Now checks the live in-flight count directly, so '
-      'it holds the real ceiling regardless of how often it\'s re-'
-      'entered.';
+      '3.13.2 — raised the image cache ceiling from 400 images/60MB to '
+      '600 images/100MB. The earlier tight ceiling was set while an '
+      'OOM-crashing Firestick looked like a catalog-size problem; since '
+      'then that same build ran stable on a different Firestick, a '
+      'Formuler box handles a much bigger catalog fine, and even a '
+      'pre-rewrite build crashed on that one specific device — pointing '
+      'at that unit\'s own memory/OS state, not catalog size. Combined '
+      'with the disk cache added in 3.12.0 (an eviction now re-decodes '
+      'from disk, not the network), there was real room to loosen this.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';

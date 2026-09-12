@@ -24,8 +24,19 @@ void main() {
   // PosterCard/channel_list_tile). A much tighter ceiling here means old
   // poster bitmaps actually get evicted instead of accumulating for the
   // whole session.
-  PaintingBinding.instance.imageCache.maximumSize = 400;
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 60 << 20; // 60MB
+  //
+  // Was 400/60MB, deliberately conservative while an OOM-crashing Firestick
+  // was still an open question. Since then: that same build ran stable on a
+  // *different* Firestick, a Formuler box handles a far bigger catalog with
+  // zero issues, and a pre-rewrite build crashed on the same problem device
+  // too — pointing at that specific unit's own memory/OS state, not catalog
+  // size, as the actual cause. Combined with cached_network_image now
+  // backing this (an eviction re-decodes from disk, not the network, so
+  // it's cheaper than it used to be), there's real room to loosen this a
+  // bit — kept as a moderate bump, not a removal of the ceiling, since this
+  // is still a small/constrained class of hardware.
+  PaintingBinding.instance.imageCache.maximumSize = 600;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 100 << 20; // 100MB
   runApp(const NoxIptvApp());
 }
 
