@@ -83,12 +83,13 @@ class _HomeScreenState extends State<HomeScreen> {
         _promptForSettings();
         return;
       }
-      await playlist.loadFromXtream(server: server, username: username, password: password);
-      // Re-fetches every non-hidden category's items in the background
-      // (not just newly-discovered ones) so new content the provider added
-      // shows up, and any group un-hidden since the last refresh actually
-      // gets its items fetched instead of staying empty.
-      unawaited(playlist.refreshAllCategories().then((_) => _showUpdateToast()));
+      // Reuses the exact same full-sync pass PlaylistManager runs
+      // automatically when stale (see runFullCatalogSync) — this is just
+      // the manual trigger for it, still backgrounded/non-blocking (the
+      // CatalogWarmupBanner already covers in-app progress). Marks the
+      // catalog fresh either way, so an automatic sync doesn't also fire
+      // again right after a manual one.
+      unawaited(playlist.runFullCatalogSync().then((_) => _showUpdateToast()));
       return;
     }
 

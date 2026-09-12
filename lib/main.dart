@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'screens/catalog_sync_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/tv_home_screen.dart';
 import 'services/app_preferences.dart';
@@ -60,6 +61,11 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
   late final PlaybackService _playbackService;
   bool _ready = false;
 
+  /// True while [PlaylistManager.runFullCatalogSync] is blocking the
+  /// launch — see [CatalogSyncScreen] and [_bootstrap] for the whole
+  /// "a few times a week, not every launch" reasoning.
+  bool _syncing = false;
+
   /// Lets background work (the initial playlist load finishing, "Update
   /// content" finishing) show a brief toast without needing a BuildContext
   /// tied to whatever screen happens to be on top — same trick other IPTV
@@ -91,18 +97,39 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
       _epgService = EpgService(_storage);
       _playbackService = PlaybackService(_storage, _preferences);
 
-      // The home screen goes up now, not after everything below finishes —
-      // matching how other IPTV players (MyTvOnline, IPlayer) open
-      // straight into the UI and refresh in the background instead of
-      // blocking behind a splash. HomeScreen/TvHomeScreen already have
-      // their own loading affordances (spinners, the catalog warm-up
-      // banner, empty states) for exactly this transitional state.
-      if (mounted) setState(() => _ready = true);
+      // Restores category lists (small, fast regardless of catalog size —
+      // see that method's doc comment for why live channels/category
+      // *items* are no longer touched here). Awaited, unlike before: the
+      // freshness check right below needs isXtream/category state to
+      // already be correct, so there's no way to let the UI go up first
+      // this time.
+      await _playlistManager.init();
 
-      unawaited(_playlistManager.init().then((_) {
-        unawaited(_autoResumeLastChannel());
-        _showToast('Content updated');
-      }));
+      // TiviMate/MyTVOnline3-style: a full catalog sync (every non-hidden
+      // category's items, not just category lists) happens a few times a
+      // week, not on every launch — an ordinary day skips straight to the
+      // main UI with an already-populated local catalog. Blocking behind
+      // CatalogSyncScreen here (rather than showing the main UI and
+      // syncing behind it, the old approach) is the actual point: the
+      // user shouldn't reach a real, usable Movies/TV Shows screen until
+      // the catalog is genuinely ready, matching how those apps behave on
+      // a sync day. Hidden groups are unaffected either way — see
+      // runFullCatalogSync's doc comment.
+      final didSync = _playlistManager.needsFullSync();
+      if (didSync) {
+        if (mounted) setState(() => _syncing = true);
+        await _playlistManager.runFullCatalogSync();
+        if (mounted) setState(() => _syncing = false);
+      }
+
+      if (mounted) setState(() => _ready = true);
+      if (didSync) {
+        // The toast needs the real MaterialApp's ScaffoldMessengerKey,
+        // which doesn't exist until the tree above actually builds.
+        WidgetsBinding.instance.addPostFrameCallback((_) => _showToast('Content updated'));
+      }
+      unawaited(_autoResumeLastChannel());
+
       unawaited(_epgService.init());
       unawaited(_playbackService.init());
 
@@ -178,6 +205,10 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
           ),
         ),
       );
+    }
+
+    if (_syncing) {
+      return CatalogSyncScreen(playlist: _playlistManager);
     }
 
     if (!_ready) {

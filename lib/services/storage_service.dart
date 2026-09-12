@@ -162,6 +162,16 @@ class StorageService {
   Future<void> setEpgLastUpdated(DateTime time) =>
       _prefs.setString(AppConstants.keyEpgLastUpdated, time.toIso8601String());
 
+  // --- Full catalog sync -------------------------------------------------
+
+  DateTime? getLastFullSyncAt() {
+    final raw = _prefs.getString(AppConstants.keyLastFullSyncAt);
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
+
+  Future<void> setLastFullSyncAt(DateTime time) =>
+      _prefs.setString(AppConstants.keyLastFullSyncAt, time.toIso8601String());
+
   // --- Resume playback ---------------------------------------------------
 
   String? getLastChannelId() => _prefs.getString(AppConstants.keyLastChannelId);
@@ -203,6 +213,7 @@ class StorageService {
   Future<void> clearCache() async {
     await _prefs.remove(AppConstants.keyEpgCache);
     await _prefs.remove(AppConstants.keyEpgLastUpdated);
+    await _prefs.remove(AppConstants.keyLastFullSyncAt);
     final positionKeys = _prefs
         .getKeys()
         .where((k) =>

@@ -716,6 +716,58 @@ class PlaylistManager extends ChangeNotifier {
   /// nothing is skipped just because it's already cached.
   Future<void> refreshAllCategories() => _warmCategories(force: true);
 
+  /// True when the catalog hasn't had a *full* sync (every non-hidden
+  /// category's items, not just category names/live channels) recently
+  /// enough — main.dart checks this right after [init] to decide whether
+  /// to block behind [runFullCatalogSync] before showing the main UI, or
+  /// open straight into an already-populated catalog.
+  ///
+  /// This is deliberately infrequent (days, not every launch) — the whole
+  /// point of [runFullCatalogSync] is a TiviMate/MyTVOnline3-style
+  /// "Updating..." pass that happens a couple of times a week, not
+  /// something that reintroduces a long wait on every single open.
+  bool needsFullSync({Duration maxAge = const Duration(days: 3)}) {
+    if (!isXtream) return false;
+    final last = _storage.getLastFullSyncAt();
+    if (last == null) return true;
+    return DateTime.now().difference(last) > maxAge;
+  }
+
+  /// The blocking "Updating..." pass established players like TiviMate and
+  /// MyTVOnline3 do a few times a week rather than on every launch: re-
+  /// fetches category lists + live channels, then every non-hidden VOD/
+  /// series category's items, then marks the catalog fresh.
+  ///
+  /// Deliberately reuses [loadFromXtream] + [refreshAllCategories] — this
+  /// is the exact same work "Update Content" already does; what's new is
+  /// running it automatically when stale and awaiting it fully behind a
+  /// dedicated screen (see main.dart), instead of firing it in the
+  /// background while the user is already looking at a possibly-empty or
+  /// stale catalog.
+  ///
+  /// Hidden groups are untouched by any of this — [_hiddenGroups] is a
+  /// separate persisted set, keyed by category name, that only ever
+  /// changes via an explicit user action (the hold-to-hide gesture). A
+  /// category re-appearing in a fresh fetch doesn't un-hide it; only a
+  /// genuinely *new* category name (never seen, so never added to that
+  /// set) shows up unhidden, exactly like the very first time it appeared.
+  Future<void> runFullCatalogSync() async {
+    if (!isXtream) return;
+    final server = _storage.getXtreamServer();
+    final username = _storage.getXtreamUsername();
+    final password = _storage.getXtreamPassword();
+    if (server == null || username == null || password == null) return;
+    await loadFromXtream(server: server, username: username, password: password);
+    await refreshAllCategories();
+  }
+
+  /// Marks the catalog fresh whenever a warm-up pass actually ran to
+  /// completion — whether that's the initial post-Add-Playlist pass, a
+  /// manual "Update Content", or [runFullCatalogSync]'s automatic version.
+  /// Centralized here (rather than at each call site) so every path that
+  /// does a real full pass resets the "couple times a week" clock the same
+  /// way, and a call that no-ops (already warming, or no Xtream session)
+  /// correctly does *not* claim credit for a sync that didn't happen.
   Future<void> _warmCategories({required bool force}) async {
     // Two overlapping passes (e.g. the playlist add flow triggering a
     // second warm-up before the first finished) each reset and then
@@ -739,35 +791,36 @@ class PlaylistManager extends ChangeNotifier {
               (force || !_seriesByCategoryName.containsKey(c.name)) && !_hiddenGroups.contains(c.name))
           .toList();
       final total = vodTodo.length + seriesTodo.length;
-      if (total == 0) return;
+      if (total > 0) {
+        isWarmingCatalog = true;
+        warmCatalogDone = 0;
+        warmCatalogTotal = total;
+        vodCatalogDone = 0;
+        vodCatalogTotal = vodTodo.length;
+        seriesCatalogDone = 0;
+        seriesCatalogTotal = seriesTodo.length;
+        _notifyWarmupProgress(force: true);
 
-      isWarmingCatalog = true;
-      warmCatalogDone = 0;
-      warmCatalogTotal = total;
-      vodCatalogDone = 0;
-      vodCatalogTotal = vodTodo.length;
-      seriesCatalogDone = 0;
-      seriesCatalogTotal = seriesTodo.length;
-      _notifyWarmupProgress(force: true);
-
-      var vodIndex = 0;
-      var seriesIndex = 0;
-      while (vodIndex < vodTodo.length || seriesIndex < seriesTodo.length) {
-        if (vodIndex < vodTodo.length) {
-          await _loadOneVodCategory(api, vodTodo[vodIndex], force: force);
-          vodIndex++;
-          vodCatalogDone++;
-          warmCatalogDone++;
-          _notifyWarmupProgress();
-        }
-        if (seriesIndex < seriesTodo.length) {
-          await _loadOneSeriesCategory(api, seriesTodo[seriesIndex], force: force);
-          seriesIndex++;
-          seriesCatalogDone++;
-          warmCatalogDone++;
-          _notifyWarmupProgress();
+        var vodIndex = 0;
+        var seriesIndex = 0;
+        while (vodIndex < vodTodo.length || seriesIndex < seriesTodo.length) {
+          if (vodIndex < vodTodo.length) {
+            await _loadOneVodCategory(api, vodTodo[vodIndex], force: force);
+            vodIndex++;
+            vodCatalogDone++;
+            warmCatalogDone++;
+            _notifyWarmupProgress();
+          }
+          if (seriesIndex < seriesTodo.length) {
+            await _loadOneSeriesCategory(api, seriesTodo[seriesIndex], force: force);
+            seriesIndex++;
+            seriesCatalogDone++;
+            warmCatalogDone++;
+            _notifyWarmupProgress();
+          }
         }
       }
+      await _storage.setLastFullSyncAt(DateTime.now());
     } catch (e) {
       // This runs fire-and-forget in the background — an uncaught error
       // here must never escape as an unhandled Future error.

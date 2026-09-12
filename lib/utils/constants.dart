@@ -34,14 +34,16 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.14.0 — the live channel list now loads lazily (on first need — '
-      'opening Live TV/Favorites/Search, or resuming the last channel) '
-      'instead of eagerly on every launch. Confirmed the earlier '
-      'compute()-based fix for this stopped it from freezing the UI, but '
-      'didn\'t make the underlying work fast — for a provider with a '
-      'huge live channel list, that was still a real relaunch-speed cost '
-      'even when going straight to Movies/TV Shows, which never needed '
-      'this list at all.';
+      '3.15.0 — added a real full-catalog sync (every non-hidden VOD/'
+      'series category\'s items, live channels, category lists), the '
+      'same TiviMate/MyTVOnline3-style "Updating..." pass those apps do '
+      'a few times a week rather than on every launch. When due, it '
+      'blocks launch behind a dedicated progress screen instead of '
+      'letting the user reach a possibly-empty catalog; on an ordinary '
+      'day (checked via a persisted last-synced timestamp, default 3-day '
+      'freshness window) it\'s skipped entirely and the app opens '
+      'straight in. Hidden groups are untouched by this — only a '
+      'genuinely new category shows up unhidden.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
@@ -58,6 +60,13 @@ class AppConstants {
   static const String keyLastChannelId = 'nox_last_channel_id';
   static const String keyLastPositionPrefix = 'nox_last_position_';
   static const String keyLastDurationPrefix = 'nox_last_duration_';
+
+  /// When the last full catalog sync (every non-hidden VOD/series
+  /// category's items, not just category lists) completed — drives
+  /// whether a launch needs to block behind a fresh sync or can open
+  /// straight into an already-populated catalog. See
+  /// PlaylistManager.needsFullSync/runFullCatalogSync.
+  static const String keyLastFullSyncAt = 'nox_last_full_sync_at';
 
   // Playlist source mode: 'm3u' (direct URL) or 'xtream' (Xtream Codes XC API).
   static const String keyPlaylistMode = 'nox_playlist_mode';
