@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -64,10 +65,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
         fit: StackFit.expand,
         children: [
           if (channel.logoUrl != null && channel.logoUrl!.isNotEmpty)
-            Image.network(
-              channel.logoUrl!,
+            CachedNetworkImage(
+              imageUrl: channel.logoUrl!,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(color: Colors.grey.shade900),
+              errorWidget: (_, __, ___) => Container(color: Colors.grey.shade900),
             )
           else
             Container(color: Colors.grey.shade900),

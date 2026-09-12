@@ -282,23 +282,31 @@ class PlaylistManager extends ChangeNotifier {
         return false;
       }
 
-      final liveChannels = (jsonDecode(liveRaw) as List)
-          .map((e) => Channel.fromJson(e as Map<String, dynamic>))
-          .toList();
-      for (final channel in liveChannels) {
+      // Batched into one compute() call — same reasoning as
+      // XtreamApiService's network-fetch path: this provider's live
+      // channel list alone can run into the tens of thousands of items,
+      // and decoding + constructing that many Channel objects
+      // synchronously on the main isolate on *every single launch* is
+      // long enough to be felt as real relaunch slowness, independent of
+      // anything the database rewrite already fixed (that fixed *category
+      // items* not being fully reloaded on launch — this restores the
+      // live channel list, which was never part of that fix).
+      final decoded = await compute(
+        _decodeXtreamCacheBatch,
+        _XtreamCacheRaw(
+          liveRaw: liveRaw,
+          liveCatRaw: liveCatRaw,
+          vodCatRaw: vodCatRaw,
+          seriesCatRaw: seriesCatRaw,
+        ),
+      );
+      for (final channel in decoded.liveChannels) {
         channel.isFavorite = _favoriteIds.contains(channel.id);
       }
-      _liveChannels = liveChannels;
-
-      _liveCategories = (jsonDecode(liveCatRaw) as List)
-          .map((e) => XtreamCategory.fromJson(e as Map<String, dynamic>))
-          .toList();
-      _vodCategories = (jsonDecode(vodCatRaw) as List)
-          .map((e) => XtreamCategory.fromJson(e as Map<String, dynamic>))
-          .toList();
-      _seriesCategories = (jsonDecode(seriesCatRaw) as List)
-          .map((e) => XtreamCategory.fromJson(e as Map<String, dynamic>))
-          .toList();
+      _liveChannels = decoded.liveChannels;
+      _liveCategories = decoded.liveCategories;
+      _vodCategories = decoded.vodCategories;
+      _seriesCategories = decoded.seriesCategories;
 
       _vodCategoryIdByName
         ..clear()
@@ -976,4 +984,55 @@ class PlaylistManager extends ChangeNotifier {
       await ensureCategoryLoaded(groupTitle, 'series');
     }
   }
+}
+
+// Top-level — required by `compute`, which runs this on a separate isolate
+// with no access to instance state. Mirrors XtreamApiService's batched
+// decode-and-build pattern for the same reason: a large live channel list
+// decoded/constructed synchronously on the main isolate is slow enough to
+// notice on every single app launch.
+class _XtreamCacheRaw {
+  const _XtreamCacheRaw({
+    required this.liveRaw,
+    required this.liveCatRaw,
+    required this.vodCatRaw,
+    required this.seriesCatRaw,
+  });
+  final String liveRaw;
+  final String liveCatRaw;
+  final String vodCatRaw;
+  final String seriesCatRaw;
+}
+
+class _XtreamCacheDecoded {
+  const _XtreamCacheDecoded({
+    required this.liveChannels,
+    required this.liveCategories,
+    required this.vodCategories,
+    required this.seriesCategories,
+  });
+  final List<Channel> liveChannels;
+  final List<XtreamCategory> liveCategories;
+  final List<XtreamCategory> vodCategories;
+  final List<XtreamCategory> seriesCategories;
+}
+
+_XtreamCacheDecoded _decodeXtreamCacheBatch(_XtreamCacheRaw raw) {
+  final liveChannels =
+      (jsonDecode(raw.liveRaw) as List).map((e) => Channel.fromJson(e as Map<String, dynamic>)).toList();
+  final liveCategories = (jsonDecode(raw.liveCatRaw) as List)
+      .map((e) => XtreamCategory.fromJson(e as Map<String, dynamic>))
+      .toList();
+  final vodCategories = (jsonDecode(raw.vodCatRaw) as List)
+      .map((e) => XtreamCategory.fromJson(e as Map<String, dynamic>))
+      .toList();
+  final seriesCategories = (jsonDecode(raw.seriesCatRaw) as List)
+      .map((e) => XtreamCategory.fromJson(e as Map<String, dynamic>))
+      .toList();
+  return _XtreamCacheDecoded(
+    liveChannels: liveChannels,
+    liveCategories: liveCategories,
+    vodCategories: vodCategories,
+    seriesCategories: seriesCategories,
+  );
 }

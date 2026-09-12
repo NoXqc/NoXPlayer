@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -432,10 +433,10 @@ class _UpNextBubble extends StatelessWidget {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: hasLogo
-                          ? Image.network(
-                              next.logoUrl!,
+                          ? CachedNetworkImage(
+                              imageUrl: next.logoUrl!,
                               fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const _UpNextFallbackIcon(),
+                              errorWidget: (_, __, ___) => const _UpNextFallbackIcon(),
                             )
                           : const _UpNextFallbackIcon(),
                     ),

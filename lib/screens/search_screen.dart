@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -243,10 +244,10 @@ class _SearchScreenState extends State<SearchScreen> {
                 width: 48,
                 height: 48,
                 child: (s.coverUrl != null && s.coverUrl!.isNotEmpty)
-                    ? Image.network(
-                        s.coverUrl!,
+                    ? CachedNetworkImage(
+                        imageUrl: s.coverUrl!,
                         fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Icon(Icons.video_library),
+                        errorWidget: (_, __, ___) => const Icon(Icons.video_library),
                       )
                     : const Icon(Icons.video_library),
               ),

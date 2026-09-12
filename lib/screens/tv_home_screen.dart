@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
@@ -1364,10 +1365,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 width: 40,
                 height: 40,
                 child: (channel.logoUrl != null && channel.logoUrl!.isNotEmpty)
-                    ? Image.network(channel.logoUrl!, fit: BoxFit.contain,
-                        cacheWidth: (40 * MediaQuery.of(context).devicePixelRatio).round(),
-                        cacheHeight: (40 * MediaQuery.of(context).devicePixelRatio).round(),
-                        errorBuilder: (_, __, ___) => const Icon(Icons.tv))
+                    ? CachedNetworkImage(imageUrl: channel.logoUrl!, fit: BoxFit.contain,
+                        memCacheWidth: (40 * MediaQuery.of(context).devicePixelRatio).round(),
+                        memCacheHeight: (40 * MediaQuery.of(context).devicePixelRatio).round(),
+                        errorWidget: (_, __, ___) => const Icon(Icons.tv))
                     : const Icon(Icons.tv),
               ),
               label: channel.name,
@@ -1976,11 +1977,11 @@ class _BrowseHero extends StatelessWidget {
         children: [
           Container(color: Colors.grey.shade900),
           if (imageUrl != null && imageUrl!.isNotEmpty)
-            Image.network(
-              imageUrl!,
+            CachedNetworkImage(
+              imageUrl: imageUrl!,
               key: ValueKey(imageUrl),
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              errorWidget: (_, __, ___) => const SizedBox.shrink(),
             ),
           DecoratedBox(
             decoration: BoxDecoration(

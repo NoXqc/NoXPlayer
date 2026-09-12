@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -45,15 +46,15 @@ class ChannelListTile extends StatelessWidget {
           width: 48,
           height: 48,
           child: (channel.logoUrl != null && channel.logoUrl!.isNotEmpty)
-              ? Image.network(
-                  channel.logoUrl!,
+              ? CachedNetworkImage(
+                  imageUrl: channel.logoUrl!,
                   fit: BoxFit.contain,
                   // Live channels are loaded eagerly and uncapped (unlike
                   // VOD/series) — a large channel list decoding every logo
                   // at full source resolution is a real memory contributor.
-                  cacheWidth: (48 * MediaQuery.of(context).devicePixelRatio).round(),
-                  cacheHeight: (48 * MediaQuery.of(context).devicePixelRatio).round(),
-                  errorBuilder: (_, __, ___) => const Icon(Icons.tv),
+                  memCacheWidth: (48 * MediaQuery.of(context).devicePixelRatio).round(),
+                  memCacheHeight: (48 * MediaQuery.of(context).devicePixelRatio).round(),
+                  errorWidget: (_, __, ___) => const Icon(Icons.tv),
                 )
               : const Icon(Icons.tv),
         ),

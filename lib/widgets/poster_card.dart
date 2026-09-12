@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import 'hold_to_activate.dart';
@@ -118,8 +119,8 @@ class _PosterCardState extends State<PosterCard> {
               children: [
                 if (hasImage)
                   Positioned.fill(
-                    child: Image.network(
-                      widget.imageUrl!,
+                    child: CachedNetworkImage(
+                      imageUrl: widget.imageUrl!,
                       fit: BoxFit.cover,
                       // Provider posters commonly come in well above this
                       // card's on-screen size; without this, Flutter decodes
@@ -131,23 +132,19 @@ class _PosterCardState extends State<PosterCard> {
                       // Forcing decode-time downsampling to roughly the
                       // card's physical size cuts each cached image's
                       // memory footprint by an order of magnitude or more.
-                      cacheWidth: (PosterCard.width * MediaQuery.of(context).devicePixelRatio).round(),
-                      cacheHeight: (PosterCard.height * MediaQuery.of(context).devicePixelRatio).round(),
+                      memCacheWidth: (PosterCard.width * MediaQuery.of(context).devicePixelRatio).round(),
+                      memCacheHeight: (PosterCard.height * MediaQuery.of(context).devicePixelRatio).round(),
                       // A poster popping in instantly from the grey
                       // placeholder reads as a jarring flash, especially
                       // when scrolling back re-triggers a fetch after the
-                      // tight image cache evicted it. Fading it in instead
-                      // is purely cosmetic — same memory cost either way.
-                      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-                        if (wasSynchronouslyLoaded) return child;
-                        return AnimatedOpacity(
-                          opacity: frame == null ? 0 : 1,
-                          duration: const Duration(milliseconds: 250),
-                          curve: Curves.easeOut,
-                          child: child,
-                        );
-                      },
-                      errorBuilder: (_, __, ___) => _PosterFallbackLabel(title: widget.title),
+                      // tight in-memory cache evicted it — fadeInDuration is
+                      // purely cosmetic, same cost either way. The disk
+                      // cache underneath (this package's whole point over
+                      // plain Image.network) is what actually avoids a full
+                      // network re-fetch on that same scroll-back, which the
+                      // memory cache ceiling alone couldn't do.
+                      fadeInDuration: const Duration(milliseconds: 250),
+                      errorWidget: (_, __, ___) => _PosterFallbackLabel(title: widget.title),
                     ),
                   )
                 else

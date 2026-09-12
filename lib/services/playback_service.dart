@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:video_player_hdr/video_player_hdr.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/channel.dart';
 import 'app_preferences.dart';
@@ -153,6 +154,10 @@ class PlaybackService extends ChangeNotifier {
         await newController.seekTo(Duration(milliseconds: savedPositionMs));
       }
       await newController.play();
+      // Fire TV/Android TV boxes otherwise sleep the screen mid-stream on
+      // idle-input timeout, exactly like they would for any non-video app —
+      // there was nothing here telling the OS playback is active.
+      unawaited(WakelockPlus.enable());
       await _storage.setLastChannelId(channel.id);
       // Live streams report zero/unknown duration — that's fine, it just
       // means StorageService.getWatchedFraction has nothing to compute a
@@ -211,6 +216,7 @@ class PlaybackService extends ChangeNotifier {
     final old = controller;
     controller = null;
     initFuture = null;
+    unawaited(WakelockPlus.disable());
     await old?.dispose();
   }
 

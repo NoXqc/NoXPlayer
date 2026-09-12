@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -172,11 +173,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(8),
                               child: hasImage
-                                  ? Image.network(
-                                      c.logoUrl!,
+                                  ? CachedNetworkImage(
+                                      imageUrl: c.logoUrl!,
                                       fit: BoxFit.cover,
                                       width: 84,
-                                      errorBuilder: (_, __, ___) => const ColoredBox(
+                                      errorWidget: (_, __, ___) => const ColoredBox(
                                         color: Colors.black26,
                                         child: Icon(Icons.play_circle_outline),
                                       ),
@@ -338,10 +339,10 @@ class _HomeScreenState extends State<HomeScreen> {
               width: 48,
               height: 48,
               child: (s.coverUrl != null && s.coverUrl!.isNotEmpty)
-                  ? Image.network(
-                      s.coverUrl!,
+                  ? CachedNetworkImage(
+                      imageUrl: s.coverUrl!,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.video_library),
+                      errorWidget: (_, __, ___) => const Icon(Icons.video_library),
                     )
                   : const Icon(Icons.video_library),
             ),

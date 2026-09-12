@@ -76,7 +76,22 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     final storage = context.read<StorageService>();
 
     return withTvThemeIfNeeded(context, (context) => Scaffold(
-      appBar: AppBar(title: Text(widget.series.name)),
+      appBar: AppBar(
+        title: Text(widget.series.name),
+        // A plain default back button left the D-pad's Select key-up
+        // landing on whatever tile now sits under the popped route (e.g.
+        // the search result that opened this screen) — reported as that
+        // tile's onTap firing again right after Back, reopening this same
+        // screen. Unfocusing before the pop actually happens means there's
+        // nothing "armed" underneath for a stray key event to land on.
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            FocusManager.instance.primaryFocus?.unfocus();
+            Navigator.of(context).pop();
+          },
+        ),
+      ),
       body: FutureBuilder<({Map<int, List<Channel>> episodes, String? plot})>(
         future: _episodesFuture,
         builder: (context, snapshot) {

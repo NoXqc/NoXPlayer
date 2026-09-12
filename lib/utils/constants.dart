@@ -34,16 +34,19 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.11.6 — fixed a real ANR (137% CPU, 25s+ unresponsive) confirmed '
-      'on real hardware right after connecting a brand-new provider with '
-      'hundreds of categories. The 3.11.1 fix for "Movies/TV Shows stuck '
-      'loading forever" kicked off a network fetch for every visible-but-'
-      'empty category on every rebuild with no concurrency limit — '
-      'invisible on a provider already partly warmed from earlier '
-      'testing, but on a fresh provider every category is empty at once, '
-      'so literally all of them (262 series categories, in this case) '
-      'fired their fetch + compute() isolate simultaneously. '
-      'ensureCategoriesLoaded now caps this at 3 concurrent loads.';
+      '3.12.0 — added a real screen wakelock during playback (Fire TV was '
+      'sleeping mid-stream since nothing told the OS playback was active), '
+      'switched every poster/logo image to a disk-backed cache '
+      '(cached_network_image) so an evicted-from-memory image reloads '
+      'from disk instead of re-fetching over the network, and fixed a '
+      'focus bug where the on-screen back arrow in a series\' detail '
+      'screen (opened from Search) could re-trigger the search result '
+      'tile underneath it. Also found and fixed another instance of the '
+      'same "synchronous JSON decode blocks the main isolate" bug this '
+      'session already fixed for the network path — the live channel '
+      'list restored from the on-disk cache on every launch was never '
+      'moved off it, likely the real cause of a 15-20s relaunch delay on '
+      'a large live-channel catalog.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
