@@ -634,7 +634,26 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => SearchScreen(initialScope: _tab)));
   }
 
+  /// Confirms first — this is a full catalog re-sync (server round-trip
+  /// per non-hidden category), not a cheap action, and a stray remote
+  /// press on this menu entry shouldn't kick it off unintentionally.
   Future<void> _refreshPlaylist(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update content now?'),
+        content: const Text(
+          'Re-checks every visible category for new content. This can take '
+          'a few minutes on a large catalog.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Update')),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
     final storage = context.read<StorageService>();
     final playlist = context.read<PlaylistManager>();
     if (playlist.isXtream) {

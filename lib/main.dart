@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'screens/catalog_sync_prompt_screen.dart';
 import 'screens/catalog_sync_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/tv_home_screen.dart';
@@ -66,6 +67,26 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
   /// "a few times a week, not every launch" reasoning.
   bool _syncing = false;
 
+  /// True while waiting on [CatalogSyncPromptScreen]'s Yes/No answer — a
+  /// full sync is a multi-minute, server-round-trip-per-category action
+  /// triggered automatically (a stale timestamp), not a direct user tap,
+  /// so it asks first rather than just barging into it.
+  bool _syncPromptPending = false;
+  Completer<bool>? _syncPromptCompleter;
+
+  Future<bool> _confirmAutoSync() {
+    final completer = Completer<bool>();
+    _syncPromptCompleter = completer;
+    if (mounted) setState(() => _syncPromptPending = true);
+    return completer.future;
+  }
+
+  void _respondToSyncPrompt(bool confirmed) {
+    if (mounted) setState(() => _syncPromptPending = false);
+    _syncPromptCompleter?.complete(confirmed);
+    _syncPromptCompleter = null;
+  }
+
   /// Lets background work (the initial playlist load finishing, "Update
   /// content" finishing) show a brief toast without needing a BuildContext
   /// tied to whatever screen happens to be on top — same trick other IPTV
@@ -115,11 +136,21 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
       // the catalog is genuinely ready, matching how those apps behave on
       // a sync day. Hidden groups are unaffected either way — see
       // runFullCatalogSync's doc comment.
-      final didSync = _playlistManager.needsFullSync();
-      if (didSync) {
-        if (mounted) setState(() => _syncing = true);
-        await _playlistManager.runFullCatalogSync();
-        if (mounted) setState(() => _syncing = false);
+      //
+      // This is triggered by a stale timestamp, not a direct tap, so it
+      // asks first (CatalogSyncPromptScreen) rather than just barging into
+      // a multi-minute blocking sync — declining leaves the timestamp
+      // untouched, so it asks again next launch instead of postponing
+      // forever.
+      var didSync = false;
+      if (_playlistManager.needsFullSync()) {
+        final confirmed = await _confirmAutoSync();
+        if (confirmed) {
+          didSync = true;
+          if (mounted) setState(() => _syncing = true);
+          await _playlistManager.runFullCatalogSync();
+          if (mounted) setState(() => _syncing = false);
+        }
       }
 
       if (mounted) setState(() => _ready = true);
@@ -204,6 +235,13 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
             ),
           ),
         ),
+      );
+    }
+
+    if (_syncPromptPending) {
+      return CatalogSyncPromptScreen(
+        lastSyncedAt: _storage.getLastFullSyncAt(),
+        onRespond: _respondToSyncPrompt,
       );
     }
 

@@ -71,7 +71,26 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Confirms first — this is a full catalog re-sync (server round-trip
+  /// per non-hidden category), not a cheap action, and a stray tap on this
+  /// button shouldn't kick it off unintentionally.
   Future<void> _refreshPlaylist() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update content now?'),
+        content: const Text(
+          'Re-checks every visible category for new content. This can take '
+          'a few minutes on a large catalog.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Update')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     final storage = context.read<StorageService>();
     final playlist = context.read<PlaylistManager>();
 

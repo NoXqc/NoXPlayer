@@ -34,16 +34,14 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.15.0 — added a real full-catalog sync (every non-hidden VOD/'
-      'series category\'s items, live channels, category lists), the '
-      'same TiviMate/MyTVOnline3-style "Updating..." pass those apps do '
-      'a few times a week rather than on every launch. When due, it '
-      'blocks launch behind a dedicated progress screen instead of '
-      'letting the user reach a possibly-empty catalog; on an ordinary '
-      'day (checked via a persisted last-synced timestamp, default 3-day '
-      'freshness window) it\'s skipped entirely and the app opens '
-      'straight in. Hidden groups are untouched by this — only a '
-      'genuinely new category shows up unhidden.';
+      '3.15.1 — the automatic full catalog sync (3.15.0) now asks first '
+      'instead of just launching straight into a multi-minute blocking '
+      'sync — it\'s triggered by a stale timestamp, not a direct tap, so '
+      'a confirm screen (Update / Skip for now) guards against it firing '
+      'unexpectedly. Skipping leaves the timestamp untouched, so it asks '
+      'again next launch. The manual "Update Content" menu action now '
+      'confirms first too, guarding against a stray remote press kicking '
+      'off a full re-sync by accident.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
