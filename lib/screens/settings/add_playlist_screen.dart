@@ -11,6 +11,7 @@ import '../../utils/tv_theme.dart';
 import '../../utils/xtream.dart';
 import '../../widgets/mode_button.dart';
 import '../../widgets/section_label.dart';
+import '../catalog_sync_screen.dart';
 import 'group_management_screen.dart';
 
 /// Playlist source configuration — M3U URL or Xtream Codes login — plus the
@@ -197,9 +198,18 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
 
         await playlist.loadFromXtream(server: server, username: username, password: password);
 
-        if (mounted && playlist.error == null) {
-          await _promptDownloadScope(playlist);
-        }
+        // A failed authenticate() (bad credentials, server down/blocked,
+        // account expired) sets playlist.error and returns normally rather
+        // than throwing — so this must be checked explicitly. Previously
+        // the success toast + pop-to-main-app below ran unconditionally,
+        // meaning a genuine auth failure still told the user "Playlist
+        // added" and dropped them on the empty-catalog home screen with no
+        // indication anything went wrong — confirmed directly against a
+        // backup server that was actually rejecting the credentials.
+        if (!mounted) return;
+        if (playlist.error != null) return;
+
+        await _promptDownloadScope(playlist);
       } else {
         final m3uUrl = _m3uController.text.trim();
         epgUrl = _epgController.text.trim();
@@ -209,6 +219,8 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
 
         if (m3uUrl.isNotEmpty) {
           await playlist.loadFromUrl(m3uUrl);
+          if (!mounted) return;
+          if (playlist.error != null) return;
         }
       }
 
@@ -259,15 +271,17 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
           'This provider has a large catalog. Download everything in the '
           'background, or choose which groups to include first?',
         ),
+        // Plain TextButton/FilledButton left which one has D-pad focus
+        // ambiguous — same fix as everywhere else this was found (the
+        // FilledButton's permanent solid fill looked selected regardless
+        // of actual focus): ModeButton only fills solid on real focus.
         actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop('choose'),
-            child: const Text('Choose Groups First'),
+          ModeButton(
+            label: 'Choose Groups First',
+            selected: false,
+            onTap: () => Navigator.of(context).pop('choose'),
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop('all'),
-            child: const Text('Download All'),
-          ),
+          ModeButton(label: 'Download All', selected: false, onTap: () => Navigator.of(context).pop('all')),
         ],
       ),
     );
@@ -287,7 +301,22 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
         return;
       }
     }
-    unawaited(playlist.warmAllCategories());
+
+    // Was `unawaited(playlist.warmAllCategories())` — fired the download
+    // invisibly in the background with no indication of progress or even
+    // that anything was happening, confirmed directly as confusing
+    // ("I don't know if I'll get a prompt when it's done... we don't have
+    // the same *freeze* loading page"). Same blocking progress screen
+    // "Update Content"/Clear Cache already use, so every path that
+    // triggers a full catalog load behaves identically.
+    if (!mounted) return;
+    final warmFuture = playlist.warmAllCategories();
+    final navigator = Navigator.of(context);
+    unawaited(navigator.push(MaterialPageRoute(
+      builder: (_) => Scaffold(backgroundColor: Colors.black, body: CatalogSyncBody(playlist: playlist)),
+    )));
+    await warmFuture;
+    if (mounted) navigator.pop();
   }
 
   @override
@@ -419,7 +448,13 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
               const SizedBox(height: 12),
             ] else if (playlist.error != null) ...[
               Text(
-                'Failed to add playlist.',
+                // The raw reason (bad credentials vs. an unreachable/timed-out
+                // server vs. an inactive account all look different, e.g.
+                // "Invalid Xtream username/password" vs. "Xtream request
+                // failed... (HTTP 403)") — shown instead of a generic
+                // "failed" message so a typo can actually be told apart from
+                // a genuinely bad server without guessing.
+                'Failed to add playlist: ${playlist.error!.replaceFirst('Exception: ', '')}',
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
               const SizedBox(height: 12),

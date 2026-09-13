@@ -1,7 +1,7 @@
 name: nox_iptv
 description: "NoX IPTV - an M3U/EPG IPTV player for Android phones, boxes, and Firesticks."
 publish_to: 'none'
-version: 3.17.0+70
+version: 3.19.1+78
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -31,6 +31,12 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # icon_flat.png doubles as the animated cold-start splash logo (see
+  # main.dart's bootstrap screen) — it already carries its own gradient
+  # backdrop, so it reads cleanly pulsing on its own rather than needing
+  # the adaptive-icon foreground/background layers composited by hand.
+  assets:
+    - assets/icon/icon_flat.png
 
 # Generates android/ic_launcher (legacy + adaptive) and the ios/web/macos/
 # windows app icons from assets/icon/*.png (see assets/icon/gen_icon.py for

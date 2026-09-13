@@ -77,7 +77,29 @@ class PlaylistManager extends ChangeNotifier {
   final Map<String, String> _seriesCategoryIdByName = {};
   final Map<String, List<Channel>> _vodByCategoryName = {};
   final Map<String, List<XtreamSeries>> _seriesByCategoryName = {};
+  // A category's true item count, independent of _maxItemsPerCategory's
+  // display cap — the full set is always fetched from the network and
+  // saved to the database (see _persistVodCategory/_persistSeriesCategory)
+  // regardless of the cap, but _vodByCategoryName/_seriesByCategoryName
+  // themselves only ever hold up to the cap, so there was previously no
+  // way for the UI to show a category's real size. See
+  // vodCategoryTotalCount/seriesCategoryTotalCount.
+  final Map<String, int> _vodCategoryTotalCount = {};
+  final Map<String, int> _seriesCategoryTotalCount = {};
+
+  /// The real number of items in this VOD category, even if only up to
+  /// [_maxItemsPerCategory] are actually loaded/rendered — null until
+  /// that category's first load (from database or network) completes.
+  int? vodCategoryTotalCount(String categoryName) => _vodCategoryTotalCount[categoryName];
+
+  int? seriesCategoryTotalCount(String categoryName) => _seriesCategoryTotalCount[categoryName];
   final Set<String> _loadingCategoryNames = {};
+  // Which tab category ('vod'/'series') currently has a self-sustaining
+  // ensureCategoriesLoaded worker pool running — see that method's doc
+  // comment for the bug this exists to fix (a rebuild-dependent design
+  // that could silently stall for minutes once the browse screen simply
+  // stopped being rebuilt).
+  final Set<String> _categoriesLoadingActive = {};
 
   /// How many times each category (keyed the same way as
   /// [_loadingCategoryNames]) has failed to load this session. Confirmed
@@ -582,41 +604,69 @@ class PlaylistManager extends ChangeNotifier {
     isLoading = true;
     notifyListeners();
 
+    // Temporary diagnostic instrumentation — added to pin down a real-world
+    // report of a cold restart taking 15+ minutes to populate a catalog
+    // that had already been fully synced (every category persisted to the
+    // database) before the restart. If that's true, every one of these
+    // should log a fast DB-HIT; a NETWORK-FETCH here instead is direct
+    // proof a "already cached" category wasn't actually persisted, or
+    // isn't being found on read. Safe to remove once that's answered.
+    final sw = Stopwatch()..start();
     try {
       if (tabCategory == 'vod') {
         final cached = await _catalogDb.getVodCategory(categoryName, limit: _maxItemsPerCategory);
         if (cached.isNotEmpty) {
           _vodByCategoryName[categoryName] = cached;
+          // cached.length is capped at _maxItemsPerCategory — a separate
+          // COUNT query is the only way to know the category's real size.
+          _vodCategoryTotalCount[categoryName] = await _catalogDb.getVodCategoryCount(categoryName);
+          debugPrint('CatLoad[vod] "$categoryName": DB-HIT ${cached.length} items in '
+              '${sw.elapsedMilliseconds}ms');
           return;
         }
         final api = _xtreamApi;
         final categoryId = _vodCategoryIdByName[categoryName];
         if (!isXtream || api == null || categoryId == null) return;
+        debugPrint('CatLoad[vod] "$categoryName": DB-MISS after ${sw.elapsedMilliseconds}ms, '
+            'falling back to network (maxConnections=${api.maxConnections})');
         final items = await api.getVodStreams(categoryId, categoryName);
         for (final channel in items) {
           channel.isFavorite = _favoriteIds.contains(channel.id);
         }
         await _persistVodCategory(categoryName, items);
         _vodByCategoryName[categoryName] = items.take(_maxItemsPerCategory).toList();
+        // The network response is never capped, so items.length is
+        // already the true total — no extra query needed here.
+        _vodCategoryTotalCount[categoryName] = items.length;
+        debugPrint('CatLoad[vod] "$categoryName": NETWORK-FETCH ${items.length} items in '
+            '${sw.elapsedMilliseconds}ms total');
       } else {
         final cached = await _catalogDb.getSeriesCategory(categoryName, limit: _maxItemsPerCategory);
         if (cached.isNotEmpty) {
           _seriesByCategoryName[categoryName] = cached;
+          _seriesCategoryTotalCount[categoryName] = await _catalogDb.getSeriesCategoryCount(categoryName);
+          debugPrint('CatLoad[series] "$categoryName": DB-HIT ${cached.length} items in '
+              '${sw.elapsedMilliseconds}ms');
           return;
         }
         final api = _xtreamApi;
         final categoryId = _seriesCategoryIdByName[categoryName];
         if (!isXtream || api == null || categoryId == null) return;
+        debugPrint('CatLoad[series] "$categoryName": DB-MISS after ${sw.elapsedMilliseconds}ms, '
+            'falling back to network (maxConnections=${api.maxConnections})');
         final items = await api.getSeriesForCategory(categoryId);
         for (final series in items) {
           series.isFavorite = _favoriteSeriesIds.contains(series.seriesId.toString());
         }
         await _persistSeriesCategory(categoryName, items);
         _seriesByCategoryName[categoryName] = items.take(_maxItemsPerCategory).toList();
+        _seriesCategoryTotalCount[categoryName] = items.length;
+        debugPrint('CatLoad[series] "$categoryName": NETWORK-FETCH ${items.length} items in '
+            '${sw.elapsedMilliseconds}ms total');
       }
     } catch (e) {
       error = e.toString();
-      debugPrint('PlaylistManager error: $e');
+      debugPrint('CatLoad[$tabCategory] "$categoryName": FAILED after ${sw.elapsedMilliseconds}ms: $e');
       _categoryFailureCounts[key] = (_categoryFailureCounts[key] ?? 0) + 1;
     } finally {
       _loadingCategoryNames.remove(key);
@@ -643,17 +693,25 @@ class PlaylistManager extends ChangeNotifier {
   /// every single one is empty on the very first render, so all of them
   /// fired their network fetch + compute() isolate at once.
   ///
-  /// This must check the *live* [_loadingCategoryNames] count for this
-  /// specific [tabCategory], not a count local to one call — a first
-  /// attempt spawned a fixed pool of 3 workers *per call*, but every
-  /// category starting or finishing calls `notifyListeners()`, which
-  /// triggers a screen rebuild, which calls this again — so a fresh trio
-  /// of workers kept stacking on top of whatever was already in flight
-  /// instead of actually staying capped at 3 (confirmed on real hardware:
-  /// no longer crashing, but not meaningfully faster either, since the
-  /// throttle wasn't really holding). Checking the live count directly
-  /// means every call — however often it's re-entered — only ever tops up
-  /// to the real ceiling, never past it.
+  /// This is now a genuine self-sustaining worker pool ([_categoriesLoadingActive]
+  /// guards against starting a second one per tab while one's already
+  /// running), *not* "start up to N, then wait to be called again." That
+  /// used to be the shape: check the live in-flight count, top up to the
+  /// ceiling, return. It relied entirely on the calling widget rebuilding
+  /// again once a category finished (via that category's own
+  /// `notifyListeners()`) to notice free capacity and top up further —
+  /// and confirmed directly on real hardware (via temporary timestamp
+  /// logging on the browse builders themselves) that this rebuild simply
+  /// stops happening after the first burst, sometimes for 10+ seconds at
+  /// a stretch, with *nothing* else re-triggering it in the meantime. On
+  /// a cold restart with a fully-synced local database — where every
+  /// individual category load is a **sub-350ms local read, not a network
+  /// fetch** — that turned a catalog that should repopulate in well under
+  /// a minute into one still visibly incomplete after 15+ minutes, gated
+  /// entirely by how often something *else*, unrelated, happened to poke
+  /// this same ChangeNotifier. Workers here instead loop through the
+  /// whole requested list themselves and only stop when it's exhausted,
+  /// independent of whether anything ever rebuilds the screen again.
   ///
   /// Scoped *per tab category* (vod vs. series each get their own budget
   /// of 3, not a shared 3 between them) — confirmed on real hardware that
@@ -667,18 +725,32 @@ class PlaylistManager extends ChangeNotifier {
   /// hardware that firing more concurrent requests than an account allows
   /// gets the extras rejected with HTTP 403, not queued.
   Future<void> ensureCategoriesLoaded(Iterable<String> categoryNames, String tabCategory) async {
+    if (_categoriesLoadingActive.contains(tabCategory)) return;
+    final namesList = categoryNames.toList();
+    if (namesList.isEmpty) return;
+
+    _categoriesLoadingActive.add(tabCategory);
     final maxConcurrent = _categoryConcurrency;
-    final loadedMap = tabCategory == 'vod' ? _vodByCategoryName : _seriesByCategoryName;
-    final prefix = '$tabCategory:';
-    for (final name in categoryNames) {
-      if (_loadingCategoryNames.where((k) => k.startsWith(prefix)).length >= maxConcurrent) return;
-      final key = _loadKey(tabCategory, name);
-      if (loadedMap.containsKey(name) ||
-          _loadingCategoryNames.contains(key) ||
-          (_categoryFailureCounts[key] ?? 0) >= _maxCategoryFailures) {
-        continue;
+    debugPrint('CatsLoad[$tabCategory]: starting self-sustaining pool, maxConcurrent=$maxConcurrent '
+        'stillEmpty=${namesList.length}');
+    try {
+      final loadedMap = tabCategory == 'vod' ? _vodByCategoryName : _seriesByCategoryName;
+      var index = 0;
+      Future<void> worker() async {
+        while (index < namesList.length) {
+          final name = namesList[index++];
+          final key = _loadKey(tabCategory, name);
+          if (loadedMap.containsKey(name) || (_categoryFailureCounts[key] ?? 0) >= _maxCategoryFailures) {
+            continue;
+          }
+          await ensureCategoryLoaded(name, tabCategory);
+        }
       }
-      unawaited(ensureCategoryLoaded(name, tabCategory));
+
+      await Future.wait(List.generate(maxConcurrent.clamp(1, namesList.length), (_) => worker()));
+    } finally {
+      _categoriesLoadingActive.remove(tabCategory);
+      debugPrint('CatsLoad[$tabCategory]: pool drained');
     }
   }
 
@@ -706,6 +778,7 @@ class PlaylistManager extends ChangeNotifier {
       }
       await _persistVodCategory(cat.name, items);
       _vodByCategoryName[cat.name] = items.take(_maxItemsPerCategory).toList();
+      _vodCategoryTotalCount[cat.name] = items.length;
     } catch (e) {
       debugPrint('PlaylistManager: background load failed for movies "${cat.name}": $e');
       _categoryFailureCounts[key] = (_categoryFailureCounts[key] ?? 0) + 1;
@@ -729,6 +802,7 @@ class PlaylistManager extends ChangeNotifier {
       }
       await _persistSeriesCategory(cat.name, items);
       _seriesByCategoryName[cat.name] = items.take(_maxItemsPerCategory).toList();
+      _seriesCategoryTotalCount[cat.name] = items.length;
     } catch (e) {
       debugPrint('PlaylistManager: background load failed for TV shows "${cat.name}": $e');
       _categoryFailureCounts[key] = (_categoryFailureCounts[key] ?? 0) + 1;

@@ -78,7 +78,7 @@ class NoxIptvApp extends StatefulWidget {
   State<NoxIptvApp> createState() => _NoxIptvAppState();
 }
 
-class _NoxIptvAppState extends State<NoxIptvApp> {
+class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateMixin {
   late final StorageService _storage;
   late final CatalogDatabase _catalogDb;
   late final AppPreferences _preferences;
@@ -122,14 +122,41 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
   final String _splashStatus = 'Starting...';
   String? _bootstrapError;
 
+  /// Drives the cold-start splash's "firing up" pulse (logo breathing
+  /// scale + glow) — purely cosmetic, tied to however long [_bootstrap]
+  /// actually takes rather than padding out a fixed extra delay. Most
+  /// launches only see this for a moment; it just looks intentional
+  /// instead of a bare spinner for however long that moment is.
+  late final AnimationController _splashController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+
   @override
   void initState() {
     super.initState();
     _bootstrap();
   }
 
+  @override
+  void dispose() {
+    _splashController.dispose();
+    super.dispose();
+  }
+
+  /// The splash is meant to be *seen*, not just theoretically present —
+  /// a boot animation that only flashes for a fraction of a second reads
+  /// as broken, not polished. On a normal day (no full sync due),
+  /// bootstrap itself now finishes in well under a second, which isn't
+  /// enough time to register the pulse at all. This is a deliberate,
+  /// fixed minimum floor the splash stays up for regardless of how fast
+  /// the real work finishes — same idea as a game console's boot
+  /// animation playing out fully even though the actual boot is quick.
+  static const _minSplashDuration = Duration(milliseconds: 2600);
+
   Future<void> _bootstrap() async {
     setState(() => _bootstrapError = null);
+    final started = DateTime.now();
     try {
       _storage = StorageService();
       await _storage.init();
@@ -178,6 +205,42 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
         }
       }
 
+      // Only relevant on the plain "no sync due today" path — if a sync
+      // ran, [runFullCatalogSync] already populated every category via
+      // its own warm-up, so there's nothing left to pre-load here.
+      //
+      // This is the actual point of showing a splash at all: an ordinary
+      // cold restart starts with every category's *items* wiped from
+      // memory (by design — see _restoreXtreamCache's doc comment), even
+      // though they're already sitting in the local database from a
+      // previous session. Without this, that repopulation only starts
+      // once the user taps into Movies/TV Shows, and they'd watch it
+      // happen live, category by category. Driving it here instead means
+      // the splash — which the user is already expecting to sit through
+      // for a moment, the same as a game console's boot animation —
+      // is what "pays for" that, so Movies/TV Shows are already fully
+      // populated by the time the main UI appears. Uses the same
+      // self-sustaining worker pool "Update Content" already relies on,
+      // so this is a fast local-database read in the common case, not a
+      // network fetch — no artificial delay, this is genuinely the same
+      // work that would otherwise happen the moment you opened either tab.
+      if (!didSync && _playlistManager.isXtream) {
+        final vodNames = _playlistManager.vodGroups.where((g) => !g.isHidden).map((g) => g.title);
+        final seriesNames = _playlistManager.seriesGroups.where((g) => !g.isHidden).map((g) => g.title);
+        await Future.wait([
+          _playlistManager.ensureCategoriesLoaded(vodNames, 'vod'),
+          _playlistManager.ensureCategoriesLoaded(seriesNames, 'series'),
+        ]);
+      }
+
+      // A fixed floor on top of the real work above — on a very small
+      // catalog (or M3U mode, which skips the pre-load entirely) that
+      // work alone might finish in well under a second, too fast for the
+      // splash's pulse animation to actually register at all.
+      final elapsed = DateTime.now().difference(started);
+      if (elapsed < _minSplashDuration) {
+        await Future.delayed(_minSplashDuration - elapsed);
+      }
       if (mounted) setState(() => _ready = true);
       if (didSync) {
         // The toast needs the real MaterialApp's ScaffoldMessengerKey,
@@ -280,13 +343,56 @@ class _NoxIptvAppState extends State<NoxIptvApp> {
         home: Scaffold(
           backgroundColor: Colors.black,
           body: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(color: Colors.white),
-                const SizedBox(height: 16),
-                Text(_splashStatus, style: const TextStyle(color: Colors.white70)),
-              ],
+            child: AnimatedBuilder(
+              animation: _splashController,
+              builder: (context, child) {
+                // 0..1..0 over the controller's duration — eased so the
+                // pulse breathes rather than bouncing linearly.
+                final t = Curves.easeInOut.transform(_splashController.value);
+                final scale = 0.94 + (t * 0.12); // 0.94 .. 1.06
+                final glow = 0.25 + (t * 0.45); // 0.25 .. 0.70
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFE91E8C).withValues(alpha: glow),
+                            blurRadius: 40,
+                            spreadRadius: 6,
+                          ),
+                        ],
+                      ),
+                      child: Transform.scale(
+                        scale: scale,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(28),
+                          child: Image.asset(
+                            'assets/icon/icon_flat.png',
+                            width: 120,
+                            height: 120,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    ShaderMask(
+                      blendMode: BlendMode.srcIn,
+                      shaderCallback: (bounds) => const LinearGradient(
+                        colors: [Color(0xFF7C3AED), Color(0xFFE91E8C)],
+                      ).createShader(bounds),
+                      child: const Text(
+                        AppConstants.appName,
+                        style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(_splashStatus, style: const TextStyle(color: Colors.white70)),
+                  ],
+                );
+              },
             ),
           ),
         ),

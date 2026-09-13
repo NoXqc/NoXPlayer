@@ -34,18 +34,12 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.17.0 — found and fixed a serious bug via real hardware '
-      'profiling: a category that failed to load (HTTP 403) was retried '
-      'on every single screen rebuild forever, hammering the server '
-      'with rejected requests indefinitely for the rest of the session '
-      '— confirmed as a real contributor to elevated memory and even an '
-      'in-progress playback failure. Root cause: the account\'s own '
-      'max_connections limit (now read from the auth response and used '
-      'to cap concurrent category fetches, instead of a fixed 3 '
-      'regardless of what the account allows) was being exceeded by our '
-      'own concurrency. Also added a hard 2-failure give-up per category '
-      'as a safety net regardless of cause — a manual "Update Content" '
-      'always resets it for a fresh attempt.';
+      '3.19.1 — Red/Blue is now the fresh-install default accent palette '
+      '(was Purple/Magenta) — Settings > Theme still offers all four '
+      'regardless. Also confirmed the dark-theme toggle not affecting '
+      'the TV browsing screen is intentional, not a bug — that screen '
+      'deliberately always stays dark regardless of the phone light/dark '
+      'setting, matching TiviMate/Netflix/YouTube TV convention.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
@@ -103,17 +97,20 @@ class AppConstants {
   /// restrained of the four — muted rather than neon — so there's a safe
   /// option for a shared device an older user might also use.
   static const List<CyberpunkPalette> cyberpunkPalettes = [
-    CyberpunkPalette(
-      id: 'purple_magenta',
-      label: 'Purple / Magenta',
-      primary: Color(0xFF7C3AED),
-      secondary: Color(0xFFE91E8C),
-    ),
+    // First entry is the fresh-install default — see
+    // StorageService.getPaletteId's fallback and AppPreferences._paletteById's
+    // orElse, both of which fall back to cyberpunkPalettes.first.
     CyberpunkPalette(
       id: 'red_blue',
       label: 'Red / Blue',
       primary: Color(0xFFE5393F),
       secondary: Color(0xFF2979FF),
+    ),
+    CyberpunkPalette(
+      id: 'purple_magenta',
+      label: 'Purple / Magenta',
+      primary: Color(0xFF7C3AED),
+      secondary: Color(0xFFE91E8C),
     ),
     CyberpunkPalette(
       id: 'green_orange',

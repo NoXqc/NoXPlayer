@@ -1483,6 +1483,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   }
 
   Widget _buildMoviesBrowse(PlaylistManager playlist) {
+    // Temporary diagnostic — see PlaylistManager.ensureCategoryLoaded's
+    // matching comment. Pins down whether a ~10s gap seen between
+    // category-load batches is because this build method itself is only
+    // being re-entered every ~10s (a rebuild-triggering problem upstream
+    // of ensureCategoriesLoaded), or because it's called constantly but
+    // something inside the loading path is silently stalling.
+    debugPrint('BuildMovies at ${DateTime.now().toIso8601String()}');
     // !isHidden matters here, not just in the groups quick-jump column —
     // without it, a category filtered out via the content filter or Group
     // Management still showed up in the actual catalog, just missing from
@@ -1513,7 +1520,11 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           KeyedSubtree(
             key: _keyForGroup(group.title),
             child: _CategoryRow<Channel>(
-              title: '${group.title} (${group.channels.length})',
+              // The real category size (which can be well past the
+              // _maxItemsPerCategory render cap that group.channels.length
+              // is limited to) when known — see
+              // PlaylistManager.vodCategoryTotalCount's doc comment.
+              title: '${group.title} (${playlist.vodCategoryTotalCount(group.title) ?? group.channels.length})',
               items: group.channels,
               itemBuilder: (c, index) => PosterCard(
                 title: c.name,
@@ -1538,6 +1549,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   }
 
   Widget _buildShowsBrowse(PlaylistManager playlist) {
+    // Temporary diagnostic — see _buildMoviesBrowse's matching comment.
+    debugPrint('BuildShows at ${DateTime.now().toIso8601String()}');
     final groups = playlist.seriesGroups.where((g) => !g.isHidden).toList();
     final rows = <Widget>[];
     // Episodes resume straight into playback (no detail screen in between)
@@ -1559,7 +1572,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       rows.add(KeyedSubtree(
         key: _keyForGroup(group.title),
         child: _CategoryRow<XtreamSeries>(
-          title: '${group.title} (${items.length})',
+          // See _buildMoviesBrowse's identical fix for why this isn't
+          // just items.length.
+          title: '${group.title} (${playlist.seriesCategoryTotalCount(group.title) ?? items.length})',
           items: items,
           itemBuilder: (s, index) => PosterCard(
             title: s.name,

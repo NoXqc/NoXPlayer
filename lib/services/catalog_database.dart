@@ -130,6 +130,19 @@ class CatalogDatabase {
     return rows.map(_rowToChannel).toList();
   }
 
+  /// The category's *real* item count, ignoring [getVodCategory]'s
+  /// `limit` — used so the UI can show a category's true size (a
+  /// provider's actual "5,000 movies in this one category" figure)
+  /// instead of the display-side render cap, which callers otherwise
+  /// have no way to distinguish from the true count (both look like
+  /// "here are some items", nothing says "there were more").
+  Future<int> getVodCategoryCount(String categoryName) async {
+    final db = await _database;
+    final result =
+        await db.rawQuery('SELECT COUNT(*) AS cnt FROM vod_channels WHERE category_name = ?', [categoryName]);
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
   Future<void> upsertSeriesCategory(String categoryName, List<XtreamSeries> items) async {
     final db = await _database;
     final batch = db.batch();
@@ -146,6 +159,14 @@ class CatalogDatabase {
     final rows =
         await db.query('series_items', where: 'category_name = ?', whereArgs: [categoryName], limit: limit);
     return rows.map(_rowToSeries).toList();
+  }
+
+  /// See [getVodCategoryCount]'s doc comment — same idea for series.
+  Future<int> getSeriesCategoryCount(String categoryName) async {
+    final db = await _database;
+    final result = await db
+        .rawQuery('SELECT COUNT(*) AS cnt FROM series_items WHERE category_name = ?', [categoryName]);
+    return Sqflite.firstIntValue(result) ?? 0;
   }
 
   /// Every favorited movie regardless of whether its category has been
