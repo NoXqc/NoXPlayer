@@ -53,7 +53,11 @@ Future<void> _configureImageCache() async {
   } else if (info.totalMemGB < 4.0) {
     maxBytes = 250 << 20;
   } else {
-    maxBytes = 350 << 20;
+    // Was 350MB — bumped after confirming on real hardware that the
+    // adaptive ceiling (introduced this same version) was noticeably
+    // faster than the old fixed 100MB but still not quite instant on a
+    // device with real headroom to spare.
+    maxBytes = 500 << 20;
   }
   // The image *count* isn't the real lever — at ~300KB per decoded poster
   // (see PosterCard's cacheWidth/cacheHeight), maxBytes above is reached

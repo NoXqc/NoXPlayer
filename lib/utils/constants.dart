@@ -34,16 +34,17 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.16.0 — the image cache ceiling now scales to the actual '
-      'device\'s RAM instead of one fixed number for every Firestick. A '
-      'small native call (Android\'s ActivityManager, the same info '
-      'Glide uses to size its own cache) reports total memory + '
-      'isLowRamDevice; the ceiling scales from 100MB on a genuinely '
-      'constrained device up to 350MB on one with real headroom, '
-      'falling back to the old fixed 100MB if the query fails for any '
-      'reason. This is the real reason established players can keep '
-      'more posters resident without crashing — they were never using '
-      'one constant for every device either.';
+      '3.16.2 — two more changes based on real testing feedback: (1) '
+      'the top RAM-adaptive image cache tier (4GB+ devices) raised from '
+      '350MB to 500MB — the adaptive ceiling from 3.16.0 was noticeably '
+      'faster than the old fixed 100MB but still not quite instant with '
+      'real headroom to spare. (2) PosterCard redesigned: the title now '
+      'always renders below the poster instead of only appearing '
+      'overlaid when there was no artwork — titles for posterless '
+      'items were previously only visible by moving focus onto them and '
+      'checking the hero banner. The poster area itself also shrank '
+      '(120x168 -> 104x148) to make room, which cuts decode/memory cost '
+      'per poster too.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';

@@ -19,6 +19,7 @@ import '../widgets/mini_player_bar.dart';
 import '../widgets/mode_button.dart';
 import '../widgets/player_controls.dart';
 import '../widgets/sidebar.dart';
+import 'catalog_sync_screen.dart';
 import 'player_screen.dart';
 import 'search_screen.dart';
 import 'series_detail_screen.dart';
@@ -72,39 +73,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Confirms first — this is a full catalog re-sync (server round-trip
-  /// per non-hidden category), not a cheap action, and a stray tap on this
-  /// button shouldn't kick it off unintentionally.
   Future<void> _refreshPlaylist() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Update content now?'),
-        content: const Text(
-          'Re-checks every visible category for new content. This can take '
-          'a few minutes on a large catalog.',
-        ),
-        // Plain TextButton/FilledButton left which one has D-pad focus
-        // ambiguous — confirmed directly on hardware (the FilledButton's
-        // permanent solid fill looked selected regardless of actual
-        // focus). ModeButton is this app's established fix: a solid fill
-        // *only* on real focus.
-        actions: [
-          ModeButton(
-            label: 'Cancel',
-            selected: false,
-            onTap: () => Navigator.of(context).pop(false),
-          ),
-          ModeButton(
-            label: 'Update',
-            selected: false,
-            onTap: () => Navigator.of(context).pop(true),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
     final storage = context.read<StorageService>();
     final playlist = context.read<PlaylistManager>();
 
@@ -116,15 +85,28 @@ class _HomeScreenState extends State<HomeScreen> {
         _promptForSettings();
         return;
       }
-      // Reuses the exact same full-sync pass PlaylistManager runs
-      // automatically when stale (see runFullCatalogSync) — this is just
-      // the manual trigger for it, still backgrounded/non-blocking (the
-      // CatalogWarmupBanner already covers in-app progress). Marks the
-      // catalog fresh either way, so an automatic sync doesn't also fire
-      // again right after a manual one.
-      unawaited(playlist.runFullCatalogSync().then((_) => _showUpdateToast()));
+      // Shared with Settings > Clear Cache — see its doc comment for why
+      // this needed to become a reusable helper rather than living here.
+      final didSync = await confirmAndRunFullCatalogSync(context, playlist);
+      if (didSync && mounted) _showUpdateToast();
       return;
     }
+
+    // M3U mode: no per-category concept to re-sync, just a plain re-fetch
+    // of the flat list — still confirms first since a stray tap on this
+    // button shouldn't kick off a re-fetch unintentionally.
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update content now?'),
+        content: const Text('Re-checks your playlist URL for new content.'),
+        actions: [
+          ModeButton(label: 'Cancel', selected: false, onTap: () => Navigator.of(context).pop(false)),
+          ModeButton(label: 'Update', selected: false, onTap: () => Navigator.of(context).pop(true)),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
 
     final url = storage.getM3uUrl();
     if (url == null || url.isEmpty) {

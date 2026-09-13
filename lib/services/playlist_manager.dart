@@ -827,24 +827,45 @@ class PlaylistManager extends ChangeNotifier {
         seriesCatalogTotal = seriesTodo.length;
         _notifyWarmupProgress(force: true);
 
+        // Was fully sequential (one category, awaited, at a time,
+        // alternating VOD/series) — confirmed on real hardware as the
+        // reason a full sync could still be running after 2+ minutes on
+        // a catalog with any real number of categories: total time
+        // scaled linearly with category count, with zero parallelism.
+        // This isn't the same re-entrancy-prone spot ensureCategoriesLoaded
+        // had to guard against (that gets called on every widget rebuild;
+        // this runs once per _warmCategories call, guarded by
+        // isWarmingCatalog above), so a plain fixed worker pool is safe
+        // here — no need for the live-count-based cap that method needed.
+        const maxConcurrent = 3;
         var vodIndex = 0;
-        var seriesIndex = 0;
-        while (vodIndex < vodTodo.length || seriesIndex < seriesTodo.length) {
-          if (vodIndex < vodTodo.length) {
-            await _loadOneVodCategory(api, vodTodo[vodIndex], force: force);
-            vodIndex++;
+        Future<void> vodWorker() async {
+          while (vodIndex < vodTodo.length) {
+            final cat = vodTodo[vodIndex++];
+            await _loadOneVodCategory(api, cat, force: force);
             vodCatalogDone++;
             warmCatalogDone++;
             _notifyWarmupProgress();
           }
-          if (seriesIndex < seriesTodo.length) {
-            await _loadOneSeriesCategory(api, seriesTodo[seriesIndex], force: force);
-            seriesIndex++;
+        }
+
+        var seriesIndex = 0;
+        Future<void> seriesWorker() async {
+          while (seriesIndex < seriesTodo.length) {
+            final cat = seriesTodo[seriesIndex++];
+            await _loadOneSeriesCategory(api, cat, force: force);
             seriesCatalogDone++;
             warmCatalogDone++;
             _notifyWarmupProgress();
           }
         }
+
+        await Future.wait([
+          ...List.generate(
+              vodTodo.isEmpty ? 0 : maxConcurrent.clamp(1, vodTodo.length), (_) => vodWorker()),
+          ...List.generate(
+              seriesTodo.isEmpty ? 0 : maxConcurrent.clamp(1, seriesTodo.length), (_) => seriesWorker()),
+        ]);
       }
       await _storage.setLastFullSyncAt(DateTime.now());
     } catch (e) {

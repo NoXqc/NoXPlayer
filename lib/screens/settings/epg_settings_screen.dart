@@ -4,9 +4,11 @@ import 'package:provider/provider.dart';
 
 import '../../services/catalog_database.dart';
 import '../../services/epg_service.dart';
+import '../../services/playlist_manager.dart';
 import '../../services/storage_service.dart';
 import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
+import '../catalog_sync_screen.dart';
 
 /// No custom D-pad handling — see SettingsMenuScreen's doc comment for
 /// why: plain Flutter default focus traversal is what actually works
@@ -52,6 +54,7 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen> {
   Future<void> _clearCache() async {
     final storage = context.read<StorageService>();
     final catalogDb = context.read<CatalogDatabase>();
+    final playlist = context.read<PlaylistManager>();
     await storage.clearCache();
     // The VOD/series catalog itself lives in its own local database now
     // (not the JSON-file cache `storage.clearCache()` wipes) — see
@@ -59,6 +62,15 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen> {
     await catalogDb.clearAll();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cache cleared.')));
+    // clearCache() also wipes the last-full-sync timestamp, so the
+    // catalog is unconditionally stale right after this — reported
+    // directly as confusing when clearing cache showed no reaction at
+    // all (the automatic sync only re-checks at the *next* full app
+    // restart, not mid-session). Offering it immediately here means the
+    // user doesn't have to know to relaunch to see it.
+    if (playlist.isXtream && mounted) {
+      await confirmAndRunFullCatalogSync(context, playlist);
+    }
   }
 
   @override

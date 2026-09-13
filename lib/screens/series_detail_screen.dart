@@ -162,7 +162,6 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                                 : widget.series.coverUrl,
                             watched: storage.isFullyWatched(episode.id),
                             progressFraction: storage.getWatchedFraction(episode.id),
-                            alwaysShowTitle: true,
                             focusNode: j == 0 ? _firstFocusNodeForSeason(season) : null,
                             onTap: () => _openEpisode(episode, allEpisodesInOrder),
                             onFocusGained: () {},
