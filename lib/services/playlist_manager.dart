@@ -79,6 +79,29 @@ class PlaylistManager extends ChangeNotifier {
   final Map<String, List<XtreamSeries>> _seriesByCategoryName = {};
   final Set<String> _loadingCategoryNames = {};
 
+  /// How many times each category (keyed the same way as
+  /// [_loadingCategoryNames]) has failed to load this session. Confirmed
+  /// on real hardware as a genuine, previously-missing safety net: without
+  /// this, a category that fails (e.g. HTTP 403 from exceeding the
+  /// account's own connection limit — see [_categoryConcurrency]) got
+  /// retried again on every single widget rebuild forever, hammering the
+  /// server with rejected requests indefinitely for the rest of the
+  /// session. [_maxCategoryFailures] failures and it's left alone until
+  /// an explicit force refresh (manual "Update Content") clears this.
+  final Map<String, int> _categoryFailureCounts = {};
+  static const int _maxCategoryFailures = 2;
+
+  /// How many categories to fetch concurrently — capped at the account's
+  /// own `max_connections` (from [XtreamApiService.authenticate]) when
+  /// known, since firing more concurrent requests than an account allows
+  /// gets the extras rejected outright rather than queued. Falls back to
+  /// 3 (the concurrency level already confirmed safe/fast on accounts
+  /// without a tight limit) when the account didn't report one.
+  int get _categoryConcurrency {
+    final accountLimit = _xtreamApi?.maxConnections;
+    return accountLimit == null ? 3 : accountLimit.clamp(1, 3);
+  }
+
   /// The in-flight (or completed) [ensureLiveChannelsLoaded] load, shared
   /// across every caller — see that method's doc comment for why this
   /// needs to be a shared Future rather than a plain boolean guard.
@@ -548,6 +571,12 @@ class PlaylistManager extends ChangeNotifier {
     // the whole shared cap).
     final key = _loadKey(tabCategory, categoryName);
     if (_loadingCategoryNames.contains(key)) return;
+    // Confirmed on real hardware: without this, a category that keeps
+    // failing (e.g. HTTP 403 from exceeding the account's connection
+    // limit) got retried on every single rebuild forever — this is the
+    // give-up. force=true full syncs clear these counts first, so a
+    // manual "Update Content" always gets a fresh attempt regardless.
+    if ((_categoryFailureCounts[key] ?? 0) >= _maxCategoryFailures) return;
 
     _loadingCategoryNames.add(key);
     isLoading = true;
@@ -588,6 +617,7 @@ class PlaylistManager extends ChangeNotifier {
     } catch (e) {
       error = e.toString();
       debugPrint('PlaylistManager error: $e');
+      _categoryFailureCounts[key] = (_categoryFailureCounts[key] ?? 0) + 1;
     } finally {
       _loadingCategoryNames.remove(key);
       isLoading = false;
@@ -631,13 +661,21 @@ class PlaylistManager extends ChangeNotifier {
   /// other's: switching to Movies while TV Shows' 3 were still loading
   /// left Movies' own kick-off unable to start anything at all until one
   /// of those unrelated series fetches finished.
+  ///
+  /// The concurrency budget itself ([_categoryConcurrency]) is capped at
+  /// the account's own `max_connections` when known — confirmed on real
+  /// hardware that firing more concurrent requests than an account allows
+  /// gets the extras rejected with HTTP 403, not queued.
   Future<void> ensureCategoriesLoaded(Iterable<String> categoryNames, String tabCategory) async {
-    const maxConcurrent = 3;
+    final maxConcurrent = _categoryConcurrency;
     final loadedMap = tabCategory == 'vod' ? _vodByCategoryName : _seriesByCategoryName;
     final prefix = '$tabCategory:';
     for (final name in categoryNames) {
       if (_loadingCategoryNames.where((k) => k.startsWith(prefix)).length >= maxConcurrent) return;
-      if (loadedMap.containsKey(name) || _loadingCategoryNames.contains(_loadKey(tabCategory, name))) {
+      final key = _loadKey(tabCategory, name);
+      if (loadedMap.containsKey(name) ||
+          _loadingCategoryNames.contains(key) ||
+          (_categoryFailureCounts[key] ?? 0) >= _maxCategoryFailures) {
         continue;
       }
       unawaited(ensureCategoryLoaded(name, tabCategory));
@@ -655,7 +693,9 @@ class PlaylistManager extends ChangeNotifier {
   /// instead of going empty first.
   Future<void> _loadOneVodCategory(XtreamApiService api, XtreamCategory cat, {bool force = false}) async {
     final key = _loadKey('vod', cat.name);
-    if ((!force && _vodByCategoryName.containsKey(cat.name)) || _loadingCategoryNames.contains(key)) {
+    if ((!force && _vodByCategoryName.containsKey(cat.name)) ||
+        _loadingCategoryNames.contains(key) ||
+        (_categoryFailureCounts[key] ?? 0) >= _maxCategoryFailures) {
       return;
     }
     _loadingCategoryNames.add(key);
@@ -668,6 +708,7 @@ class PlaylistManager extends ChangeNotifier {
       _vodByCategoryName[cat.name] = items.take(_maxItemsPerCategory).toList();
     } catch (e) {
       debugPrint('PlaylistManager: background load failed for movies "${cat.name}": $e');
+      _categoryFailureCounts[key] = (_categoryFailureCounts[key] ?? 0) + 1;
     } finally {
       _loadingCategoryNames.remove(key);
     }
@@ -675,7 +716,9 @@ class PlaylistManager extends ChangeNotifier {
 
   Future<void> _loadOneSeriesCategory(XtreamApiService api, XtreamCategory cat, {bool force = false}) async {
     final key = _loadKey('series', cat.name);
-    if ((!force && _seriesByCategoryName.containsKey(cat.name)) || _loadingCategoryNames.contains(key)) {
+    if ((!force && _seriesByCategoryName.containsKey(cat.name)) ||
+        _loadingCategoryNames.contains(key) ||
+        (_categoryFailureCounts[key] ?? 0) >= _maxCategoryFailures) {
       return;
     }
     _loadingCategoryNames.add(key);
@@ -688,6 +731,7 @@ class PlaylistManager extends ChangeNotifier {
       _seriesByCategoryName[cat.name] = items.take(_maxItemsPerCategory).toList();
     } catch (e) {
       debugPrint('PlaylistManager: background load failed for TV shows "${cat.name}": $e');
+      _categoryFailureCounts[key] = (_categoryFailureCounts[key] ?? 0) + 1;
     } finally {
       _loadingCategoryNames.remove(key);
     }
@@ -807,6 +851,14 @@ class PlaylistManager extends ChangeNotifier {
     final api = _xtreamApi;
     if (api == null) return;
 
+    // A manual "Update Content" (force: true) is a deliberate request to
+    // re-check everything — give every category that previously hit
+    // _maxCategoryFailures a fresh set of attempts rather than leaving it
+    // silently skipped forever because of an earlier session's failures
+    // (e.g. a transient rejection, since fixed elsewhere by capping
+    // concurrency to the account's own limit).
+    if (force) _categoryFailureCounts.clear();
+
     try {
       final vodTodo = _vodCategories
           .where((c) =>
@@ -837,7 +889,9 @@ class PlaylistManager extends ChangeNotifier {
         // this runs once per _warmCategories call, guarded by
         // isWarmingCatalog above), so a plain fixed worker pool is safe
         // here — no need for the live-count-based cap that method needed.
-        const maxConcurrent = 3;
+        // Capped at the account's own connection limit, same reasoning as
+        // ensureCategoriesLoaded — see _categoryConcurrency.
+        final maxConcurrent = _categoryConcurrency;
         var vodIndex = 0;
         Future<void> vodWorker() async {
           while (vodIndex < vodTodo.length) {

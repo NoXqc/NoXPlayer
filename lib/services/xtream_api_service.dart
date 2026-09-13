@@ -23,6 +23,17 @@ class XtreamApiService {
   final String username;
   final String password;
 
+  /// From the account's own `user_info.max_connections` (a string in the
+  /// API response, `"0"` conventionally meaning unlimited) — null until
+  /// [authenticate] runs, or if the field was missing/unparseable.
+  /// PlaylistManager uses this to size how many categories it fetches
+  /// concurrently: confirmed on real hardware that firing more concurrent
+  /// requests than an account actually allows gets the extras rejected
+  /// with HTTP 403 — and, a separate bug also fixed alongside this, that
+  /// nothing gave up retrying those, so it hammered the server with
+  /// rejected requests forever for the rest of the session.
+  int? maxConnections;
+
   static String _normalizeServer(String server) {
     var s = server.trim();
     while (s.endsWith('/')) {
@@ -77,6 +88,11 @@ class XtreamApiService {
     if (status != 'Active') {
       throw Exception('Xtream account is not active (status: $status)');
     }
+    final rawMaxConnections = int.tryParse(userInfo['max_connections']?.toString() ?? '');
+    // "0" conventionally means unlimited on Xtream panels — leave
+    // maxConnections null in that case so callers fall back to their own
+    // default cap rather than reading 0 as "allow zero connections".
+    maxConnections = (rawMaxConnections != null && rawMaxConnections > 0) ? rawMaxConnections : null;
   }
 
   List<XtreamCategory> _toCategories(List<Map<String, dynamic>> raw) => raw

@@ -34,17 +34,18 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.16.2 — two more changes based on real testing feedback: (1) '
-      'the top RAM-adaptive image cache tier (4GB+ devices) raised from '
-      '350MB to 500MB — the adaptive ceiling from 3.16.0 was noticeably '
-      'faster than the old fixed 100MB but still not quite instant with '
-      'real headroom to spare. (2) PosterCard redesigned: the title now '
-      'always renders below the poster instead of only appearing '
-      'overlaid when there was no artwork — titles for posterless '
-      'items were previously only visible by moving focus onto them and '
-      'checking the hero banner. The poster area itself also shrank '
-      '(120x168 -> 104x148) to make room, which cuts decode/memory cost '
-      'per poster too.';
+      '3.17.0 — found and fixed a serious bug via real hardware '
+      'profiling: a category that failed to load (HTTP 403) was retried '
+      'on every single screen rebuild forever, hammering the server '
+      'with rejected requests indefinitely for the rest of the session '
+      '— confirmed as a real contributor to elevated memory and even an '
+      'in-progress playback failure. Root cause: the account\'s own '
+      'max_connections limit (now read from the auth response and used '
+      'to cap concurrent category fetches, instead of a fixed 3 '
+      'regardless of what the account allows) was being exceeded by our '
+      'own concurrency. Also added a hard 2-failure give-up per category '
+      'as a safety net regardless of cause — a manual "Update Content" '
+      'always resets it for a fresh attempt.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
