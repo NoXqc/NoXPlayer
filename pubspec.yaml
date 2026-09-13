@@ -1,7 +1,7 @@
 name: nox_iptv
 description: "NoX IPTV - an M3U/EPG IPTV player for Android phones, boxes, and Firesticks."
 publish_to: 'none'
-version: 3.19.1+78
+version: 3.20.0+79
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -22,6 +22,7 @@ dependencies:
   path: ^1.9.0
   wakelock_plus: ^1.8.0
   cached_network_image: ^3.4.1
+  package_info_plus: ^10.2.1
 
 dev_dependencies:
   flutter_test:

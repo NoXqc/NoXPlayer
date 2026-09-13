@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
 import 'add_playlist_screen.dart';
+import 'check_updates_screen.dart';
 import 'content_manager_screen.dart';
 import 'epg_settings_screen.dart';
 import 'theme_screen.dart';
@@ -58,6 +59,13 @@ class SettingsMenuScreen extends StatelessWidget {
             subtitle: 'Auto-refresh, update now, clear cache',
             onTap: () => Navigator.of(context)
                 .push(MaterialPageRoute(builder: (_) => const EpgSettingsScreen())),
+          ),
+          _MenuTile(
+            icon: Icons.system_update_outlined,
+            title: 'Check for Updates',
+            subtitle: 'Download and install the latest release',
+            onTap: () => Navigator.of(context)
+                .push(MaterialPageRoute(builder: (_) => const CheckUpdatesScreen())),
           ),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 16, 16, 4),

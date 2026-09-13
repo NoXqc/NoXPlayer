@@ -34,12 +34,14 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.19.1 — Red/Blue is now the fresh-install default accent palette '
-      '(was Purple/Magenta) — Settings > Theme still offers all four '
-      'regardless. Also confirmed the dark-theme toggle not affecting '
-      'the TV browsing screen is intentional, not a bug — that screen '
-      'deliberately always stays dark regardless of the phone light/dark '
-      'setting, matching TiviMate/Netflix/YouTube TV convention.';
+      '3.20.0 — added Settings > Check for Updates: checks GitHub for a '
+      'newer release, downloads it, and hands it to Android\'s own '
+      'installer — no more manual ADB/Downloader reinstall for a new '
+      'build. One real limit, not a bug: Android itself requires a fresh '
+      'user tap on its own install-confirmation dialog (and a one-time '
+      '"install unknown apps" grant) — no sideloaded app can silently '
+      'self-install, that\'s an OS security boundary this can\'t code '
+      'around.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';

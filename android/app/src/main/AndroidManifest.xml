@@ -1,5 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Lets the in-app "Check for Updates" feature (Settings) trigger the
+         system installer on a downloaded APK. Android 8+ additionally
+         requires the user to grant this app "install unknown apps" access
+         once, from Settings — this permission alone doesn't skip that. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
     <!-- Not TV-only: phones/tablets can still install and run this fine. -->
     <uses-feature android:name="android.software.leanback" android:required="false"/>
@@ -52,6 +57,22 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- Grants the system installer temporary read access to a
+             downloaded APK sitting in our own app-private storage — Android
+             blocks a bare file:// URI to installer/other apps outright
+             (a "FileUriExposedException"), a content:// URI via FileProvider
+             is the only sanctioned way to hand another app one specific file
+             without opening up the whole directory. See AppUpdateService. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
