@@ -9,6 +9,7 @@ import 'screens/home_screen.dart';
 import 'screens/tv_home_screen.dart';
 import 'services/app_preferences.dart';
 import 'services/catalog_database.dart';
+import 'services/device_memory_service.dart';
 import 'services/epg_service.dart';
 import 'services/playback_service.dart';
 import 'services/playlist_manager.dart';
@@ -16,30 +17,50 @@ import 'services/storage_service.dart';
 import 'utils/constants.dart';
 import 'utils/route_observer.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Flutter's default ImageCache holds up to 1000 decoded images / ~100MB —
-  // fine on a phone, but on a memory-constrained box (some Firesticks have
-  // as little as ~1.7GB total RAM) that alone can be enough to trigger a
-  // device-wide low-memory kill cascade while browsing a large catalog, even
-  // with cacheWidth/cacheHeight shrinking each individual decoded image (see
-  // PosterCard/channel_list_tile). A much tighter ceiling here means old
-  // poster bitmaps actually get evicted instead of accumulating for the
-  // whole session.
-  //
-  // Was 400/60MB, deliberately conservative while an OOM-crashing Firestick
-  // was still an open question. Since then: that same build ran stable on a
-  // *different* Firestick, a Formuler box handles a far bigger catalog with
-  // zero issues, and a pre-rewrite build crashed on the same problem device
-  // too — pointing at that specific unit's own memory/OS state, not catalog
-  // size, as the actual cause. Combined with cached_network_image now
-  // backing this (an eviction re-decodes from disk, not the network, so
-  // it's cheaper than it used to be), there's real room to loosen this a
-  // bit — kept as a moderate bump, not a removal of the ceiling, since this
-  // is still a small/constrained class of hardware.
-  PaintingBinding.instance.imageCache.maximumSize = 600;
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 100 << 20; // 100MB
+  await _configureImageCache();
   runApp(const NoxIptvApp());
+}
+
+/// Flutter's default ImageCache holds up to 1000 decoded images / ~100MB —
+/// fine on a phone, but on a memory-constrained box (some Firesticks have
+/// as little as ~1.7GB total RAM) that alone can be enough to trigger a
+/// device-wide low-memory kill cascade while browsing a large catalog, even
+/// with cacheWidth/cacheHeight shrinking each individual decoded image (see
+/// PosterCard/channel_list_tile).
+///
+/// This used to be one fixed number for every device — confirmed as the
+/// wrong model: a Firestick with almost no memory headroom and a Formuler
+/// box with plenty both got the exact same ceiling, when what they can
+/// each actually spare is very different. Native Android image loaders
+/// (Glide, the de facto standard) size their own cache off
+/// `ActivityManager.isLowRamDevice()`/`getMemoryInfo()` for exactly this
+/// reason — this queries the same real device info (via MainActivity.kt,
+/// since Flutter has no built-in way to ask this) and scales the ceiling
+/// to what *this* device can actually spare, instead of guessing one
+/// number for all of them. Falls back to the old conservative constant
+/// (100MB) if the query fails for any reason (non-Android platform,
+/// unexpected native exception) — never guesses generous under
+/// uncertainty.
+Future<void> _configureImageCache() async {
+  final info = await DeviceMemoryService.getMemoryInfo();
+  final int maxBytes;
+  if (info == null || info.isLowRamDevice || info.totalMemGB < 2.0) {
+    maxBytes = 100 << 20; // 100MB — the tier this session already validated as stable
+  } else if (info.totalMemGB < 3.0) {
+    maxBytes = 175 << 20;
+  } else if (info.totalMemGB < 4.0) {
+    maxBytes = 250 << 20;
+  } else {
+    maxBytes = 350 << 20;
+  }
+  // The image *count* isn't the real lever — at ~300KB per decoded poster
+  // (see PosterCard's cacheWidth/cacheHeight), maxBytes above is reached
+  // long before any sane count limit would matter. Set high enough that
+  // it's never the actual constraint, so maxBytes is the one true ceiling.
+  PaintingBinding.instance.imageCache.maximumSize = 2000;
+  PaintingBinding.instance.imageCache.maximumSizeBytes = maxBytes;
 }
 
 /// Root widget. Bootstraps [StorageService], [PlaylistManager], and

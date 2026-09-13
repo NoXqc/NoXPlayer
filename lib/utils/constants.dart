@@ -34,18 +34,16 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.15.3 — fixed two real bugs found from a hardware screenshot: '
-      '(1) the tabs sidebar (_SelectableRow) only showed "this is the '
-      'active tab" while it also had D-pad focus — the instant focus '
-      'moved to a different tab, there was no way to tell which one was '
-      'actually active, confirmed directly (cursor on Movies, TV Shows '
-      'still the real active tab and still on screen, but Movies looked '
-      'selected). Now a persistent colored border marks the true active '
-      'tab regardless of focus. (2) The category-load concurrency cap '
-      'was shared between VOD and series — switching to Movies while TV '
-      'Shows\' 3 in-flight fetches were still running left Movies unable '
-      'to start anything until one of those unrelated fetches finished. '
-      'Each tab now gets its own budget of 3.';
+      '3.16.0 — the image cache ceiling now scales to the actual '
+      'device\'s RAM instead of one fixed number for every Firestick. A '
+      'small native call (Android\'s ActivityManager, the same info '
+      'Glide uses to size its own cache) reports total memory + '
+      'isLowRamDevice; the ceiling scales from 100MB on a genuinely '
+      'constrained device up to 350MB on one with real headroom, '
+      'falling back to the old fixed 100MB if the query fails for any '
+      'reason. This is the real reason established players can keep '
+      'more posters resident without crashing — they were never using '
+      'one constant for every device either.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
