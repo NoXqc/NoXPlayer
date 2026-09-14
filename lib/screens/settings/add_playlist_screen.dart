@@ -11,6 +11,7 @@ import '../../utils/tv_theme.dart';
 import '../../utils/xtream.dart';
 import '../../widgets/mode_button.dart';
 import '../../widgets/section_label.dart';
+import '../../widgets/settings_scaffold.dart';
 import '../catalog_sync_screen.dart';
 import 'group_management_screen.dart';
 
@@ -323,8 +324,8 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   Widget build(BuildContext context) {
     final playlist = context.watch<PlaylistManager>();
 
-    return withTvThemeIfNeeded(context, (context) => Scaffold(
-      appBar: AppBar(title: const Text('Add Playlist')),
+    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
+      title: 'Add Playlist',
       // No custom D-pad handling for anything but the text fields' own
       // Next/Done wiring above — see SettingsMenuScreen's doc comment for
       // why: plain Flutter default focus traversal is what actually

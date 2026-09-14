@@ -8,6 +8,7 @@ import '../../services/playlist_manager.dart';
 import '../../services/storage_service.dart';
 import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
+import '../../widgets/settings_scaffold.dart';
 import '../catalog_sync_screen.dart';
 
 /// No custom D-pad handling — see SettingsMenuScreen's doc comment for
@@ -77,8 +78,8 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen> {
   Widget build(BuildContext context) {
     final epg = context.watch<EpgService>();
 
-    return withTvThemeIfNeeded(context, (context) => Scaffold(
-      appBar: AppBar(title: const Text('EPG')),
+    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
+      title: 'EPG',
       body: ListView(
           padding: const EdgeInsets.all(16),
           children: [

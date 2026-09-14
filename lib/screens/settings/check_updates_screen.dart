@@ -3,6 +3,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../services/app_update_service.dart';
 import '../../utils/tv_theme.dart';
+import '../../widgets/settings_scaffold.dart';
 
 /// Settings > Check for Updates — the in-app replacement for a Play Store
 /// auto-update, since this is a sideloaded app with no store distribution.
@@ -116,8 +117,8 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return withTvThemeIfNeeded(context, (context) => Scaffold(
-      appBar: AppBar(title: const Text('Check for Updates')),
+    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
+      title: 'Check for Updates',
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

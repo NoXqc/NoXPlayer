@@ -23,6 +23,7 @@ import '../widgets/mode_button.dart';
 import '../widgets/player_controls.dart';
 import '../widgets/poster_card.dart';
 import '../widgets/section_label.dart';
+import '../widgets/settings_scaffold.dart';
 import 'catalog_sync_screen.dart';
 import 'movie_detail_screen.dart';
 import 'player_screen.dart';
@@ -795,24 +796,18 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     return Theme(
       data: ThemeData(colorScheme: darkScheme, useMaterial3: true),
       child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Container(
-          decoration: BoxDecoration(
-            // Was a single barely-there 0.16-alpha corner tint — read as
-            // "still basically black/grey" rather than an actual duo-tone
-            // ambiance. Both accents now visibly bleed in from opposite
-            // corners.
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Color.alphaBlend(darkScheme.primary.withValues(alpha: 0.4), Colors.black),
-                Colors.black,
-                Color.alphaBlend(darkScheme.secondary.withValues(alpha: 0.32), Colors.black),
-              ],
-            ),
-          ),
-          child: SafeArea(
+        backgroundColor: Colors.transparent,
+        body: Stack(
+          children: [
+            // Same bright, saturated two-color diagonal used across every
+            // Settings screen (see SettingsGradientBackground's doc
+            // comment) — was a muted 3-stop alpha-blend-onto-black here,
+            // which read as "still basically black/grey" next to the
+            // Settings redesign. Reusing the shared widget instead of a
+            // second copy of the same gradient math keeps both screens in
+            // sync automatically if the recipe ever changes again.
+            const Positioned.fill(child: SettingsGradientBackground()),
+            SafeArea(
             minimum: const EdgeInsets.all(16),
             child: Column(
               children: [
@@ -955,6 +950,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
               ],
             ),
           ),
+          ],
         ),
       ),
     );
@@ -1202,7 +1198,24 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     final rawChannel = playback.isSilentlyResuming ? null : playback.currentChannel;
     final channel = rawChannel != null && Channel.isLiveId(rawChannel.id) ? rawChannel : null;
 
-    return Stack(
+    // A thin rounded frame around the whole pane — same "frosted glass"
+    // language as SettingsPanel/the new gradient background, so this reads
+    // as a deliberate card floating on the gradient instead of a plain
+    // rectangle with hard edges directly on the coloured background.
+    // `Container.clipBehavior` (not a separate `ClipRRect`) so the border
+    // and the rounding are one paint operation instead of two, and so the
+    // channel-list scrim's own top-left/bottom-left corners (its
+    // `Positioned` touches this Stack's edges directly) pick up the same
+    // rounding for free. Reported as looking unpolished next to the
+    // brighter Settings redesign — this pane is the one part of the main
+    // screen that's still full-bleed video.
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18), width: 1.5),
+      ),
+      child: Stack(
       children: [
         Positioned.fill(
           child: channel == null
@@ -1258,8 +1271,11 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         ),
         if (channel != null)
           Positioned(
-            top: 8,
-            right: 8,
+            // A couple px further in than before — right up against the
+            // pane's own new rounded corner (above), an 8px inset let the
+            // button's circular edge clip visually into the curve.
+            top: 12,
+            right: 12,
             child: IconButton.filledTonal(
               icon: const Icon(Icons.fullscreen),
               onPressed: () => Navigator.of(context)
@@ -1282,6 +1298,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           ),
         ),
       ],
+      ),
     );
   }
 

@@ -7,6 +7,7 @@ import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
 import '../../widgets/mode_button.dart';
 import '../../widgets/section_label.dart';
+import '../../widgets/settings_scaffold.dart';
 import '../../widgets/tv_switch_list_tile.dart';
 
 /// Appearance + layout — grouped together since "what does this look like"
@@ -25,8 +26,8 @@ class ThemeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final prefs = context.watch<AppPreferences>();
 
-    return withTvThemeIfNeeded(context, (context) => Scaffold(
-      appBar: AppBar(title: const Text('Theme')),
+    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
+      title: 'Theme',
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
+import '../../widgets/settings_scaffold.dart';
 import 'add_playlist_screen.dart';
 import 'check_updates_screen.dart';
 import 'content_manager_screen.dart';
@@ -28,8 +29,8 @@ class SettingsMenuScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return withTvThemeIfNeeded(context, (context) => Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
+      title: 'Settings',
       body: ListView(
         children: [
           _MenuTile(

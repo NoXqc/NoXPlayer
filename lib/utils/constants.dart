@@ -34,21 +34,15 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.21.0 — Group Management checkbox focus fix, permanent '
-      'Downloader release URL, Live TV groups column no longer has an '
-      '"All" dumping-ground entry, TV show ratings, database-backed '
-      'search (no more 300-item cap), and a stale-seek-position fix '
-      'for live channels that made them look "stuck paused". Also '
-      'replaces an abandoned "Live Island" floating-pill experiment '
-      '(see the backup/live-island-attempt branch) with something much '
-      'simpler: leaving a live channel\'s fullscreen view keeps it '
-      'playing in the background exactly like a movie already did, and '
-      'holding Right on the remote from anywhere jumps straight back — '
-      'a small reminder at the bottom of the screen names what\'s '
-      'playing and the gesture that resumes it. No floating video '
-      'preview anywhere outside its own fullscreen view this time, '
-      'which is what kept breaking on real hardware in the pill '
-      'version. Needs a full real-hardware pass.';
+      '3.22.0 — Settings screens redesigned (gradient background, '
+      'frosted-glass panels, circular check icons) to match the '
+      'MyTVOnline3 reference look. Group Management\'s checkbox glyph '
+      'replaced with a plain circular Icon (fixes a Formuler-specific '
+      'stale-repaint bug where the box never visually updated even '
+      'though the underlying hide/show state was always correct). '
+      'Poster images now persist across a full app restart instead of '
+      're-fetching every cold start (flutter_cache_manager was storing '
+      'files in the OS-reclaimable temp directory).';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';

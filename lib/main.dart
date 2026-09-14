@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,6 +12,7 @@ import 'services/app_preferences.dart';
 import 'services/catalog_database.dart';
 import 'services/device_memory_service.dart';
 import 'services/epg_service.dart';
+import 'services/persistent_image_cache.dart';
 import 'services/playback_service.dart';
 import 'services/playlist_manager.dart';
 import 'services/storage_service.dart';
@@ -21,6 +23,12 @@ import 'widgets/live_resume_hint.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _configureImageCache();
+  // See persistent_image_cache.dart's doc comment — the package default
+  // stores cached poster/logo *files* in OS-reclaimable storage while its
+  // own cache index lives somewhere persistent, so they can (and on a
+  // real box, confirmed do) drift out of sync: every poster re-fetches
+  // from scratch on a cold start, not just the first one ever.
+  CachedNetworkImageProvider.defaultCacheManager = persistentImageCacheManager;
   runApp(const NoxIptvApp());
 }
 

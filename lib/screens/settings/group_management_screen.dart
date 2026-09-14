@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../models/m3u_group.dart';
 import '../../services/playlist_manager.dart';
 import '../../utils/tv_theme.dart';
+import '../../widgets/settings_scaffold.dart';
 
 /// Lists every group/category (live, movies, TV shows) — including hidden
 /// ones, which is the whole point of this screen — with per-group and
@@ -162,9 +163,8 @@ class _GroupManagementScreenState extends State<GroupManagementScreen>
         // warm-up download even though they'd explicitly confirmed leaving.
         Navigator.of(context).pop(true);
       },
-      child: Scaffold(
-      appBar: AppBar(
-        title: const Text('Group Management'),
+      child: SettingsScaffold(
+      title: 'Group Management',
         // Explicit "Done" so the caller can tell a deliberate finish apart
         // from just leaving the screen some other way (physical back, an
         // accidental pop, or confirming "leave" in the prompt above
@@ -191,7 +191,6 @@ class _GroupManagementScreenState extends State<GroupManagementScreen>
             Tab(text: 'Confirm'),
           ],
         ),
-      ),
       body: CallbackShortcuts(
         bindings: <ShortcutActivator, VoidCallback>{
           const SingleActivator(LogicalKeyboardKey.arrowLeft):
@@ -342,17 +341,29 @@ class _GroupList extends StatelessWidget {
               // that inner piece, and the row is built by hand (instead of
               // CheckboxListTile) so that piece can be keyed independently
               // of the focusable row around it.
+              //
+              // Second fix attempt: kept `Checkbox` itself, just wrapped in
+              // a `KeyedSubtree` keyed to `group.isHidden` — confirmed on
+              // the same Formuler box as STILL not reliably repainting.
+              // Data was verified correct throughout (toggling really did
+              // flip `_hiddenGroups`; a subsequent full sync used the
+              // correct set) — this is a pure paint bug, not a logic one,
+              // and it survives even a full Element recreation, which
+              // means the problem isn't identity/keying at all — it's
+              // something about repainting `Checkbox` specifically on this
+              // device. `Checkbox` is a full Material widget with its own
+              // ink/animation machinery; swapping to a bare `Icon` (no
+              // Material ink response, no internal AnimatedContainer, as
+              // simple a paint primitive as Flutter has) sidesteps
+              // whatever that is rather than trying to force it again.
               return ListTile(
                 key: ValueKey(group.title),
                 title: Text(group.title),
                 trailing: KeyedSubtree(
                   key: ValueKey(group.isHidden),
-                  child: Checkbox(
-                    value: !group.isHidden,
-                    // Decorative only — the whole row (onTap below) is the
-                    // real toggle target, so this doesn't also grab its own
-                    // focus stop.
-                    onChanged: null,
+                  child: Icon(
+                    group.isHidden ? Icons.circle_outlined : Icons.check_circle,
+                    color: group.isHidden ? Colors.white54 : Theme.of(context).colorScheme.primary,
                   ),
                 ),
                 onTap: () => playlist.setGroupHidden(

@@ -1,7 +1,7 @@
 name: nox_iptv
 description: "NoX IPTV - an M3U/EPG IPTV player for Android phones, boxes, and Firesticks."
 publish_to: 'none'
-version: 3.21.0+81
+version: 3.22.0+82
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -23,6 +23,12 @@ dependencies:
   wakelock_plus: ^1.8.0
   cached_network_image: ^3.4.1
   package_info_plus: ^10.2.1
+  # Already pulled in transitively by cached_network_image — added
+  # explicitly to build a persistent-storage CacheManager directly (see
+  # lib/services/persistent_image_cache.dart) rather than relying on an
+  # undeclared transitive API surface.
+  flutter_cache_manager: ^3.4.1
+  file: ^7.0.0
 
 dev_dependencies:
   flutter_test:
