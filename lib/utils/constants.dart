@@ -34,11 +34,21 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.20.1 — this release exists to verify 3.20.0\'s new Check for '
-      'Updates feature end-to-end on real hardware: a device running '
-      '3.20.0 checking, downloading, and installing this exact version. '
-      'The project is also now genuinely open source (GPL-3.0), not '
-      'just a public repo.';
+      '3.21.0 — Group Management checkbox focus fix, permanent '
+      'Downloader release URL, Live TV groups column no longer has an '
+      '"All" dumping-ground entry, TV show ratings, database-backed '
+      'search (no more 300-item cap), and a stale-seek-position fix '
+      'for live channels that made them look "stuck paused". Also '
+      'replaces an abandoned "Live Island" floating-pill experiment '
+      '(see the backup/live-island-attempt branch) with something much '
+      'simpler: leaving a live channel\'s fullscreen view keeps it '
+      'playing in the background exactly like a movie already did, and '
+      'holding Right on the remote from anywhere jumps straight back — '
+      'a small reminder at the bottom of the screen names what\'s '
+      'playing and the gesture that resumes it. No floating video '
+      'preview anywhere outside its own fullscreen view this time, '
+      'which is what kept breaking on real hardware in the pill '
+      'version. Needs a full real-hardware pass.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';

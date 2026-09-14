@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../models/channel.dart';
 import '../models/xtream_series.dart';
+import '../services/catalog_database.dart';
 import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
 import '../services/storage_service.dart';
@@ -36,6 +37,18 @@ class _SearchScreenState extends State<SearchScreen> {
   String _query = '';
   List<String> _recentSearches = [];
 
+  /// Xtream Movies/TV Shows results, queried from [CatalogDatabase]
+  /// directly rather than `PlaylistManager.allCachedVod`/`allCachedSeries`
+  /// — those only ever reflect whatever's paged into memory this session,
+  /// capped at 300 items per category even then, so a title anywhere past
+  /// that cap in a large category was invisible to search even though it
+  /// was fully synced to disk. Null means "no query run yet for the
+  /// current text" (shows a brief loading spinner), distinct from an
+  /// empty list (a real "nothing found").
+  List<Channel>? _dbVodResults;
+  List<XtreamSeries>? _dbSeriesResults;
+  Timer? _searchDebounce;
+
   static const _scopes = ['TV', 'Movies', 'TV Shows'];
   static const _scopeLabels = {'TV': 'Live TV', 'Movies': 'Movies', 'TV Shows': 'TV Shows'};
 
@@ -53,8 +66,42 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _searchDebounce?.cancel();
     _controller.dispose();
     super.dispose();
+  }
+
+  /// Debounced so a real database query (SQL `LIKE` scan over a
+  /// potentially 100k+ row table) doesn't fire on every single keystroke
+  /// — only once typing actually pauses. Selecting a recent search
+  /// ([_runSearch]) is a deliberate one-shot action instead, so that path
+  /// searches immediately with no debounce.
+  void _onQueryChanged(String value) {
+    setState(() => _query = value);
+    _searchDebounce?.cancel();
+    final trimmed = value.trim();
+    if (trimmed.isEmpty || !context.read<PlaylistManager>().isXtream) {
+      setState(() {
+        _dbVodResults = null;
+        _dbSeriesResults = null;
+      });
+      return;
+    }
+    _searchDebounce = Timer(const Duration(milliseconds: 250), () => _runDbSearch(trimmed));
+  }
+
+  Future<void> _runDbSearch(String query) async {
+    final db = context.read<CatalogDatabase>();
+    final vod = await db.searchVod(query);
+    final series = await db.searchSeries(query);
+    // The query field may have moved on to something else (or been
+    // cleared) by the time this actually returns — a stale result
+    // overwriting a newer/empty one would flash wrong results on screen.
+    if (!mounted || _query.trim() != query) return;
+    setState(() {
+      _dbVodResults = vod;
+      _dbSeriesResults = series;
+    });
   }
 
   /// Records a completed search (explicit submit, or picking a result) for
@@ -71,6 +118,10 @@ class _SearchScreenState extends State<SearchScreen> {
     _controller.text = query;
     _controller.selection = TextSelection.collapsed(offset: query.length);
     setState(() => _query = query);
+    _searchDebounce?.cancel();
+    if (context.read<PlaylistManager>().isXtream) {
+      unawaited(_runDbSearch(query.trim()));
+    }
   }
 
   Future<void> _openChannel(Channel channel) async {
@@ -117,17 +168,22 @@ class _SearchScreenState extends State<SearchScreen> {
             color: Theme.of(context).appBarTheme.foregroundColor,
             fontSize: 18,
           ),
-          onChanged: (value) => setState(() => _query = value),
+          onChanged: _onQueryChanged,
           onSubmitted: _recordSearch,
         ),
         actions: [
           if (_query.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.clear),
-              onPressed: () => setState(() {
-                _controller.clear();
-                _query = '';
-              }),
+              onPressed: () {
+                _searchDebounce?.cancel();
+                setState(() {
+                  _controller.clear();
+                  _query = '';
+                  _dbVodResults = null;
+                  _dbSeriesResults = null;
+                });
+              },
             ),
         ],
       ),
@@ -221,8 +277,27 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     if (_scope == 'Movies') {
-      final source = playlist.isXtream ? playlist.allCachedVod : playlist.visibleChannels(category: 'vod');
-      final matches = source.where((c) => c.name.toLowerCase().contains(q)).toList();
+      // Xtream: queried straight from the database (see [_runDbSearch]) —
+      // covers the *entire* synced catalog, not just whatever's paged
+      // into memory and the 300-per-category cap that implies. M3U mode
+      // never had that cap (no lazy per-category loading at all), so it
+      // keeps scanning the in-memory list directly.
+      if (playlist.isXtream) {
+        final matches = _dbVodResults;
+        if (matches == null) return const Center(child: CircularProgressIndicator());
+        if (matches.isEmpty) return const _NothingFound();
+        return ListView.builder(
+          itemCount: matches.length,
+          itemBuilder: (context, i) => ChannelListTile(
+            channel: matches[i],
+            selected: false,
+            showEpg: false,
+            onTap: () => _openChannel(matches[i]),
+          ),
+        );
+      }
+      final matches =
+          playlist.visibleChannels(category: 'vod').where((c) => c.name.toLowerCase().contains(q)).toList();
       if (matches.isEmpty) return const _NothingFound();
       return ListView.builder(
         itemCount: matches.length,
@@ -237,7 +312,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
     // TV Shows
     if (playlist.isXtream) {
-      final matches = playlist.allCachedSeries.where((s) => s.name.toLowerCase().contains(q)).toList();
+      final matches = _dbSeriesResults;
+      if (matches == null) return const Center(child: CircularProgressIndicator());
       if (matches.isEmpty) return const _NothingFound();
       return ListView.builder(
         itemCount: matches.length,

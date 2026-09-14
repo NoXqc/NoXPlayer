@@ -30,7 +30,7 @@ class CatalogDatabase {
     final path = p.join(dir.path, 'nox_catalog.db');
     final db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE vod_channels (
@@ -55,10 +55,21 @@ class CatalogDatabase {
             category_name TEXT NOT NULL,
             name TEXT NOT NULL,
             cover_url TEXT,
-            is_favorite INTEGER NOT NULL DEFAULT 0
+            is_favorite INTEGER NOT NULL DEFAULT 0,
+            rating TEXT
           )
         ''');
         await db.execute('CREATE INDEX idx_series_category ON series_items(category_name)');
+      },
+      // v1 -> v2: added series_items.rating (TV shows never got the same
+      // "★ N.N" poster badge movies did, even though the provider sends a
+      // rating per series same as VOD — see XtreamSeries.rating). Existing
+      // rows just get NULL here; they backfill the next time each category
+      // is re-synced from the network, same as any other cache miss.
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE series_items ADD COLUMN rating TEXT');
+        }
       },
     );
     _db = db;
@@ -99,6 +110,7 @@ class CatalogDatabase {
         'name': s.name,
         'cover_url': s.coverUrl,
         'is_favorite': s.isFavorite ? 1 : 0,
+        'rating': s.rating,
       };
 
   XtreamSeries _rowToSeries(Map<String, Object?> row) => XtreamSeries(
@@ -107,6 +119,7 @@ class CatalogDatabase {
         categoryId: row['category_name'] as String,
         coverUrl: row['cover_url'] as String?,
         isFavorite: (row['is_favorite'] as int) == 1,
+        rating: row['rating'] as String?,
       );
 
   /// Replaces (not merges) a category's rows — a re-fetch (e.g. "Update
@@ -143,6 +156,37 @@ class CatalogDatabase {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  /// Searches the *entire* local catalog by title, not just whatever
+  /// happens to be paged into memory this session — confirmed on real
+  /// hardware as a genuine gap: `PlaylistManager.allCachedVod`/
+  /// `allCachedSeries` (what `SearchScreen` used to search) only ever
+  /// held up to 300 items per category (`_maxItemsPerCategory`, applied
+  /// when a category is loaded into memory), even though every item past
+  /// that cap was already sitting here in the database the whole time. A
+  /// title anywhere past position #300 in a large category (some
+  /// providers bundle thousands of items under one category) was
+  /// invisible to search even though it was fully synced. Querying here
+  /// instead searches everything ever persisted, regardless of that cap
+  /// or of which categories happen to be "warmed" into memory right now.
+  ///
+  /// Filtered in SQL, not by pulling every row into Dart and scanning
+  /// there — this catalog can be 100k+ items, and `LIKE` lets SQLite do
+  /// that scan natively instead of marshaling the whole table across the
+  /// platform channel on every keystroke. `LIKE` is case-insensitive for
+  /// plain ASCII letters (not for accented characters — sqflite doesn't
+  /// bundle ICU — a known, minor gap versus the old Dart-side
+  /// `toLowerCase()` scan, accepted for the much better scalability).
+  Future<List<Channel>> searchVod(String query, {int limit = 200}) async {
+    final db = await _database;
+    final rows = await db.query(
+      'vod_channels',
+      where: 'name LIKE ?',
+      whereArgs: ['%$query%'],
+      limit: limit,
+    );
+    return rows.map(_rowToChannel).toList();
+  }
+
   Future<void> upsertSeriesCategory(String categoryName, List<XtreamSeries> items) async {
     final db = await _database;
     final batch = db.batch();
@@ -158,6 +202,18 @@ class CatalogDatabase {
     final db = await _database;
     final rows =
         await db.query('series_items', where: 'category_name = ?', whereArgs: [categoryName], limit: limit);
+    return rows.map(_rowToSeries).toList();
+  }
+
+  /// See [searchVod]'s doc comment — same idea for series.
+  Future<List<XtreamSeries>> searchSeries(String query, {int limit = 200}) async {
+    final db = await _database;
+    final rows = await db.query(
+      'series_items',
+      where: 'name LIKE ?',
+      whereArgs: ['%$query%'],
+      limit: limit,
+    );
     return rows.map(_rowToSeries).toList();
   }
 

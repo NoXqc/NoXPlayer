@@ -80,10 +80,27 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return 'TV';
   }
 
+  late final PlaybackService _playback;
+
   @override
   void initState() {
     super.initState();
-    context.read<PlaybackService>().play(widget.channel);
+    _playback = context.read<PlaybackService>();
+    _playback.play(widget.channel);
+    // Read by LiveResumeHint — stops its hold-Right gesture from firing
+    // again on top of an already-showing fullscreen view, and hides its
+    // reminder text while this is showing. Deferred a frame: this is
+    // called from `initState`, itself running mid-build for the frame
+    // that's mounting this freshly-pushed route — `setFullscreenActive`'s
+    // `notifyListeners()` reaching another, already-mounted widget's
+    // `setState()` at that exact moment isn't a safe time to do it.
+    // Confirmed on real hardware as the cause of the reminder text
+    // sometimes not hiding when it should: a release build has no
+    // assertion for this (unlike debug), so the resulting rebuild just
+    // silently got lost instead of throwing.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _playback.setFullscreenActive(true);
+    });
     _topScope.addListener(_onBarFocusChange);
     _bottomScope.addListener(_onBarFocusChange);
     _resetHideTimer();
@@ -174,6 +191,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    // Deferred a frame for the same reason `initState` defers the
+    // opposite call — this runs mid-build for the frame that's tearing
+    // down this route, not a safe time for another widget's `setState`
+    // to land. `_playback` is a long-lived singleton, safe to touch
+    // after this widget's own disposal.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _playback.setFullscreenActive(false));
     _hideTimer?.cancel();
     _topScope.removeListener(_onBarFocusChange);
     _bottomScope.removeListener(_onBarFocusChange);
@@ -251,7 +274,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
             // of the black fullscreen screen.
             child: Stack(
               children: [
-                  const Positioned.fill(child: VideoPlayerPane(showControls: false, showEpgBar: false)),
+                  Positioned.fill(
+                    // See HomeScreen's identical fix for why this is
+                    // keyed to the channel rather than const.
+                    child: VideoPlayerPane(
+                      key: ValueKey(channel.id),
+                      showControls: false,
+                      showEpgBar: false,
+                    ),
+                  ),
 
                   // Top bar: back, current/next EPG line (live only), search,
                   // fullscreen toggle. Positioned has to be the outermost
@@ -334,6 +365,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               child: PlayerControls(
                                 controller: controller,
                                 title: channel.name,
+                                channelId: channel.id,
+                                isLive: Channel.isLiveId(channel.id),
                                 isFavorite: channel.isFavorite,
                                 onToggleFavorite: () => playlist.toggleFavorite(channel),
                               ),

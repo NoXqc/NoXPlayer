@@ -319,12 +319,45 @@ class _GroupList extends StatelessWidget {
             itemCount: groups.length,
             itemBuilder: (context, index) {
               final group = groups[index];
-              return CheckboxListTile(
+              // Confirmed on a real Formuler box: without any key, toggling
+              // visibility (individually, or via Show/Hide All) updated the
+              // underlying data immediately and correctly — leaving the
+              // screen and coming back always showed the right checkmarks —
+              // but the *already-mounted* checkbox never repainted in place
+              // to reflect it, even though the identical build worked fine
+              // on a Firestick. That's a stale-repaint bug in this device's
+              // GPU/renderer failing to redraw an in-place property change
+              // on the existing render object, not a logic bug.
+              //
+              // First fix attempt keyed the whole CheckboxListTile to its
+              // shown/hidden value, which did force a repaint — but it also
+              // tore down and rebuilt the row's own focus node every single
+              // toggle, so a D-pad user checking one box at a time watched
+              // focus jump to a neighboring row on its own (Flutter's focus
+              // manager losing the just-disposed node and auto-resolving to
+              // the nearest one). The row itself — and the focus/tap target
+              // it owns — must stay the *same* element across a toggle;
+              // only the small checkbox glyph that wasn't repainting needs
+              // to be torn down and recreated. So the key moves onto just
+              // that inner piece, and the row is built by hand (instead of
+              // CheckboxListTile) so that piece can be keyed independently
+              // of the focusable row around it.
+              return ListTile(
+                key: ValueKey(group.title),
                 title: Text(group.title),
-                value: !group.isHidden,
-                onChanged: (shown) => playlist.setGroupHidden(
+                trailing: KeyedSubtree(
+                  key: ValueKey(group.isHidden),
+                  child: Checkbox(
+                    value: !group.isHidden,
+                    // Decorative only — the whole row (onTap below) is the
+                    // real toggle target, so this doesn't also grab its own
+                    // focus stop.
+                    onChanged: null,
+                  ),
+                ),
+                onTap: () => playlist.setGroupHidden(
                   group.title,
-                  !(shown ?? true),
+                  !group.isHidden,
                   loadImmediately: !deferLoading,
                 ),
               );

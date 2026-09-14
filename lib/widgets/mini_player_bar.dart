@@ -50,7 +50,13 @@ class MiniPlayerBar extends StatelessWidget {
                               // frame available or not.
                               child: AspectRatio(
                                 aspectRatio: value.aspectRatio == 0 ? 16 / 9 : value.aspectRatio,
-                                child: VideoPlayerHdr(controller),
+                                // See VideoPlayerPane's identical fix for
+                                // why this is keyed — without it, a
+                                // channel switch can leave the previous
+                                // channel's last frame frozen here on
+                                // hardware where an in-place platform-view
+                                // rebind doesn't fully take.
+                                child: VideoPlayerHdr(controller, key: ObjectKey(controller)),
                               ),
                             ),
                           )

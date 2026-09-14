@@ -16,6 +16,7 @@ import 'services/playlist_manager.dart';
 import 'services/storage_service.dart';
 import 'utils/constants.dart';
 import 'utils/route_observer.dart';
+import 'widgets/live_resume_hint.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -118,6 +119,14 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
   /// players use for their "refresh complete" notification.
   final GlobalKey<ScaffoldMessengerState> _scaffoldMessengerKey =
       GlobalKey<ScaffoldMessengerState>();
+
+  /// Lets [LiveResumeHint] push the fullscreen player back on top from
+  /// its own position in the tree — it sits as a *sibling* of the
+  /// Navigator (see `builder` below), deliberately, so its hold-Right
+  /// gesture and reminder text work from any screen; `Navigator.of
+  /// (context)` from there would find nothing, since siblings aren't
+  /// ancestors.
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
   final String _splashStatus = 'Starting...';
   String? _bootstrapError;
@@ -284,7 +293,11 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
     await _playlistManager.ensureLiveChannelsLoaded();
     for (final channel in _playlistManager.channels) {
       if (channel.id == lastId) {
-        _playbackService.play(channel);
+        // silent: true — see PlaybackService.isSilentlyResuming's doc
+        // comment. This still starts loading/playing right away; it
+        // just tells TvHomeScreen not to auto-jump its groups column and
+        // fetch EPG for it until the user actually looks for it.
+        _playbackService.play(channel, silent: true);
         return;
       }
     }
@@ -414,7 +427,19 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
             title: AppConstants.appName,
             debugShowCheckedModeBanner: false,
             scaffoldMessengerKey: _scaffoldMessengerKey,
+            navigatorKey: _navigatorKey,
             navigatorObservers: [appRouteObserver],
+            // Renders above the Navigator's own output rather than inside
+            // it, so the hold-Right-to-resume gesture and reminder text
+            // work from any screen instead of only the one route they
+            // happened to be built into (see LiveResumeHint's doc
+            // comment).
+            builder: (context, child) => Stack(
+              children: [
+                if (child != null) child,
+                LiveResumeHint(navigatorKey: _navigatorKey),
+              ],
+            ),
             themeMode: prefs.themeMode,
             theme: ThemeData(
               brightness: Brightness.light,

@@ -52,6 +52,66 @@ class PlaybackService extends ChangeNotifier {
   Future<void>? initFuture;
   String? error;
 
+  /// True while `PlayerScreen` is actually mounted and showing this
+  /// channel fullscreen — set/cleared by that screen's own
+  /// `initState`/`dispose` via [setFullscreenActive]. `LiveResumeHint`
+  /// reads this both to stop the global hold-Right gesture from firing
+  /// again on top of an already-showing fullscreen view, and to hide its
+  /// own reminder text while fullscreen is already showing.
+  bool isFullscreenActive = false;
+
+  /// A plain field assignment here wouldn't notify `LiveResumeHint`,
+  /// which listens via [addListener] — confirmed on real hardware as the
+  /// cause of its reminder text still showing the just-left channel's
+  /// name for a moment right after entering fullscreen for a *different*
+  /// one, since nothing had told it anything changed yet.
+  void setFullscreenActive(bool value) {
+    if (isFullscreenActive == value) return;
+    isFullscreenActive = value;
+    notifyListeners();
+  }
+
+  /// True only for a brief window after an automatic cold-start "resume
+  /// last channel" call (see `main.dart`'s `_autoResumeLastChannel`, the
+  /// only caller that passes `silent: true` to [play]), ended by either
+  /// [_silentResumeTimer] or genuine user interaction with the Live TV
+  /// tab (see `TvHomeScreen.clearSilentResume`) — whichever comes first.
+  ///
+  /// Exists because the mere act of that background resume starting was
+  /// enough to make `TvHomeScreen` auto-scroll its groups column to that
+  /// channel's group and start fetching its EPG — cosmetic, unrelated to
+  /// actual stream buffering, but visible work that happened the instant
+  /// the splash screen handed off to the main UI, reading as "the cold
+  /// start is slow" for a couple of seconds on something that had nothing
+  /// to do with the stream itself. `TvHomeScreen` checks this flag to
+  /// suppress exactly that jump while it's true, while playback still
+  /// starts loading immediately regardless.
+  ///
+  /// Deliberately NOT cleared when [initFuture] resolves (an earlier
+  /// version of this did that, and it didn't actually fix anything —
+  /// `initFuture` completing means `play()`/`initialize()` have been
+  /// *called*, not that a frame has actually decoded and become visible
+  /// yet, so the jump still happened before the stream was genuinely
+  /// ready to look at, reproducing the exact same complaint). A plain
+  /// fixed grace period is a blunter but honest fix for that: long enough
+  /// that a normal cold start's stream has actually started rendering by
+  /// the time this clears on its own.
+  bool isSilentlyResuming = false;
+  Timer? _silentResumeTimer;
+
+  /// Called by `TvHomeScreen` on any deliberate group/channel/tab
+  /// interaction — ends the "silent" window early even if the grace
+  /// period hasn't elapsed yet, since at that point the user has already
+  /// gone looking for it themselves.
+  void clearSilentResume() {
+    _silentResumeTimer?.cancel();
+    _silentResumeTimer = null;
+    if (isSilentlyResuming) {
+      isSilentlyResuming = false;
+      notifyListeners();
+    }
+  }
+
   Timer? _positionSaveTimer;
 
   /// Ordered episodes the currently playing channel came from (e.g. a
@@ -127,7 +187,10 @@ class PlaybackService extends ChangeNotifier {
   /// Starts playing [channel]. No-ops if it's already the current channel
   /// (so re-opening the fullscreen view for the channel the mini-player is
   /// already showing doesn't restart it).
-  Future<void> play(Channel channel) async {
+  ///
+  /// [silent] is only ever passed by `main.dart`'s cold-start auto-resume
+  /// — see [isSilentlyResuming]'s doc comment.
+  Future<void> play(Channel channel, {bool silent = false}) async {
     if (!_preferences.playlistEnabled) {
       error = 'Playlist is disabled on this device — enable it in Settings > Content Manager to watch.';
       notifyListeners();
@@ -139,10 +202,30 @@ class PlaybackService extends ChangeNotifier {
     currentChannel = channel;
     error = null;
     _autoAdvanceDismissed = false;
+    // Always assigned (not just set true when silent) — a non-silent
+    // play() must always win, even if a previous silent resume's window
+    // was still open, otherwise a genuine user pick right after cold
+    // start could get stuck being treated as "not yet looked at".
+    _silentResumeTimer?.cancel();
+    _silentResumeTimer = null;
+    isSilentlyResuming = silent;
+    if (silent) {
+      _silentResumeTimer = Timer(const Duration(seconds: 4), clearSilentResume);
+    }
     notifyListeners();
     unawaited(_recordRecentlyPlayed(channel));
 
-    final savedPositionMs = _storage.getLastPosition(channel.id);
+    // Confirmed on real hardware as the cause of a live channel looking
+    // "stuck paused": a live id can carry a *stale* saved position from
+    // a completely unrelated past session (the periodic save below used
+    // to write one unconditionally, live or not), and seeking a live
+    // stream to an old position lands outside its actual sliding DVR
+    // window — the player then just sits there buffering/frozen instead
+    // of joining live. A live channel has no meaningful "resume point" at
+    // all, so this is skipped entirely rather than trying to validate the
+    // saved value.
+    final isLive = Channel.isLiveId(channel.id);
+    final savedPositionMs = isLive ? 0 : _storage.getLastPosition(channel.id);
     final newController = VideoPlayerHdrController.networkUrl(
       Uri.parse(channel.url),
       closedCaptionFile: channel.subtitleUrl != null ? _loadCaptions(channel.subtitleUrl!) : null,
@@ -176,13 +259,15 @@ class PlaybackService extends ChangeNotifier {
     _positionSaveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       final c = controller;
       final ch = currentChannel;
-      if (c != null && ch != null && c.value.isInitialized) {
+      // See the doc comment above `isLive` — never persist a "resume
+      // point" for a live channel in the first place, not just skip
+      // reading one back.
+      if (c != null && ch != null && c.value.isInitialized && !Channel.isLiveId(ch.id)) {
         _storage.setLastPosition(ch.id, c.value.position.inMilliseconds);
         final duration = c.value.duration;
         if (duration > Duration.zero) {
           _storage.setLastDuration(ch.id, duration.inMilliseconds);
-          // Auto-advance a season/series near the end — a live channel's
-          // duration is always zero, so this branch never fires for those.
+          // Auto-advance a season/series near the end.
           final remaining = duration - c.value.position;
           if (remaining <= const Duration(seconds: 30) && !_autoAdvanceDismissed) {
             final next = _nextInQueue;
@@ -198,6 +283,9 @@ class PlaybackService extends ChangeNotifier {
   Future<void> stop() async {
     await _teardown();
     currentChannel = null;
+    _silentResumeTimer?.cancel();
+    _silentResumeTimer = null;
+    isSilentlyResuming = false;
     notifyListeners();
   }
 
@@ -222,6 +310,7 @@ class PlaybackService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _silentResumeTimer?.cancel();
     _teardown();
     super.dispose();
   }

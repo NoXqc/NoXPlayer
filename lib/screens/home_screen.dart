@@ -321,7 +321,20 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           if (isWide) ...[
                             const VerticalDivider(width: 1),
-                            const Expanded(flex: 3, child: VideoPlayerPane()),
+                            // Keyed to the channel, not just const — see
+                            // VideoPlayerPane's own AspectRatio fix for
+                            // the leaf widget; this additionally forces
+                            // the *whole* pane (and whatever the platform
+                            // view's hybrid-composition plumbing keeps
+                            // attached to its ancestry) to tear down and
+                            // rebuild on a channel switch, confirmed on
+                            // real hardware as necessary on top of the
+                            // leaf-level key — that alone still left a
+                            // stale frame behind on some devices.
+                            Expanded(
+                              flex: 3,
+                              child: VideoPlayerPane(key: ValueKey(playback.currentChannel?.id)),
+                            ),
                           ],
                         ],
                       ),
