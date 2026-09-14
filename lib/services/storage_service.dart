@@ -90,6 +90,13 @@ class StorageService {
   Future<void> setPlaylistEnabled(bool value) =>
       _prefs.setBool(AppConstants.keyPlaylistEnabled, value);
 
+  /// Whether the one-time "Hold Down to return to your live stream" hint
+  /// has already been shown next to the live island pill — see
+  /// LiveIslandOverlay. Shown at most once ever, not once per app launch.
+  bool getHasSeenLiveIslandHint() => _prefs.getBool(AppConstants.keyHasSeenLiveIslandHint) ?? false;
+  Future<void> setHasSeenLiveIslandHint() =>
+      _prefs.setBool(AppConstants.keyHasSeenLiveIslandHint, true);
+
   // --- Xtream Codes (XC API) credentials ------------------------------------
 
   String getPlaylistMode() => _prefs.getString(AppConstants.keyPlaylistMode) ?? 'm3u';

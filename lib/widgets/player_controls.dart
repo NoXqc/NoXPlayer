@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player_hdr/video_player_hdr.dart';
 
+import '../models/channel.dart';
+import '../services/epg_service.dart';
 import '../services/playback_service.dart';
 import 'epg_guide.dart';
 
@@ -85,7 +87,22 @@ class VideoPlayerPane extends StatelessWidget {
                     child: AspectRatio(
                       aspectRatio:
                           controller.value.aspectRatio == 0 ? 16 / 9 : controller.value.aspectRatio,
-                      child: VideoPlayerHdr(controller),
+                      // Keyed to the controller instance — confirmed on
+                      // real hardware as the cause of a frozen frame
+                      // surviving a channel switch: with no key here,
+                      // Flutter sees "same widget type, same position"
+                      // when a new controller replaces the old one and
+                      // tries to update the existing platform view
+                      // element in place instead of tearing it down and
+                      // creating a fresh one. On this device's renderer
+                      // that in-place rebind doesn't actually take — the
+                      // native surface keeps showing whatever the
+                      // previous channel last painted. Same fix shape as
+                      // Group Management's checkbox stale-repaint bug
+                      // earlier this session: force element recreation
+                      // via a changing key instead of relying on an
+                      // in-place update this hardware silently drops.
+                      child: VideoPlayerHdr(controller, key: ObjectKey(controller)),
                     ),
                   ),
                   if (showControls)
@@ -93,7 +110,12 @@ class VideoPlayerPane extends StatelessWidget {
                       left: 0,
                       right: 0,
                       bottom: 0,
-                      child: PlayerControls(controller: controller, title: channel.name),
+                      child: PlayerControls(
+                        controller: controller,
+                        title: channel.name,
+                        channelId: channel.id,
+                        isLive: Channel.isLiveId(channel.id),
+                      ),
                     ),
                 ],
               ),
@@ -136,12 +158,35 @@ class PlayerControls extends StatelessWidget {
     super.key,
     required this.controller,
     required this.title,
+    required this.channelId,
+    required this.isLive,
     this.isFavorite,
     this.onToggleFavorite,
   });
 
   final VideoPlayerHdrController controller;
   final String title;
+
+  /// Which EPG programme to check remaining time against — only read
+  /// when [isLive] is true.
+  final String channelId;
+
+  /// Whether [controller]'s own `duration`/`position` should be trusted
+  /// at all for the seek bar and skip buttons. Confirmed on real hardware:
+  /// some live HLS streams report a small *nonzero* duration here — the
+  /// length of their current DVR sliding window (e.g. ~60s), not the
+  /// zero/unknown value a clean live stream reports — which made the seek
+  /// bar activate and show a constantly-resetting ~1-minute timer instead
+  /// of staying hidden the way a real live stream's `duration == 0` case
+  /// already did. `video_player_hdr` has no live/VOD signal of its own to
+  /// check instead (its `VideoPlayerHdrValue` has no `isLive` field) — so
+  /// this comes from the caller, which already knows the channel's
+  /// id-based classification (`Channel.isLiveId`), never from the video
+  /// duration. When true, the seek bar/skip buttons/elapsed-duration text
+  /// are replaced by the current EPG programme's remaining time instead
+  /// (see [_LiveRemainingLabel]) — actually meaningful for a live channel,
+  /// unlike a number that resets every minute.
+  final bool isLive;
 
   /// Null hides the favorite button entirely (the shared inline preview
   /// panes don't pass these) — [PlayerScreen] is the one caller that does,
@@ -167,6 +212,8 @@ class PlayerControls extends StatelessWidget {
         builder: (context, value, _) {
           final position = value.position;
           final duration = value.duration;
+          // See [isLive]'s doc comment — never inferred from duration.
+          final showSeek = !isLive && duration.inMilliseconds > 0;
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -180,10 +227,13 @@ class PlayerControls extends StatelessWidget {
                       style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                   ),
-                  Text(
-                    '${_formatDuration(position)} / ${_formatDuration(duration)}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
+                  if (showSeek)
+                    Text(
+                      '${_formatDuration(position)} / ${_formatDuration(duration)}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    )
+                  else if (isLive)
+                    _LiveRemainingLabel(channelId: channelId),
                 ],
               ),
               // Excluded from D-pad focus always: a focused Slider consumes
@@ -192,17 +242,14 @@ class PlayerControls extends StatelessWidget {
               // navigation (e.g. PlayerScreen's "Left always goes back").
               // Touch/mouse dragging is unaffected — this only removes it
               // from keyboard/remote focus traversal.
-              ExcludeFocus(
-                child: Slider(
-                  value: duration.inMilliseconds == 0
-                      ? 0
-                      : position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
-                  max: duration.inMilliseconds == 0 ? 1 : duration.inMilliseconds.toDouble(),
-                  onChanged: duration.inMilliseconds == 0
-                      ? null
-                      : (v) => controller.seekTo(Duration(milliseconds: v.toInt())),
+              if (showSeek)
+                ExcludeFocus(
+                  child: Slider(
+                    value: position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
+                    max: duration.inMilliseconds.toDouble(),
+                    onChanged: (v) => controller.seekTo(Duration(milliseconds: v.toInt())),
+                  ),
                 ),
-              ),
               // All the action buttons live in one row now — favorite
               // used to sit alone above the seek bar, which put it out of
               // reach of normal up/down movement within this bar (Up from
@@ -221,10 +268,8 @@ class PlayerControls extends StatelessWidget {
                       tooltip: isFavorite == true ? 'Remove from favorites' : 'Add to favorites',
                       onPressed: onToggleFavorite,
                     ),
-                  // Skip/fast-seek only makes sense for VOD — a live
-                  // stream's duration.inMilliseconds is 0, same signal
-                  // already used above to disable the seek bar.
-                  if (duration.inMilliseconds > 0)
+                  // Skip/fast-seek only makes sense for VOD.
+                  if (showSeek)
                     _SkipButton(
                       icon: Icons.replay_10,
                       onSeek: (amount) {
@@ -236,7 +281,7 @@ class PlayerControls extends StatelessWidget {
                     icon: Icon(value.isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
                     onPressed: () => value.isPlaying ? controller.pause() : controller.play(),
                   ),
-                  if (duration.inMilliseconds > 0)
+                  if (showSeek)
                     _SkipButton(
                       icon: Icons.forward_10,
                       onSeek: (amount) {
@@ -251,6 +296,35 @@ class PlayerControls extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+/// Replaces the elapsed/duration text for a live channel with something
+/// actually meaningful: how long is left in whatever's currently airing,
+/// from EPG data (`EpgProgram.stop`) — not the video controller's own
+/// duration, which is exactly the number that turned out not to be
+/// trustworthy for live streams (see [PlayerControls.isLive]). Sits
+/// inside the same [ValueListenableBuilder] that already rebuilds on
+/// every video position tick, so "N min left" counts down at the same
+/// cadence for free, no separate timer needed; `context.watch<EpgService>`
+/// additionally keeps it correct across a real EPG data refresh.
+class _LiveRemainingLabel extends StatelessWidget {
+  const _LiveRemainingLabel({required this.channelId});
+
+  final String channelId;
+
+  @override
+  Widget build(BuildContext context) {
+    final epg = context.watch<EpgService>();
+    final programme = epg.getCurrentProgram(channelId);
+    if (programme == null) return const SizedBox.shrink();
+    final remaining = programme.stop.difference(DateTime.now());
+    if (remaining.isNegative) return const SizedBox.shrink();
+    final minutes = remaining.inMinutes;
+    return Text(
+      minutes < 1 ? 'Ending now' : '$minutes min left',
+      style: const TextStyle(color: Colors.white70, fontSize: 12),
     );
   }
 }

@@ -34,11 +34,27 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.20.1 — this release exists to verify 3.20.0\'s new Check for '
-      'Updates feature end-to-end on real hardware: a device running '
-      '3.20.0 checking, downloading, and installing this exact version. '
-      'The project is also now genuinely open source (GPL-3.0), not '
-      'just a public repo.';
+      '3.25.0 — Live playback rewrite. Root cause of the island pill '
+      'vanishing on a second minimize, found via dumpsys SurfaceFlinger '
+      'on real hardware: every fullscreen-minimize-fullscreen cycle '
+      'pushed a fresh PlayerScreen route, recreating the video\'s '
+      'native SurfaceView each time — cycling that quickly raced the '
+      'previous view\'s teardown, leaving a stale hole in Flutter\'s '
+      'own compositing bookkeeping over the pill (present in the '
+      'widget tree, focus-reachable, but invisible and touch-blind). '
+      'Fix: live channels no longer get a pushed fullscreen route at '
+      'all. LiveIslandOverlay now owns one persistent video widget for '
+      'whatever\'s live, with two presentations (fullscreen chrome or '
+      'the small pill) driven purely by a state flip — never '
+      'push/pop, never recreated except on a genuine channel switch. '
+      'VOD/episode playback (PlayerScreen) is untouched. Also confirmed '
+      '(and fixed) that the frozen-preview-pane bug was caused by that '
+      'same shared-controller design, not a pre-existing issue — '
+      'verified absent on the pre-island 3.20.1 release. Needs a full '
+      'real-hardware pass: live channel switching, minimize/expand '
+      'cycles (repeated quickly), VOD/episode playback, phone-layout '
+      'MiniPlayerBar, Search from fullscreen, back button while '
+      'expanded.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
@@ -88,6 +104,9 @@ class AppConstants {
   /// connection slot for another device without touching the cached
   /// catalog or credentials on this one.
   static const String keyPlaylistEnabled = 'nox_playlist_enabled';
+
+  /// See StorageService.getHasSeenLiveIslandHint's doc comment.
+  static const String keyHasSeenLiveIslandHint = 'nox_has_seen_live_island_hint';
 
   /// Duo-tone accent palettes offered in Settings > Theme — replaced the
   /// old flat single-color presets, which couldn't represent a deliberate

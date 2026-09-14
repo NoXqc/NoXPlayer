@@ -297,11 +297,15 @@ class _SeriesArgs {
 
 List<XtreamSeries> _buildSeriesItems(_SeriesArgs args) {
   return args.raw
-      .map((item) => XtreamSeries(
-            seriesId: int.parse(item['series_id'].toString()),
-            name: item['name']?.toString() ?? 'Unnamed Series',
-            categoryId: args.categoryId,
-            coverUrl: item['cover']?.toString(),
-          ))
+      .map((item) {
+        final rating = item['rating']?.toString();
+        return XtreamSeries(
+          seriesId: int.parse(item['series_id'].toString()),
+          name: item['name']?.toString() ?? 'Unnamed Series',
+          categoryId: args.categoryId,
+          coverUrl: item['cover']?.toString(),
+          rating: (rating != null && rating.isNotEmpty && rating != '0') ? rating : null,
+        );
+      })
       .toList();
 }

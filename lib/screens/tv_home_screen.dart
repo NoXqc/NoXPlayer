@@ -243,6 +243,11 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
   void _onTabChanged(String tab) {
     _disarmLeftEdge();
+    // A deliberate visit to the TV tab is exactly the "user actually
+    // looked for it" moment PlaybackService.isSilentlyResuming's doc
+    // comment describes — end the cold-start suppression window early so
+    // this tab immediately shows what's actually playing.
+    if (tab == 'TV') context.read<PlaybackService>().clearSilentResume();
     setState(() {
       _tab = tab;
       _selectedGroup = null;
@@ -250,7 +255,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       _focusedImageUrl = null;
       _focusDepth = 0;
     });
-    // Switching back to the TV tab reset the group to "All" but never
+    // Switching back to the TV tab clears the explicit group selection —
+    // _effectiveLiveGroup falls back to the playing channel's own group
+    // (or the first group) rather than an unfiltered "All" — but never
     // scrolled the channel list to whatever's actually playing — it just
     // showed the list from the top, which read as "the guide shows the
     // wrong channel" (a completely unrelated live channel happened to sort
@@ -302,6 +309,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   static const _favoritesGroupSentinel = '__favorites__';
 
   void _onGroupSelected(String? group) {
+    context.read<PlaybackService>().clearSilentResume();
     setState(() => _selectedGroup = group);
     if (group == null || group == _favoritesGroupSentinel) return;
     if (_tab == 'Favorites') {
@@ -523,9 +531,36 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         ? (_selectedGroup == null
             ? playlist.favoriteChannels
             : playlist.favoriteChannels.where((c) => c.group == _selectedGroup).toList())
-        : _selectedGroup == _favoritesGroupSentinel
+        : _effectiveLiveGroup(playlist) == _favoritesGroupSentinel
             ? playlist.favoriteLiveChannels
-            : playlist.visibleChannels(groupTitle: _selectedGroup, category: 'tv');
+            : playlist.visibleChannels(groupTitle: _effectiveLiveGroup(playlist), category: 'tv');
+  }
+
+  /// The Live TV groups column has no standalone "All" entry anymore — it
+  /// read as a confusing dumping-ground, and made returning from a stream
+  /// feel like the app "forgot" which real group you were in (see
+  /// [_onTabChanged], which resets [_selectedGroup] to null on every tab
+  /// switch). Every visit now resolves to an actual group: whichever one
+  /// is explicitly selected, otherwise the currently playing channel's own
+  /// group (so switching tabs and back, or returning from fullscreen,
+  /// lands exactly where playback left off), otherwise just the first
+  /// visible group. [_buildGroupsColumn] and [_currentLiveChannels] both
+  /// read through this instead of the raw field so the highlighted row
+  /// always matches the list actually being shown.
+  String? _effectiveLiveGroup(PlaylistManager playlist) {
+    if (_selectedGroup != null) return _selectedGroup;
+    final groups = playlist.tvGroups.where((g) => !g.isHidden).toList();
+    if (groups.isEmpty) return null;
+    final playback = context.read<PlaybackService>();
+    // See PlaybackService.isSilentlyResuming's doc comment — a cold-start
+    // background resume shouldn't auto-scroll here to a group the user
+    // never actually asked to see yet.
+    if (playback.isSilentlyResuming) return groups.first.title;
+    final playing = playback.currentChannel;
+    if (playing != null && groups.any((g) => g.title == playing.group)) {
+      return playing.group;
+    }
+    return groups.first.title;
   }
 
   /// Scrolls/focuses the Live TV list back to whatever's actually playing.
@@ -597,6 +632,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   }
 
   Future<void> _selectChannel(Channel channel) async {
+    final playback = context.read<PlaybackService>();
+    // A deliberate tap always ends the cold-start suppression window,
+    // even if it's for a *different* channel than the one silently
+    // resuming — otherwise isSilentlyResuming would stay true (it's
+    // unaffected by which channel play() below actually switches to) and
+    // keep suppressing the groups-column jump for a selection the user
+    // very much did make on purpose.
+    playback.clearSilentResume();
     // Awaited deliberately — PlayerScreen's own initState also calls
     // play() (guarded to no-op if this channel's already current), but
     // that guard only works if THIS call has actually finished setting
@@ -605,7 +648,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // controller concurrently — reported as the fullscreen player
     // showing solid black while the exact same stream played fine in an
     // inline preview built later, once the race had settled.
-    await context.read<PlaybackService>().play(channel);
+    await playback.play(channel);
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerScreen(channel: channel)));
   }
@@ -1004,30 +1047,25 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     }
 
     final groups = playlist.tvGroups.where((g) => !g.isHidden).toList();
+    // No "All" row — see _effectiveLiveGroup's doc comment for why an
+    // unfiltered dumping-ground was actively confusing to land back in.
+    final effectiveGroup = _effectiveLiveGroup(playlist);
 
     return ListView(
       children: [
         _SelectableRow(
           icon: Icons.star,
           label: 'Favourites',
-          selected: _selectedGroup == _favoritesGroupSentinel,
+          selected: effectiveGroup == _favoritesGroupSentinel,
           collapsed: collapsed,
           fontSize: _groupFontSize,
           onTap: () => _onGroupSelected(_favoritesGroupSentinel),
-        ),
-        _SelectableRow(
-          icon: Icons.apps,
-          label: 'All',
-          selected: _selectedGroup == null,
-          collapsed: collapsed,
-          fontSize: _groupFontSize,
-          onTap: () => _onGroupSelected(null),
         ),
         for (final group in groups)
           _GroupRow(
             icon: Icons.grid_view_rounded,
             label: group.title,
-            selected: _selectedGroup == group.title,
+            selected: effectiveGroup == group.title,
             collapsed: collapsed,
             fontSize: _groupFontSize,
             isFavorited: playlist.isGroupFavorited(group.title),
@@ -1131,7 +1169,21 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     }
 
     final playback = context.watch<PlaybackService>();
-    final channel = playback.currentChannel;
+    // Only a genuinely live channel belongs in this preview — a movie/
+    // episode isn't stopped just because its fullscreen view was left
+    // (deliberately, so a phone's MiniPlayerBar / the live island can
+    // resume it), so `currentChannel` can easily be a VOD item while
+    // browsing this tab. Reported live: backing out of a movie made it
+    // start playing inline here, in a pane that's supposed to be "what's
+    // live right now" — confusing on a tab that has nothing to do with
+    // movies at all.
+    // See PlaybackService.isSilentlyResuming's doc comment — a cold-start
+    // background resume shouldn't make this pane jump straight to it
+    // (and start fetching its EPG) before the user has actually looked
+    // for it; it stays on the plain placeholder below until they do, even
+    // though the stream itself is already loading regardless.
+    final rawChannel = playback.isSilentlyResuming ? null : playback.currentChannel;
+    final channel = rawChannel != null && Channel.isLiveId(rawChannel.id) ? rawChannel : null;
 
     return Stack(
       children: [
@@ -1158,7 +1210,34 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
               // this consumer's handle on the shared video texture at
               // the precise moment the new one needs it. Left mounted
               // (just visually covered) like it always used to be.
-              : const ExcludeFocus(child: VideoPlayerPane(showEpgBar: false)),
+              // NOT torn down on entering/leaving fullscreen for the same
+              // channel (this key doesn't change then, so no remount
+              // happens; the crash risk noted above stays fully avoided).
+              //
+              // Keyed by channel id for a *different* reason: this same
+              // shared-controller architecture (one VideoPlayerHdrController
+              // in PlaybackService, reused across this pane, the fullscreen
+              // player, and the live island pill) turned out to cause a
+              // real, reproducible bug of its own — this pane going stale
+              // on a channel switch, still showing the previous channel's
+              // last frame while the new stream is genuinely already
+              // playing elsewhere (confirmed absent on the pre-Live-Island
+              // 3.20.1 build, so this shared-controller design is the
+              // actual cause, not a pre-existing platform-view issue).
+              // Forcing Flutter to fully tear down and recreate this pane's
+              // Element/platform view whenever the *live* channel id
+              // actually changes — same fix already applied at the other
+              // two VideoPlayerPane call sites (home_screen.dart,
+              // player_screen.dart) — is the deliberate risk being taken
+              // here: it only remounts on a genuine channel change, never
+              // on a fullscreen enter/exit for the same channel, so it
+              // shouldn't reintroduce the concurrent-consumer race above —
+              // but this is the one call site that race was originally
+              // found on, so treat this as the higher-risk half of the fix
+              // if a freeze reappears in a different shape.
+              : ExcludeFocus(
+                  child: VideoPlayerPane(key: ValueKey(channel.id), showEpgBar: false),
+                ),
         ),
         if (channel != null)
           Positioned(
@@ -1267,6 +1346,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             (s) => PosterCard(
               title: s.name,
               imageUrl: s.coverUrl,
+              rating: s.rating,
               isFavorite: s.isFavorite,
               onToggleFavorite: () => _toggleSeriesFavoriteWithFeedback(context, s),
               onTap: () => _openSeries(s),
@@ -1317,6 +1397,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       grid = _posterGrid(series, (s) => PosterCard(
             title: s.name,
             imageUrl: s.coverUrl,
+            rating: s.rating,
             isFavorite: s.isFavorite,
             onToggleFavorite: () => _toggleSeriesFavoriteWithFeedback(context, s),
             onTap: () => _openSeries(s),
@@ -1579,6 +1660,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           itemBuilder: (s, index) => PosterCard(
             title: s.name,
             imageUrl: s.coverUrl,
+            rating: s.rating,
             focusNode: index == 0 ? _firstPosterFocusNodeForGroup(group.title) : null,
             isFavorite: s.isFavorite,
             onToggleFavorite: () => _toggleSeriesFavoriteWithFeedback(context, s),

@@ -16,10 +16,36 @@ import '../widgets/epg_guide.dart';
 import '../widgets/player_controls.dart';
 import 'search_screen.dart';
 
-/// Fullscreen playback screen. Pushed when a channel is tapped on a phone,
-/// or when the mini-player bar is tapped to expand back into fullscreen —
-/// either way it attaches to the same shared [PlaybackService] controller,
-/// so it never restarts playback that's already running.
+/// Fullscreen playback screen for VOD/episodes. Pushed the same way for
+/// every channel type — attaches to the same shared [PlaybackService]
+/// controller, so it never restarts playback that's already running.
+///
+/// **Live playback redirect**: a *live* channel never actually shows this
+/// screen's own chrome. `LiveIslandOverlay` (a sibling of the `Navigator`,
+/// not a descendant — see main.dart's `builder`) owns one persistent video
+/// widget for whatever's live, with two presentations (fullscreen chrome,
+/// or the small floating pill) driven purely by `PlaybackService
+/// .isMinimized` — never a pushed/popped route. That's deliberate: a
+/// pushed route for the "fullscreen" state would get buried under
+/// whatever the user navigates to *next* while minimized, breaking "the
+/// pill follows you anywhere" the moment they visit a second screen. It
+/// also sidesteps a real, reproducible native-Android bug found tonight:
+/// pushing a fresh route for every fullscreen-minimize-fullscreen cycle
+/// recreates the video's platform view's native `SurfaceView` each time,
+/// and doing that in quick succession races the previous one's teardown,
+/// leaving a stale, invisible-yet-touch-blocking view sitting over the
+/// pill — confirmed on real hardware, and confirmed absent when the
+/// underlying view is never destroyed and recreated to begin with.
+///
+/// So every existing call site still just does
+/// `Navigator.push(MaterialPageRoute(builder: (_) => PlayerScreen(channel:
+/// ...)))` unchanged, for both VOD and live — [initState] below is the one
+/// place that decides which behavior a given channel actually gets. For a
+/// live channel, it calls `play()` + `restore()` (which is all
+/// `LiveIslandOverlay` needs to show its own fullscreen presentation,
+/// already rendered as a sibling *above* this route) and pops itself on
+/// the very next frame without ever building a Scaffold/video of its own
+/// — see [_isLiveRedirect].
 ///
 /// Also owns the actual "fullscreen" behavior other apps mean by that word:
 /// landscape orientation + hidden system bars ([_toggleImmersive]) — but
@@ -43,6 +69,13 @@ import 'search_screen.dart';
 /// - **Down** does the same for the bottom bar (title/seek bar/play-pause).
 /// Both bars auto-hide after inactivity so they can't permanently trap the
 /// D-pad the way the seek bar used to.
+///
+/// Popping this route for a VOD/episode needs no special handling on the
+/// way out — playback just keeps running unrepresented in the background
+/// via the same shared [PlaybackService], since it already has its own
+/// resumable "Continue Watching" entry and a floating bubble that keeps a
+/// VOD playing indefinitely isn't wanted there. Live channels don't reach
+/// this build at all; see the redirect above.
 class PlayerScreen extends StatefulWidget {
   const PlayerScreen({super.key, required this.channel});
 
@@ -57,6 +90,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _topVisible = false;
   bool _bottomVisible = false;
   Timer? _hideTimer;
+
+  /// Captured once instead of doing `context.read` inside the deferred
+  /// `Navigator.pop()` callback the live redirect above schedules — that
+  /// callback can fire after this screen's element is already being torn
+  /// down, where a fresh `context.read` isn't safe, but a plain Dart
+  /// object reference captured ahead of time stays perfectly usable
+  /// regardless of the widget's own lifecycle.
+  late final PlaybackService _playback;
 
   /// Refreshed on every build (see [build]) and read from [_toggleImmersive]
   /// / [_restoreChrome] / [dispose] — those don't call [build] themselves,
@@ -80,10 +121,42 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return 'TV';
   }
 
+  /// Live channels never actually show this screen's own chrome — see the
+  /// class doc comment's "Live playback redirect" section. Set in
+  /// [initState] and read from [build] so both places agree without
+  /// recomputing `Channel.isLiveId` from possibly-stale local state.
+  bool _isLiveRedirect = false;
+
   @override
   void initState() {
     super.initState();
-    context.read<PlaybackService>().play(widget.channel);
+    _playback = context.read<PlaybackService>();
+    _playback.play(widget.channel);
+    // `play()` only resets `isMinimized` when it actually starts a *new*
+    // channel — reopening fullscreen for whatever's already playing (the
+    // exact minimized-live scenario: tapping the same channel again, or
+    // any other manual way back in) hits its "already this channel"
+    // no-op guard and returns before reaching that reset, so the island
+    // stayed marked minimized (and visible) even with fullscreen back on
+    // top of it. This being called at all means we're not minimized,
+    // unconditionally, regardless of how playback itself got here.
+    _playback.restore();
+    _isLiveRedirect = Channel.isLiveId(widget.channel.id);
+    if (_isLiveRedirect) {
+      // See "Live playback redirect" — pop this route on the very next
+      // frame instead of ever building its Scaffold/video. `restore()`
+      // above already flipped `isMinimized` to false, which is all
+      // `LiveIslandOverlay` needs to show its own fullscreen chrome+video
+      // (rendered as a sibling *above* the Navigator, so it's already
+      // visible underneath this route's brief, invisible flash). Every
+      // existing call site keeps pushing `PlayerScreen(channel: ...)`
+      // unchanged — VOD/episodes vs. live is decided here, in one place,
+      // rather than requiring every call site to branch.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
+      return;
+    }
     _topScope.addListener(_onBarFocusChange);
     _bottomScope.addListener(_onBarFocusChange);
     _resetHideTimer();
@@ -187,6 +260,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // See "Live playback redirect" on the class doc comment — this route
+    // is about to pop itself (already scheduled in initState) and must
+    // never build a Scaffold/video of its own for a live channel, since
+    // `LiveIslandOverlay` is already showing its own fullscreen
+    // presentation underneath this brief, otherwise-invisible frame.
+    if (_isLiveRedirect) return const SizedBox.shrink();
     final playback = context.watch<PlaybackService>();
     final controller = playback.controller;
     final prefs = context.watch<AppPreferences>();
@@ -240,18 +319,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
             // narrow `SafeArea(bottom: false)` for their own content.
             //
             // Every entry in this Stack's children list must resolve to a
-            // `Positioned` widget, with no exceptions — see [_UpNextBubble]
+            // `Positioned` widget, with no exceptions — see [UpNextBubble]
             // for why: Stack only sizes itself to fill the available space
             // (`constraints.biggest`) when *every* child is `Positioned`;
             // a single non-positioned child (even a zero-size
             // `SizedBox.shrink()`) makes Stack size itself to fit that
             // child instead, which was collapsing this entire Stack —
-            // video included — to 0x0 whenever `_UpNextBubble` had nothing
+            // video included — to 0x0 whenever `UpNextBubble` had nothing
             // to show (i.e. essentially always). That was the actual cause
             // of the black fullscreen screen.
             child: Stack(
               children: [
-                  const Positioned.fill(child: VideoPlayerPane(showControls: false, showEpgBar: false)),
+                  Positioned.fill(
+                    // See HomeScreen's identical fix for why this is
+                    // keyed to the channel rather than const.
+                    child: VideoPlayerPane(
+                      key: ValueKey(channel.id),
+                      showControls: false,
+                      showEpgBar: false,
+                    ),
+                  ),
 
                   // Top bar: back, current/next EPG line (live only), search,
                   // fullscreen toggle. Positioned has to be the outermost
@@ -278,7 +365,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 bottom: false,
                                 child: Row(
                                   children: [
-                                    _TopBarIconButton(
+                                    TopBarIconButton(
                                       icon: Icons.arrow_back,
                                       tooltip: 'Back',
                                       onPressed: () => Navigator.of(context).pop(),
@@ -293,7 +380,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                               style: const TextStyle(color: Colors.white),
                                             ),
                                     ),
-                                    _TopBarIconButton(
+                                    TopBarIconButton(
                                       icon: Icons.search,
                                       tooltip: 'Search',
                                       onPressed: () => Navigator.of(context).push(
@@ -302,7 +389,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                         ),
                                       ),
                                     ),
-                                    _TopBarIconButton(
+                                    TopBarIconButton(
                                       icon: _immersive ? Icons.fullscreen_exit : Icons.fullscreen,
                                       tooltip: _immersive ? 'Exit fullscreen' : 'Fullscreen',
                                       onPressed: _toggleImmersive,
@@ -334,6 +421,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                               child: PlayerControls(
                                 controller: controller,
                                 title: channel.name,
+                                channelId: channel.id,
+                                isLive: Channel.isLiveId(channel.id),
                                 isFavorite: channel.isFavorite,
                                 onToggleFavorite: () => playlist.toggleFavorite(channel),
                               ),
@@ -344,7 +433,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                     ),
 
                   if (controller != null)
-                    _UpNextBubble(
+                    UpNextBubble(
                       controller: controller,
                       nextChannel: playback.nextUpChannel,
                       onPlayNow: () {
@@ -369,8 +458,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
 /// this episode. Reacts to the controller directly (not `PlaybackService`,
 /// which only notifies on channel/controller changes) since it needs to
 /// know the position every tick, the same way the seek bar does.
-class _UpNextBubble extends StatelessWidget {
-  const _UpNextBubble({
+class UpNextBubble extends StatelessWidget {
+  const UpNextBubble({
+    super.key,
     required this.controller,
     required this.nextChannel,
     required this.onPlayNow,
@@ -436,9 +526,9 @@ class _UpNextBubble extends StatelessWidget {
                           ? CachedNetworkImage(
                               imageUrl: next.logoUrl!,
                               fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) => const _UpNextFallbackIcon(),
+                              errorWidget: (_, __, ___) => const UpNextFallbackIcon(),
                             )
-                          : const _UpNextFallbackIcon(),
+                          : const UpNextFallbackIcon(),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -487,8 +577,8 @@ class _UpNextBubble extends StatelessWidget {
   }
 }
 
-class _UpNextFallbackIcon extends StatelessWidget {
-  const _UpNextFallbackIcon();
+class UpNextFallbackIcon extends StatelessWidget {
+  const UpNextFallbackIcon({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -506,18 +596,18 @@ class _UpNextFallbackIcon extends StatelessWidget {
 /// busy video background. Same highlight pattern as the rest of the TV UI
 /// (Material+InkWell+onFocusChange, e.g. TvHomeScreen's _SelectableRow): a
 /// solid filled circle behind the icon while focused.
-class _TopBarIconButton extends StatefulWidget {
-  const _TopBarIconButton({required this.icon, required this.onPressed, this.tooltip});
+class TopBarIconButton extends StatefulWidget {
+  const TopBarIconButton({super.key, required this.icon, required this.onPressed, this.tooltip});
 
   final IconData icon;
   final VoidCallback onPressed;
   final String? tooltip;
 
   @override
-  State<_TopBarIconButton> createState() => _TopBarIconButtonState();
+  State<TopBarIconButton> createState() => TopBarIconButtonState();
 }
 
-class _TopBarIconButtonState extends State<_TopBarIconButton> {
+class TopBarIconButtonState extends State<TopBarIconButton> {
   bool _focused = false;
 
   @override

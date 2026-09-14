@@ -79,4 +79,17 @@ class Channel {
         seriesName: json['seriesName'] as String?,
         seriesCoverUrl: json['seriesCoverUrl'] as String?,
       );
+
+  /// Best-effort "is this a live channel, not VOD/an episode" signal from
+  /// just an id — the same convention `PlayerScreen._searchScope` already
+  /// used in one place; centralized here so every caller that needs to
+  /// tell live apart from VOD (without trusting the video controller's
+  /// own `duration`, which some live HLS streams misreport as their
+  /// current DVR sliding-window length instead of zero/unknown — see
+  /// `PlayerControls.isLive`'s doc comment) shares one answer instead of
+  /// each guessing separately. Xtream ids are prefixed at creation time
+  /// (`xt_vod_...`/`xt_ep_...` — see XtreamApiService); M3U-mode channels
+  /// carry no such distinction at all, a pre-existing, separate
+  /// limitation — this only returns a confident answer for Xtream ids.
+  static bool isLiveId(String id) => !(id.startsWith('xt_vod_') || id.startsWith('xt_ep_'));
 }
