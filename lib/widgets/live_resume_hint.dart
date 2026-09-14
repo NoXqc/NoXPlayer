@@ -49,7 +49,6 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
   static const _holdDuration = Duration(milliseconds: 1200);
 
   Timer? _holdTimer;
-  bool _holdFired = false;
 
   late final PlaybackService _playback;
 
@@ -58,21 +57,11 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
     super.initState();
     _playback = context.read<PlaybackService>();
     _playback.addListener(_onPlaybackChanged);
-    // A first version of this used `HardwareKeyboard.addHandler` — a
-    // genuinely non-blocking observer — on the theory that nothing
-    // conflicts if Right's normal navigation also keeps running the
-    // whole time this widget is separately timing the same hold: the
-    // resume action doesn't care what focus did in the meantime. Real
-    // hardware testing said otherwise — watching the focused list rapid-
-    // scroll through many rows for the entire hold read as broken, not
-    // "working as designed", regardless of there being no functional
-    // conflict. `addEarlyKeyEventHandler` is the actual gate (runs before
-    // the focus tree; returning `KeyEventResult.handled` genuinely stops
-    // the event from reaching whatever's focused) — same tool the pill's
-    // own hold gestures used, and for the same reason: [_handleGlobalKey]
-    // below claims Right entirely for the duration of a hold, only ever
-    // letting the underlying screen see a synthesized version of a
-    // *normal* press when the hold doesn't complete.
+    // Two earlier versions of this each got half of it right and not the
+    // other — see [_handleGlobalKey] for why neither the pill's own
+    // "consume everything, synthesize a substitute on release" pattern
+    // nor a fully non-blocking observer actually work for Right
+    // specifically, and what this does instead.
     FocusManager.instance.addEarlyKeyEventHandler(_handleGlobalKey);
   }
 
@@ -96,46 +85,61 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
         !_playback.isFullscreenActive;
   }
 
-  /// Same "consume-and-synthesize" shape as the pill's hold-Down/hold-Up
-  /// gestures (see that history on `backup/live-island-attempt` if it
-  /// ever needs revisiting): claim Right fully from the first
-  /// `KeyDownEvent` — and every `KeyRepeatEvent` Android sends for as
-  /// long as it's physically held, which is what actually drives smooth
-  /// scrolling elsewhere in the app and is exactly what needs suppressing
-  /// here — so none of it leaks through as real navigation during the
-  /// hold. Then on `KeyUpEvent`, if the hold never actually completed,
-  /// manually perform the equivalent of whatever a normal quick press
-  /// would have done (`focusInDirection`) instead of just discarding it.
-  /// A quick press of Right behaves exactly as if this widget didn't
-  /// exist; only a genuine sustained hold does anything extra — and, as
-  /// an accepted trade-off, a sustained hold no longer smoothly fast-
-  /// scrolls a long grid while something happens to be playing in the
-  /// background either, same as holding Down never scrolled a list while
-  /// the pill existed. Gated on [_canResume] first, so every other
-  /// screen's own use of Right (column navigation, grid navigation,
-  /// TvHomeScreen's own "Right in the last column" shortcut) is
-  /// completely unaffected whenever there's nothing to resume.
+  /// Neither of the two things already tried for a hold gesture in this
+  /// app actually fits Right:
+  ///
+  /// - The pill's own hold-Down/hold-Up "consume everything, then
+  ///   synthesize `focusInDirection` on release if the hold didn't
+  ///   complete" pattern relied on that synthesized call being a faithful
+  ///   substitute for whatever a normal press would have done. For
+  ///   Down/Up that happened to hold. For Right it doesn't: this app's
+  ///   own screens bind Right to *custom* `CallbackShortcuts` actions —
+  ///   `TvHomeScreen`'s column navigation (`_moveColumnFocus`,
+  ///   `_enterBrowseColumn`, its own "Right in the last column" shortcut)
+  ///   and `PlayerScreen`'s deliberate no-op — none of which
+  ///   `focusInDirection` (Flutter's generic geometric focus search) has
+  ///   any way to know about or replicate. Confirmed on real hardware:
+  ///   consuming a real press and replacing it with that generic
+  ///   fallback made Right stop doing its actual job, not just look
+  ///   different — every press after a hold attempt kept landing on the
+  ///   same inaccurate substitute instead of the screen's real handler.
+  /// - A fully non-blocking observer (tried right before this) avoids
+  ///   that by never touching the real event at all — but then nothing
+  ///   stops Android's own repeated `KeyRepeatEvent`s (what actually
+  ///   drives smooth scrolling anywhere else in the app while a
+  ///   directional key is held) from rapid-firing the underlying screen
+  ///   for the entire hold, which read as broken even with no functional
+  ///   conflict.
+  ///
+  /// The actual fix needs no synthesis at all: let the *real* first
+  /// `KeyDownEvent` through untouched (`ignored`), so whatever the
+  /// focused screen actually does on a real Right press happens exactly
+  /// as it always would. Only the *repeats* that would otherwise rapid-
+  /// fire for the rest of a sustained hold get swallowed. `KeyUpEvent`
+  /// has nothing left to do beyond stopping the timer — the real action
+  /// already ran the moment the key went down, so there's never a
+  /// substitute to get wrong. Accepted trade-off: a sustained hold no
+  /// longer smoothly fast-scrolls a long grid past its first step while
+  /// something's playing in the background, same as holding Down never
+  /// scrolled a list while the pill existed — but every ordinary press,
+  /// including the very next one right after a hold, is the real thing,
+  /// never a guess. Gated on [_canResume] first, so every other screen's
+  /// own use of Right is completely unaffected whenever there's nothing
+  /// to resume.
   KeyEventResult _handleGlobalKey(KeyEvent event) {
     if (!_canResume) return KeyEventResult.ignored;
     if (event.logicalKey != LogicalKeyboardKey.arrowRight) return KeyEventResult.ignored;
 
     if (event is KeyDownEvent) {
-      _holdFired = false;
       _holdTimer?.cancel();
-      _holdTimer = Timer(_holdDuration, () {
-        _holdFired = true;
-        _resume();
-      });
-      return KeyEventResult.handled;
+      _holdTimer = Timer(_holdDuration, _resume);
+      return KeyEventResult.ignored;
     }
     if (event is KeyRepeatEvent) return KeyEventResult.handled;
     if (event is KeyUpEvent) {
       _holdTimer?.cancel();
       _holdTimer = null;
-      if (!_holdFired) {
-        FocusManager.instance.primaryFocus?.focusInDirection(TraversalDirection.right);
-      }
-      return KeyEventResult.handled;
+      return KeyEventResult.ignored;
     }
     return KeyEventResult.ignored;
   }

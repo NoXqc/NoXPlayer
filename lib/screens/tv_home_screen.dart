@@ -508,6 +508,23 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   void didPopNext() {
     final isBrowseTab = _tab == 'Movies' || _tab == 'TV Shows';
     if (!isBrowseTab) {
+      // Reported directly: scroll to browse a different group (without
+      // actually picking a channel from it), hold Right to resume the
+      // channel that's actually live, then leave fullscreen again — the
+      // *browsed* group was still showing instead of the live channel's
+      // own, since nothing here ever cleared `_selectedGroup` on the way
+      // back. `isFullscreenActive` is still true at this exact point
+      // (PlayerScreen's own dispose-time clear is deferred a frame — see
+      // that class's doc comment — so it hasn't run yet), which is
+      // exactly what distinguishes "we just left the fullscreen player"
+      // from `didPopNext` firing for any *other* pushed route (Search,
+      // Settings) — those never touch this flag, and must NOT have this
+      // reset applied: closing Search after deliberately browsing a
+      // group should land back on that same group, not jump away to
+      // whatever's live.
+      if (context.read<PlaybackService>().isFullscreenActive) {
+        setState(() => _selectedGroup = null);
+      }
       _restoreLiveFocus();
       return;
     }
