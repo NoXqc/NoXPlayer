@@ -162,6 +162,8 @@ class PlayerControls extends StatelessWidget {
     required this.isLive,
     this.isFavorite,
     this.onToggleFavorite,
+    this.onPrevious,
+    this.onNext,
   });
 
   final VideoPlayerHdrController controller;
@@ -194,6 +196,13 @@ class PlayerControls extends StatelessWidget {
   /// favorites" for whatever's playing.
   final bool? isFavorite;
   final VoidCallback? onToggleFavorite;
+
+  /// Null hides the button entirely — a movie or live channel has no
+  /// previous/next *episode* concept (see PlaybackService.previousUpChannel/
+  /// nextUpChannel, both null in that case), and only [PlayerScreen] passes
+  /// these at all, same as [onToggleFavorite] above.
+  final VoidCallback? onPrevious;
+  final VoidCallback? onNext;
 
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -268,6 +277,16 @@ class PlayerControls extends StatelessWidget {
                       tooltip: isFavorite == true ? 'Remove from favorites' : 'Add to favorites',
                       onPressed: onToggleFavorite,
                     ),
+                  // Episode nav — distinct icon shape (skip_previous/next,
+                  // not replay_10/forward_10) so it doesn't read as "seek
+                  // within this episode" the way the buttons either side
+                  // of play/pause already do.
+                  if (onPrevious != null)
+                    IconButton(
+                      icon: const Icon(Icons.skip_previous, color: Colors.white),
+                      tooltip: 'Previous episode',
+                      onPressed: onPrevious,
+                    ),
                   // Skip/fast-seek only makes sense for VOD.
                   if (showSeek)
                     _SkipButton(
@@ -288,6 +307,12 @@ class PlayerControls extends StatelessWidget {
                         final target = position + amount;
                         controller.seekTo(target > duration ? duration : target);
                       },
+                    ),
+                  if (onNext != null)
+                    IconButton(
+                      icon: const Icon(Icons.skip_next, color: Colors.white),
+                      tooltip: 'Next episode',
+                      onPressed: onNext,
                     ),
                   _AudioTrackButton(controller: controller),
                 ],

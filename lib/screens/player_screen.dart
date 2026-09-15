@@ -161,6 +161,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
     setState(() => _bottomVisible = true);
   }
 
+  /// A remote's dedicated hardware Play/Pause button (or separate Play/
+  /// Pause keys, on remotes that split them) should just work regardless
+  /// of where D-pad focus currently is — requiring the user to navigate to
+  /// the on-screen button first defeats the entire point of a physical
+  /// media key existing. Bound alongside Up/Down below rather than gated
+  /// by `!_focusInBar` the way Left/Right are: this should fire no matter
+  /// which bar (if any) currently has focus, not just when none does. A
+  /// remote with no such key simply never sends this event — the on-screen
+  /// button (and D-pad navigation to it) keeps working exactly as before.
+  void _handlePlayPause() {
+    final controller = _playback.controller;
+    if (controller == null) return;
+    _resetHideTimer();
+    controller.value.isPlaying ? controller.pause() : controller.play();
+  }
+
   Future<void> _toggleImmersive() async {
     final next = !_immersive;
     setState(() => _immersive = next);
@@ -232,6 +248,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         bindings: <ShortcutActivator, VoidCallback>{
           const SingleActivator(LogicalKeyboardKey.arrowUp): _handleUp,
           const SingleActivator(LogicalKeyboardKey.arrowDown): _handleDown,
+          // Some remotes send a single combined key, others send separate
+          // Play and Pause keys (e.g. a dedicated Pause button) — bound to
+          // the same toggle handler either way, since it already checks
+          // the actual current state rather than assuming.
+          const SingleActivator(LogicalKeyboardKey.mediaPlayPause): _handlePlayPause,
+          const SingleActivator(LogicalKeyboardKey.mediaPlay): _handlePlayPause,
+          const SingleActivator(LogicalKeyboardKey.mediaPause): _handlePlayPause,
           if (!_focusInBar) ...{
             const SingleActivator(LogicalKeyboardKey.arrowLeft): () => Navigator.of(context).pop(),
             // Right never had any established purpose here — it simply had
@@ -369,6 +392,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                 isLive: Channel.isLiveId(channel.id),
                                 isFavorite: channel.isFavorite,
                                 onToggleFavorite: () => playlist.toggleFavorite(channel),
+                                onPrevious: playback.previousUpChannel != null
+                                    ? () => playback.play(playback.previousUpChannel!)
+                                    : null,
+                                onNext: playback.nextUpChannel != null
+                                    ? () => playback.play(playback.nextUpChannel!)
+                                    : null,
                               ),
                             ),
                           ),

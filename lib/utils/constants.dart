@@ -34,21 +34,21 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.26.0 — Add Playlist has a new "Smart Add" tab: paste the message '
-      'a provider sent you (server, username, password, any backup/alt '
-      'DNS links) and it fills in the Xtream login fields for you, with a '
-      'confirm step to pick the right server when more than one URL was '
-      'found — built for the common case of typing a login in via a Fire '
-      'Stick\'s QR-code-to-phone-keyboard relay, where one paste beats '
-      'hunting three fields out by hand. Also includes everything from '
-      '3.25.0: version bumped past a stray leftover 3.24.5/100 Live '
-      'Island-experiment install that was numerically newer than this '
-      'mainline despite being much older code; the Settings redesign '
-      '(gradient background, frosted-glass panels, circular check '
-      'icons); Group Management\'s checkbox stale-repaint fix; '
-      'persistent poster-image caching; and the main Live TV/Movies/TV '
-      'Shows screen\'s bright gradient background and rounded, bordered '
-      'live-preview pane.';
+      '3.27.0 — The fullscreen player\'s bottom bar has explicit Previous/'
+      'Next episode buttons now (only shown for an episode opened from '
+      'Series Detail, hidden for a movie or live channel — same episode '
+      'queue that already drove "Up Next"). A remote\'s dedicated Play/'
+      'Pause hardware key (or separate Play/Pause keys, on remotes that '
+      'split them) now also toggles playback directly, no need to '
+      'navigate D-pad focus onto the on-screen button first — a remote '
+      'without one just keeps working exactly as before. Also includes '
+      'everything from 3.26.0: Add Playlist\'s "Smart Add" paste-and-'
+      'parse tab; the version bump past a stray leftover 3.24.5/100 Live '
+      'Island-experiment install; the Settings redesign (gradient '
+      'background, frosted-glass panels, circular check icons); Group '
+      'Management\'s checkbox stale-repaint fix; persistent poster-image '
+      'caching; and the main Live TV/Movies/TV Shows screen\'s bright '
+      'gradient background and rounded, bordered live-preview pane.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';

@@ -141,6 +141,21 @@ class PlaybackService extends ChangeNotifier {
   /// [PlayerScreen] show what's coming without duplicating the lookup.
   Channel? get nextUpChannel => _nextInQueue;
 
+  Channel? get _previousInQueue {
+    final queue = _upNextQueue;
+    final current = currentChannel;
+    if (queue == null || current == null) return null;
+    final index = queue.indexWhere((c) => c.id == current.id);
+    if (index <= 0) return null;
+    return queue[index - 1];
+  }
+
+  /// Public alias of [_previousInQueue] — lets [PlayerControls]' explicit
+  /// "Previous episode" button jump back without duplicating the lookup.
+  /// Null (button hidden) for a movie/live channel — anything not actually
+  /// in [_upNextQueue] — the same way [nextUpChannel] already behaves.
+  Channel? get previousUpChannel => _previousInQueue;
+
   /// Set when the user dismisses the "Up Next" bubble — reset on every
   /// [play] call, so it only ever suppresses auto-advance for the episode
   /// it was dismissed on, not every episode after it.
