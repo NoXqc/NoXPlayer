@@ -9,11 +9,18 @@
 /// url/server/backup fields).
 library;
 
+/// Every abbreviation actually confirmed in a real provider message this
+/// session ("UN:", "psw:") plus their obvious neighbors — kept as their
+/// own constants (rather than folded straight into [_labelWords]) so the
+/// username/password extraction regexes below can reuse the exact same
+/// alternation instead of drifting out of sync with it over time.
+const _usernameLabels = 'username|user|login|un';
+const _passwordLabels = 'password|pass|pwd|psw|pw';
+
 /// Field labels this parser recognizes when scanning pasted provider text.
 /// Used to split fields apart when a provider's message has zero
 /// whitespace between them (e.g. "38827a0e8cf2Password:f8504889f9").
-const _labelWords =
-    'username|user|login|password|pass|pwd|url|dns|server|domain|type|exp|expiry|backup|m3u';
+const _labelWords = '$_usernameLabels|$_passwordLabels|url|dns|server|domain|type|exp|expiry|backup|m3u';
 
 /// Descriptor words that sometimes get glued directly onto a credential
 /// with no separator (e.g. "f8504889f9SmartTV") — stops a value capture
@@ -83,21 +90,23 @@ SmartAddResult parseSmartAddText(String raw) {
   var username = '';
   var password = '';
   const stopLookahead = '(?=\\s|&|\$|$_descriptorStopWords)';
-  // The separator between a label and its value is either an explicit
-  // `:`/`=` (same line, e.g. "username: bf268dcdc0") OR a bare newline
-  // with no punctuation at all — confirmed as a real, common provider
-  // format (a panel's own "USERNAME" section header directly above the
-  // value, copied as plain text keeps that layout). A single plain space
-  // with no colon and no newline is deliberately NOT accepted as a
-  // separator, or "enter your username here" would grab "here".
-  const labelSeparator = '(?:\\s*[:=]\\s*|\\s*\\n\\s*)';
+  // The separator between a label and its value is an explicit `:`/`=`/`-`
+  // (same line, e.g. "username: bf268dcdc0", "Username - bf268dcdc0") OR a
+  // bare newline with no punctuation at all — confirmed as a real, common
+  // provider format (a panel's own "USERNAME" section header directly
+  // above the value, copied as plain text keeps that layout). A single
+  // plain space with none of the above is deliberately NOT accepted as a
+  // separator, or "enter your username here" would grab "here" — that
+  // risk gets worse, not better, now that short abbreviations like "un"/
+  // "pw" are recognized labels too.
+  const labelSeparator = '(?:\\s*[:=-]\\s*|\\s*\\n\\s*)';
   final userMatch = RegExp(
-    '\\b(?:username|user|login)\\b$labelSeparator([^\\s&]+?)$stopLookahead',
+    '\\b(?:$_usernameLabels)\\b$labelSeparator([^\\s&]+?)$stopLookahead',
     caseSensitive: false,
   ).firstMatch(text);
   if (userMatch != null) username = _stripTrailingPunctuation(userMatch.group(1)!);
   final passMatch = RegExp(
-    '\\b(?:password|pass|pwd)\\b$labelSeparator([^\\s&]+?)$stopLookahead',
+    '\\b(?:$_passwordLabels)\\b$labelSeparator([^\\s&]+?)$stopLookahead',
     caseSensitive: false,
   ).firstMatch(text);
   if (passMatch != null) password = _stripTrailingPunctuation(passMatch.group(1)!);

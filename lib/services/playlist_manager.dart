@@ -415,6 +415,21 @@ class PlaylistManager extends ChangeNotifier {
 
   Future<void> _loadLiveChannelsOnce() async {
     isLoading = true;
+    // Confirmed on a real Fire Stick (debug mode's own assertion caught
+    // it directly): `ensureLiveChannelsLoaded` is called unawaited from
+    // `TvHomeScreen._buildLiveRegion`, itself called from that screen's
+    // own `build()` — so this very first `notifyListeners()` fires
+    // *while TvHomeScreen is still mid-build*, tripping "setState() or
+    // markNeedsBuild() called during build" against the
+    // `_InheritedProviderScope<PlaylistManager?>` above it. Flutter
+    // tolerates this specific shape (an ancestor marking itself dirty
+    // while a descendant builds) rather than treating it as fatal, but
+    // it's the same fragile pattern already fixed elsewhere in this
+    // codebase (see PlaybackService.setFullscreenActive's doc comment) —
+    // deferring a frame costs nothing here (isLoading's own UI, a
+    // spinner, tolerates one extra frame of latency fine) and avoids
+    // relying on that tolerance at all.
+    await Future<void>.delayed(Duration.zero);
     notifyListeners();
     try {
       List<Channel> channels;

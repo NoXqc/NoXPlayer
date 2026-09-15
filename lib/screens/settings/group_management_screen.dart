@@ -356,10 +356,40 @@ class _GroupList extends StatelessWidget {
               // Material ink response, no internal AnimatedContainer, as
               // simple a paint primitive as Flutter has) sidesteps
               // whatever that is rather than trying to force it again.
+              //
+              // Three more fix attempts here, all confirmed on a real
+              // Fire Stick as NOT fixing this: forcing the whole
+              // `_GroupList` to rebuild once via a changing key a frame
+              // after this screen's first paint; forcing a brand new
+              // compositing *layer* via a keyed `RepaintBoundary` (kept
+              // anyway over the `KeyedSubtree` it replaced — a strict
+              // superset); and automatically popping this screen and
+              // silently pushing a fresh copy of itself, which got stuck
+              // exactly the same way on the very first toggle. That last
+              // one also ruled out "just needs elapsed time since the
+              // heavy load" (confirmed separately too: waiting 60+ real
+              // seconds before trying Hide All again changed nothing) —
+              // so nothing in *this* screen's own widget tree, however
+              // rebuilt, was ever going to fix it.
+              //
+              // The actual root cause turned out to live somewhere this
+              // file never touches at all: `PlaylistManager` firing
+              // `notifyListeners()` synchronously *during* `TvHomeScreen`'s
+              // own build (TvHomeScreen stays mounted, just covered, under
+              // the whole Add Playlist → Group Management stack, and
+              // still rebuilds when the provider above it notifies).
+              // Confirmed directly via a debug-mode Flutter assertion
+              // ("setState() or markNeedsBuild() called during build")
+              // that release mode has no equivalent safety net for — see
+              // `PlaylistManager._loadLiveChannelsOnce`'s doc comment for
+              // the actual fix. Real hardware confirmed fixed end-to-end
+              // after that change, so the `RepaintBoundary` above is
+              // likely no longer doing any real work — left in place
+              // anyway since it's strictly safe and costs nothing.
               return ListTile(
                 key: ValueKey(group.title),
                 title: Text(group.title),
-                trailing: KeyedSubtree(
+                trailing: RepaintBoundary(
                   key: ValueKey(group.isHidden),
                   child: Icon(
                     group.isHidden ? Icons.circle_outlined : Icons.check_circle,

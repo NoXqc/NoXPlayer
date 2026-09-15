@@ -13,6 +13,7 @@ import '../services/storage_service.dart';
 import '../utils/tv_theme.dart';
 import '../widgets/channel_list_tile.dart';
 import '../widgets/hold_to_activate.dart';
+import '../widgets/settings_scaffold.dart';
 import 'player_screen.dart';
 import 'series_detail_screen.dart';
 
@@ -153,8 +154,20 @@ class _SearchScreenState extends State<SearchScreen> {
     final playlist = context.watch<PlaylistManager>();
     final q = _query.trim().toLowerCase();
 
-    return withTvThemeIfNeeded(context, (context) => Scaffold(
+    // Missed in the original Settings-family gradient redesign — Search
+    // isn't a Settings screen, it's reached straight from the main tabs,
+    // so it wasn't in that pass at all. Same Stack-behind-a-transparent-
+    // Scaffold approach as SettingsScaffold itself (not that widget
+    // directly: this AppBar's title is a live TextField, not a plain
+    // string, which SettingsScaffold's API doesn't have a slot for).
+    return withTvThemeIfNeeded(context, (context) => Stack(
+      children: [
+        const Positioned.fill(child: SettingsGradientBackground()),
+        Scaffold(
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
         title: TextField(
           controller: _controller,
           autofocus: true,
@@ -226,6 +239,8 @@ class _SearchScreenState extends State<SearchScreen> {
           Expanded(child: _buildResults(context, playlist, q)),
         ],
       ),
+        ),
+      ],
     ));
   }
 

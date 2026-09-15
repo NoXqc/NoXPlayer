@@ -34,21 +34,23 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.27.0 — The fullscreen player\'s bottom bar has explicit Previous/'
-      'Next episode buttons now (only shown for an episode opened from '
-      'Series Detail, hidden for a movie or live channel — same episode '
-      'queue that already drove "Up Next"). A remote\'s dedicated Play/'
-      'Pause hardware key (or separate Play/Pause keys, on remotes that '
-      'split them) now also toggles playback directly, no need to '
-      'navigate D-pad focus onto the on-screen button first — a remote '
-      'without one just keeps working exactly as before. Also includes '
-      'everything from 3.26.0: Add Playlist\'s "Smart Add" paste-and-'
-      'parse tab; the version bump past a stray leftover 3.24.5/100 Live '
-      'Island-experiment install; the Settings redesign (gradient '
-      'background, frosted-glass panels, circular check icons); Group '
-      'Management\'s checkbox stale-repaint fix; persistent poster-image '
-      'caching; and the main Live TV/Movies/TV Shows screen\'s bright '
-      'gradient background and rounded, bordered live-preview pane.';
+      '3.28.0 — Actually fixed the Group Management checkbox freeze on a '
+      'fresh Xtream login (the earlier Icon-swap fix only masked a '
+      'different, older issue). Root cause, found via a debug-mode-only '
+      'Flutter assertion: PlaylistManager fired notifyListeners() '
+      'synchronously *during* TvHomeScreen\'s own build — "allowed" by '
+      'Flutter but fragile, and confirmed on real hardware to leave '
+      'release-mode rendering in a state where nothing on the '
+      'Group Management screen visually updates again for the rest of '
+      'that screen\'s life, even though the underlying show/hide data '
+      'was always correct. Deferred that notification by a frame; '
+      'confirmed fixed end-to-end on a real Fire Stick, same exact '
+      'repro as before. Also includes everything from 3.27.0: explicit '
+      'Previous/Next episode buttons in the player; hardware Play/Pause '
+      'key support; Add Playlist\'s "Smart Add" paste-and-parse tab; the '
+      'Settings redesign; persistent poster-image caching; and the main '
+      'Live TV/Movies/TV Shows screen\'s bright gradient background and '
+      'rounded, bordered live-preview pane.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
