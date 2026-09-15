@@ -34,15 +34,22 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.22.0 — Settings screens redesigned (gradient background, '
+      '3.25.0 — Version bumped past 3.24.5/100, a stray leftover install '
+      'from the abandoned "Live Island" experiment (see the '
+      'backup/live-island-attempt branch) that was numerically newer '
+      'than this mainline despite being much older code — any device '
+      'still carrying that build couldn\'t see this one as an update. '
+      'Also includes: Settings screens redesigned (gradient background, '
       'frosted-glass panels, circular check icons) to match the '
-      'MyTVOnline3 reference look. Group Management\'s checkbox glyph '
+      'MyTVOnline3 reference look; Group Management\'s checkbox glyph '
       'replaced with a plain circular Icon (fixes a Formuler-specific '
       'stale-repaint bug where the box never visually updated even '
-      'though the underlying hide/show state was always correct). '
-      'Poster images now persist across a full app restart instead of '
+      'though the underlying hide/show state was always correct); '
+      'poster images now persist across a full app restart instead of '
       're-fetching every cold start (flutter_cache_manager was storing '
-      'files in the OS-reclaimable temp directory).';
+      'files in the OS-reclaimable temp directory); the main Live '
+      'TV/Movies/TV Shows screen now shares the same bright gradient '
+      'background and a rounded, bordered live-preview pane.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
