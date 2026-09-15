@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../services/epg_service.dart';
 import '../../services/playlist_manager.dart';
 import '../../services/storage_service.dart';
+import '../../utils/smart_add_parser.dart';
 import '../../utils/tv_theme.dart';
 import '../../utils/xtream.dart';
 import '../../widgets/mode_button.dart';
@@ -27,13 +28,36 @@ class AddPlaylistScreen extends StatefulWidget {
 }
 
 class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
-  late String _mode; // 'm3u' or 'xtream'
+  late String _mode; // 'm3u', 'xtream', or 'smart' (a UI-only tab — see _save)
   late TextEditingController _m3uController;
   late TextEditingController _epgController;
   late TextEditingController _xtreamServerController;
   late TextEditingController _xtreamUsernameController;
   late TextEditingController _xtreamPasswordController;
   bool _obscurePassword = true;
+
+  /// Smart Add: paste-and-parse for the common case of copying a
+  /// provider's whole welcome message off a phone and typing it in via
+  /// the Fire Stick's QR-code-to-phone-keyboard relay — one paste instead
+  /// of three separate fields to hunt values out of by hand. See
+  /// [parseSmartAddText]'s doc comment for the parsing approach.
+  final _smartPasteController = TextEditingController();
+
+  /// Every server URL the parser found, most-likely-correct first — shown
+  /// as a pick list rather than silently committing to the first one,
+  /// since a sloppy copy-paste (e.g. selecting across a line break) can
+  /// glue a stray character from an adjacent line onto an otherwise-good
+  /// URL. Requested directly: "that way they could select which server or
+  /// proper URL they want."
+  List<String> _smartServerCandidates = [];
+  String? _smartSelectedServer;
+
+  /// Whether Smart Add has parsed its pasted text yet — before this, the
+  /// tab shows just the paste box; after, it shows the candidate picker
+  /// plus the same server/username/password fields the Xtream tab uses
+  /// (reusing those controllers directly, so there's exactly one place
+  /// that actually gets saved regardless of which tab filled it in).
+  bool _smartParsed = false;
 
   /// Field-to-field navigation on a TV remote turned out not to work via
   /// D-pad Up/Down at all — reported on a real Firestick: opening a text
@@ -112,6 +136,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
     _xtreamServerController.dispose();
     _xtreamUsernameController.dispose();
     _xtreamPasswordController.dispose();
+    _smartPasteController.dispose();
     _m3uFocus.dispose();
     _epgFocus.dispose();
     _serverFocus.dispose();
@@ -164,12 +189,51 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
     return true;
   }
 
+  /// Smart Add has no save path of its own — parsing just fills the same
+  /// controllers the Xtream tab reads from, so from here on it's really an
+  /// Xtream login, and is persisted/loaded as one.
+  String get _effectiveMode => _mode == 'smart' ? 'xtream' : _mode;
+
+  void _handleSmartParse() {
+    final raw = _smartPasteController.text.trim();
+    if (raw.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Paste some text first.')),
+      );
+      return;
+    }
+    final result = parseSmartAddText(raw);
+    if (result.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't find anything usable in that text.")),
+      );
+      return;
+    }
+    setState(() {
+      _smartServerCandidates = result.serverCandidates;
+      _smartSelectedServer = result.serverCandidates.isNotEmpty ? result.serverCandidates.first : null;
+      _xtreamServerController.text = _smartSelectedServer ?? '';
+      _xtreamUsernameController.text = result.username;
+      _xtreamPasswordController.text = result.password;
+      _smartParsed = true;
+    });
+  }
+
+  void _resetSmartAdd() {
+    setState(() {
+      _smartParsed = false;
+      _smartServerCandidates = [];
+      _smartSelectedServer = null;
+    });
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     setState(() => _saving = true);
     try {
       final storage = context.read<StorageService>();
-      await storage.setPlaylistMode(_mode);
+      final mode = _effectiveMode;
+      await storage.setPlaylistMode(mode);
 
       if (!mounted) return;
       final playlist = context.read<PlaylistManager>();
@@ -177,7 +241,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
 
       String epgUrl;
 
-      if (_mode == 'xtream') {
+      if (mode == 'xtream') {
         final server = _xtreamServerController.text.trim();
         final username = _xtreamUsernameController.text.trim();
         final password = _xtreamPasswordController.text.trim();
@@ -361,6 +425,15 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                     onTap: () => setState(() => _mode = 'xtream'),
                   ),
                 ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ModeButton(
+                    icon: Icons.auto_fix_high,
+                    label: 'Smart Add',
+                    selected: _mode == 'smart',
+                    onTap: () => setState(() => _mode = 'smart'),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 16),
@@ -387,6 +460,121 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                 keyboardType: TextInputType.url,
                 textInputAction: TextInputAction.done,
                 onSubmitted: (_) => _addButtonFocus.requestFocus(),
+              ),
+            ] else if (_mode == 'smart' && !_smartParsed) ...[
+              // Stage 1: paste box. Deliberately doesn't try to guess a
+              // name/activation-date the way this doesn't apply to us at
+              // all — server/username/password are the only fields this
+              // screen has, unlike iptv-manager's subscription tracker.
+              Text(
+                'Paste the message your provider sent you — we\'ll pull out '
+                'the server, username, and password.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _smartPasteController,
+                maxLines: 6,
+                minLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Paste provider message',
+                  hintText: 'username=...\npassword=...\nhttp://server.example.com/get.php?...',
+                  alignLabelWithHint: true,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                icon: const Icon(Icons.auto_fix_high),
+                label: const Text('Parse'),
+                onPressed: _handleSmartParse,
+              ),
+            ] else if (_mode == 'smart') ...[
+              // Stage 2: review. Reuses the exact same server/username/
+              // password controllers (and fields, below) the Xtream tab
+              // has — Smart Add is just a different way to fill them in,
+              // not a different destination for the data.
+              Text('Confirm the server', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              if (_smartServerCandidates.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'No server URL found in that text — enter it below.',
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                )
+              else
+                // A sloppy copy-paste (selecting across a line break, for
+                // instance) can glue a stray character from an adjacent
+                // line onto an otherwise-correct URL — requested directly:
+                // offer every candidate found instead of silently
+                // committing to the first, so a mangled one can be spotted
+                // and a clean alternative picked instead. RadioGroup (not
+                // each tile's own groupValue/onChanged, deprecated as of
+                // this Flutter version) also gets D-pad Up/Down-between-
+                // options and wraparound for free.
+                RadioGroup<String>(
+                  groupValue: _smartSelectedServer,
+                  onChanged: (value) => setState(() {
+                    _smartSelectedServer = value;
+                    _xtreamServerController.text = value ?? '';
+                  }),
+                  child: Column(
+                    children: _smartServerCandidates
+                        .map((url) => RadioListTile<String>(
+                              value: url,
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(url, style: const TextStyle(fontFamily: 'monospace')),
+                            ))
+                        .toList(),
+                  ),
+                ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _xtreamServerController,
+                focusNode: _serverFocus,
+                decoration: const InputDecoration(
+                  labelText: 'Server URL (e.g. http://host:port)',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => _usernameFocus.requestFocus(),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _xtreamUsernameController,
+                focusNode: _usernameFocus,
+                decoration: const InputDecoration(
+                  labelText: 'Username',
+                  border: OutlineInputBorder(),
+                ),
+                textInputAction: TextInputAction.next,
+                onSubmitted: (_) => _passwordFocus.requestFocus(),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _xtreamPasswordController,
+                focusNode: _passwordFocus,
+                obscureText: _obscurePassword,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
+                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                  ),
+                ),
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _addButtonFocus.requestFocus(),
+              ),
+              const SizedBox(height: 8),
+              TextButton.icon(
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Paste different text'),
+                onPressed: _resetSmartAdd,
               ),
             ] else ...[
               TextField(

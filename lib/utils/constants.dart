@@ -34,22 +34,21 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.25.0 — Version bumped past 3.24.5/100, a stray leftover install '
-      'from the abandoned "Live Island" experiment (see the '
-      'backup/live-island-attempt branch) that was numerically newer '
-      'than this mainline despite being much older code — any device '
-      'still carrying that build couldn\'t see this one as an update. '
-      'Also includes: Settings screens redesigned (gradient background, '
-      'frosted-glass panels, circular check icons) to match the '
-      'MyTVOnline3 reference look; Group Management\'s checkbox glyph '
-      'replaced with a plain circular Icon (fixes a Formuler-specific '
-      'stale-repaint bug where the box never visually updated even '
-      'though the underlying hide/show state was always correct); '
-      'poster images now persist across a full app restart instead of '
-      're-fetching every cold start (flutter_cache_manager was storing '
-      'files in the OS-reclaimable temp directory); the main Live '
-      'TV/Movies/TV Shows screen now shares the same bright gradient '
-      'background and a rounded, bordered live-preview pane.';
+      '3.26.0 — Add Playlist has a new "Smart Add" tab: paste the message '
+      'a provider sent you (server, username, password, any backup/alt '
+      'DNS links) and it fills in the Xtream login fields for you, with a '
+      'confirm step to pick the right server when more than one URL was '
+      'found — built for the common case of typing a login in via a Fire '
+      'Stick\'s QR-code-to-phone-keyboard relay, where one paste beats '
+      'hunting three fields out by hand. Also includes everything from '
+      '3.25.0: version bumped past a stray leftover 3.24.5/100 Live '
+      'Island-experiment install that was numerically newer than this '
+      'mainline despite being much older code; the Settings redesign '
+      '(gradient background, frosted-glass panels, circular check '
+      'icons); Group Management\'s checkbox stale-repaint fix; '
+      'persistent poster-image caching; and the main Live TV/Movies/TV '
+      'Shows screen\'s bright gradient background and rounded, bordered '
+      'live-preview pane.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
