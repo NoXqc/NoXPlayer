@@ -34,7 +34,13 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.29.0 — Fixed a real crash on "Update EPG" for large multi-'
+      '3.30.0 — New "Minimalist" theme (Settings > Theme): flat black '
+      'background, white lettering, and a real frosted-glass blur on the '
+      'D-pad focus highlight, while the NoXPlayer wordmark stays purple/'
+      'magenta. Also fixes Add Playlist\'s Smart Add screen not scrolling '
+      'a newly-focused button into view once the review step got taller '
+      'than the screen. Also includes everything from 3.29.0 — Fixed a '
+      'real crash on "Update EPG" for large multi-'
       'provider EPG sources: programme data was being retained for every '
       'channel the EPG source covers, not just the ones in your actual '
       'playlist, which on a big shared EPG feed could be a multi-million-'
