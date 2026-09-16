@@ -964,11 +964,25 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                                   color: accent, fontWeight: FontWeight.bold),
                             );
                           } else {
+                            // Was the exact same "fill in the form..."
+                            // instructional line the connecting/failed
+                            // states occupy below — reported directly as
+                            // reading like it might be sitting *in front
+                            // of*/hiding those, at a glance, since it's
+                            // the same box either way. This idle state
+                            // and the "how to use this button" hint are
+                            // two different things; the hint moved below
+                            // the button (see the Text right under it),
+                            // leaving this box's idle look genuinely
+                            // distinct from a loading/error look at rest,
+                            // not just textually different.
                             accent = Colors.white24;
                             content = Text(
-                              'Fill in the form and press '
-                              '${_editingProfile != null ? 'Save Changes' : 'Add Playlist'} below.',
-                              style: Theme.of(context).textTheme.bodySmall,
+                              'Nothing to report yet.',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: Colors.white38),
                             );
                           }
                           return Container(
@@ -990,6 +1004,13 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                           child: Text(_editingProfile != null
                               ? 'Save Changes'
                               : 'Add Playlist'),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Fill in the form on the left, then press '
+                          '${_editingProfile != null ? 'Save Changes' : 'Add Playlist'} above.',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
                     ),
