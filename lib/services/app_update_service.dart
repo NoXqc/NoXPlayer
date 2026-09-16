@@ -46,8 +46,30 @@ class AppUpdateService {
   Future<UpdateInfo?> checkForUpdate() async {
     final response = await http.get(
       Uri.parse(_apiUrl),
-      headers: {'Accept': 'application/vnd.github+json'},
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        // Reported directly on a Fire Stick: GitHub answered a plain,
+        // header-less GET with 304 Not Modified — something between this
+        // device and GitHub (a carrier/ISP transparent proxy, most
+        // likely) was caching the response and serving a conditional
+        // 304 on our behalf even though this code never sends an
+        // `If-None-Match`/`If-Modified-Since` of its own. These headers
+        // ask any such intermediary not to do that, so a real check
+        // actually reaches GitHub instead of a stale cache entry.
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+      },
     ).timeout(const Duration(seconds: 15));
+    if (response.statusCode == 304) {
+      // Belt-and-suspenders alongside the no-cache headers above: a 304
+      // here means "unchanged from whatever's cached," never an actual
+      // failure — surfacing it as "Something went wrong: HTTP 304" (what
+      // used to happen, falling through to the generic throw below) was
+      // a real, reported bug. With no fresh body to read a version out
+      // of, the safe reading is "nothing new to report," the same as a
+      // genuine "you're already on the latest version."
+      return null;
+    }
     if (response.statusCode != 200) {
       // A bare "HTTP 403" reads as a permissions problem, but the actual
       // cause here is almost always GitHub's unauthenticated API rate
