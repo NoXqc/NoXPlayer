@@ -77,7 +77,9 @@ class VideoPlayerPane extends StatelessWidget {
 
         return Column(
           children: [
-            if (showEpgBar) EpgGuide(channelId: channel.id),
+            // rawId, not the composite `id` — see
+            // PlaylistManager.knownChannelIdsFor's doc comment.
+            if (showEpgBar) EpgGuide(channelId: channel.rawId),
             Expanded(
               child: Stack(
                 alignment: Alignment.center,
@@ -120,8 +122,12 @@ class VideoPlayerPane extends StatelessWidget {
                       child: PlayerControls(
                         controller: controller,
                         title: channel.name,
-                        channelId: channel.id,
-                        isLive: Channel.isLiveId(channel.id),
+                        // rawId, not the composite `id` — see
+                        // PlaylistManager.knownChannelIdsFor's doc comment;
+                        // Channel.isLiveId also documents that it expects
+                        // rawId, not id.
+                        channelId: channel.rawId,
+                        isLive: Channel.isLiveId(channel.rawId),
                       ),
                     ),
                 ],

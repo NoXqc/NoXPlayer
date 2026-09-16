@@ -356,7 +356,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                           Expanded(
                                             child: _searchScope == 'TV'
                                                 ? EpgGuide(
-                                                    channelId: channel.id)
+                                                    // rawId, not the
+                                                    // composite `id` — see
+                                                    // PlaylistManager
+                                                    // .knownChannelIdsFor's
+                                                    // doc comment.
+                                                    channelId: channel.rawId)
                                                 : Text(
                                                     channel.name,
                                                     maxLines: 1,
@@ -413,8 +418,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     child: PlayerControls(
                                       controller: controller,
                                       title: channel.name,
-                                      channelId: channel.id,
-                                      isLive: Channel.isLiveId(channel.id),
+                                      // rawId, not the composite `id` —
+                                      // see PlaylistManager
+                                      // .knownChannelIdsFor's doc comment;
+                                      // Channel.isLiveId also documents
+                                      // that it expects rawId, not id.
+                                      channelId: channel.rawId,
+                                      isLive: Channel.isLiveId(channel.rawId),
                                       isFavorite: channel.isFavorite,
                                       onToggleFavorite: () =>
                                           playlist.toggleFavorite(channel),

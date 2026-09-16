@@ -1395,7 +1395,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // though the stream itself is already loading regardless.
     final rawChannel =
         playback.isSilentlyResuming ? null : playback.currentChannel;
-    final channel = rawChannel != null && Channel.isLiveId(rawChannel.id)
+    // rawChannel.rawId, not rawChannel.id — Channel.isLiveId expects the
+    // raw, unprefixed id.
+    final channel = rawChannel != null && Channel.isLiveId(rawChannel.rawId)
         ? rawChannel
         : null;
 
@@ -1748,7 +1750,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                     : const Icon(Icons.tv),
               ),
               label: channel.name,
-              subtitle: _CurrentProgramLine(channelId: channel.id),
+              // rawId, not the composite `id` — see
+              // PlaylistManager.knownChannelIdsFor's doc comment.
+              subtitle: _CurrentProgramLine(channelId: channel.rawId),
               trailing: ExcludeFocus(
                 child: IconButton(
                   icon: Icon(
@@ -2687,8 +2691,10 @@ class _ProgramDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final current = epg.getCurrentProgram(channel.id);
-    final next = epg.getNextProgram(channel.id);
+    // rawId, not the composite `id` — see
+    // PlaylistManager.knownChannelIdsFor's doc comment.
+    final current = epg.getCurrentProgram(channel.rawId);
+    final next = epg.getNextProgram(channel.rawId);
     final timeFormat = DateFormat('HH:mm');
 
     return Padding(

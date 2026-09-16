@@ -241,7 +241,13 @@ class PlaybackService extends ChangeNotifier {
     // of joining live. A live channel has no meaningful "resume point" at
     // all, so this is skipped entirely rather than trying to validate the
     // saved value.
-    final isLive = Channel.isLiveId(channel.id);
+    // rawId, not the composite `id` — Channel.isLiveId documents that it
+    // expects the raw, unprefixed id. Confirmed as a real regression:
+    // with `id` here this always read false for a real live channel,
+    // silently reintroducing the exact "stuck paused" bug described
+    // above (a live channel getting treated as if it had a saved VOD
+    // resume position).
+    final isLive = Channel.isLiveId(channel.rawId);
     final savedPositionMs = isLive ? 0 : _storage.getLastPosition(channel.id);
     final newController = VideoPlayerHdrController.networkUrl(
       Uri.parse(channel.url),
@@ -286,7 +292,7 @@ class PlaybackService extends ChangeNotifier {
       if (c != null &&
           ch != null &&
           c.value.isInitialized &&
-          !Channel.isLiveId(ch.id)) {
+          !Channel.isLiveId(ch.rawId)) {
         _storage.setLastPosition(ch.id, c.value.position.inMilliseconds);
         final duration = c.value.duration;
         if (duration > Duration.zero) {

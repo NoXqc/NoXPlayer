@@ -80,7 +80,10 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
   bool get _canResume {
     final channel = _playback.currentChannel;
     return channel != null &&
-        Channel.isLiveId(channel.id) &&
+        // rawId, not the composite `id` — Channel.isLiveId expects the
+        // raw, unprefixed id. With `id` here this always read false,
+        // silently disabling this whole bubble for every live channel.
+        Channel.isLiveId(channel.rawId) &&
         _playback.controller != null &&
         !_playback.isFullscreenActive;
   }

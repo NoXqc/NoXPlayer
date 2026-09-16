@@ -62,7 +62,12 @@ class ChannelListTile extends StatelessWidget {
               : const Icon(Icons.tv),
         ),
         title: Text(channel.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: EpgGuide(channelId: channel.id, compact: true),
+        // rawId, not the composite `id` — EPG data is keyed by the raw
+        // tvg-id/epg_channel_id straight from the XMLTV feed, which is
+        // never prefixed with a playlist id. See
+        // PlaylistManager.knownChannelIdsFor's doc comment for the
+        // matching parse-side fix.
+        subtitle: EpgGuide(channelId: channel.rawId, compact: true),
         // Excluded from focus traversal (matches the equivalent star fix
         // already applied to the Live TV list, and the Slider in
         // PlayerControls) — without this, D-pad Up/Down here can land on
