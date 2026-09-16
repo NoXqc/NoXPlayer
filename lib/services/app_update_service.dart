@@ -82,14 +82,26 @@ class AppUpdateService {
   /// missing/non-numeric segment as 0, so a differently-shaped tag (e.g.
   /// "3.19" vs "3.19.1") still compares sensibly instead of throwing.
   bool _isNewer(String remote, String local) {
-    final r = remote.split('.').map((s) => int.tryParse(s) ?? 0).toList();
-    final l = local.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+    final r = _versionParts(remote);
+    final l = _versionParts(local);
     for (var i = 0; i < r.length || i < l.length; i++) {
       final rPart = i < r.length ? r[i] : 0;
       final lPart = i < l.length ? l[i] : 0;
       if (rPart != lPart) return rPart > lPart;
     }
     return false;
+  }
+
+  /// Strips an optional leading "v" (e.g. "v3.31.0") before splitting on
+  /// "." — a release tagged with that prefix by mistake would otherwise
+  /// parse its first segment ("v3") to 0 via `int.tryParse`, silently
+  /// making it compare as *older* than any real local version instead of
+  /// newer. Confirmed as a real, user-visible bug: a release tagged
+  /// "v3.31.0" reported "up to date" to a phone still on 3.29.0.
+  List<int> _versionParts(String version) {
+    final stripped =
+        version.startsWith('v') ? version.substring(1) : version;
+    return stripped.split('.').map((s) => int.tryParse(s) ?? 0).toList();
   }
 
   /// Downloads to the app's own cache directory (matching the
