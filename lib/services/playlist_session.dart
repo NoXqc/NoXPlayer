@@ -259,7 +259,7 @@ class PlaylistSession {
       profile = profile.copyWith(m3uUrl: url);
       await storage.writeCacheFile(
         _cacheName(AppConstants.cacheFileM3uChannels),
-        jsonEncode(parsed.map((c) => c.toJson()).toList()),
+        await compute(_encodeJsonList, parsed.map((c) => c.toJson()).toList()),
       );
 
       loadingPhase = 'Playlist added';
@@ -386,7 +386,26 @@ class PlaylistSession {
   }
 
   Future<void> _loadLiveChannelsOnce() async {
-    isLoading = true;
+    // Deliberately doesn't touch the shared `isLoading` above (used to,
+    // see git history — removed for a real, reported bug). This method
+    // runs completely independently of `loadFromXtream`/`loadFromUrl` —
+    // it's triggered by `ensureLiveChannelsLoaded`'s callers (TvHomeScreen/
+    // HomeScreen/SearchScreen), which run on *every* enabled session any
+    // time PlaylistManager notifies, not just whichever one is currently
+    // the foreground add/edit/sync. Since AddPlaylistScreen is pushed *on
+    // top of* TvHomeScreen (which stays mounted underneath, not disposed),
+    // adding a playlist made `addPlaylist`'s own notifyListeners() trigger
+    // TvHomeScreen's build-time `ensureLiveChannelsLoaded()` call for the
+    // brand-new session too — racing this method against the real
+    // `loadFromXtream()` on the very same session object. This method's
+    // own early-return below (`xtreamApi` isn't set yet this early)
+    // finished in milliseconds, and its `finally` stomped the shared
+    // `isLoading` back to false while the real connect was still several
+    // seconds from done — which is exactly what made the Add Playlist
+    // status box "flash once, then show nothing" even though
+    // `loadingPhase` (only ever written by the real load) kept updating
+    // correctly the whole time underneath it.
+    //
     // See TvHomeScreen._buildLiveRegion / PlaylistManager's original
     // single-playlist history: deferring a frame before the first
     // notifyListeners avoids firing one synchronously during a caller's
@@ -406,7 +425,8 @@ class PlaylistSession {
         loaded = await api.getLiveStreams(categoryNames: categoryNames);
         await storage.writeCacheFile(
           _cacheName(AppConstants.cacheFileLiveChannels),
-          jsonEncode(loaded.map((c) => c.toJson()).toList()),
+          await compute(
+              _encodeJsonList, loaded.map((c) => c.toJson()).toList()),
         );
       }
       for (final channel in loaded) {
@@ -419,7 +439,6 @@ class PlaylistSession {
           'PlaylistSession[${profile.id}]: failed to load live channels: $e');
       liveChannelsFuture = null; // allow a retry on the next access
     } finally {
-      isLoading = false;
       onNotify();
     }
   }
@@ -447,7 +466,8 @@ class PlaylistSession {
       final liveCategoryNames = {for (final c in liveCategories) c.id: c.name};
       await storage.writeCacheFile(
         _cacheName(AppConstants.cacheFileLiveCategories),
-        jsonEncode(liveCategories.map((c) => c.toJson()).toList()),
+        await compute(
+            _encodeJsonList, liveCategories.map((c) => c.toJson()).toList()),
       );
 
       loadingPhase = 'Finding live channels...';
@@ -460,7 +480,8 @@ class PlaylistSession {
       liveChannels = loadedLive;
       await storage.writeCacheFile(
         _cacheName(AppConstants.cacheFileLiveChannels),
-        jsonEncode(loadedLive.map((c) => c.toJson()).toList()),
+        await compute(
+            _encodeJsonList, loadedLive.map((c) => c.toJson()).toList()),
       );
       loadingPhase = 'Finding live channels... (${loadedLive.length} found)';
       onNotify();
@@ -476,7 +497,8 @@ class PlaylistSession {
           .removeWhere((name, _) => !vodCategoryIdByName.containsKey(name));
       await storage.writeCacheFile(
         _cacheName(AppConstants.cacheFileVodCategories),
-        jsonEncode(vodCategories.map((c) => c.toJson()).toList()),
+        await compute(
+            _encodeJsonList, vodCategories.map((c) => c.toJson()).toList()),
       );
       loadingPhase =
           'Finding movies... (${vodCategories.length} categories found)';
@@ -493,7 +515,8 @@ class PlaylistSession {
           .removeWhere((name, _) => !seriesCategoryIdByName.containsKey(name));
       await storage.writeCacheFile(
         _cacheName(AppConstants.cacheFileSeriesCategories),
-        jsonEncode(seriesCategories.map((c) => c.toJson()).toList()),
+        await compute(
+            _encodeJsonList, seriesCategories.map((c) => c.toJson()).toList()),
       );
       loadingPhase =
           'Finding TV shows... (${seriesCategories.length} categories found)';
@@ -1030,3 +1053,16 @@ _XtreamCategoriesDecoded _decodeXtreamCategoriesBatch(
 List<Channel> _decodeLiveChannelsBatch(String raw) => (jsonDecode(raw) as List)
     .map((e) => Channel.fromJson(e as Map<String, dynamic>))
     .toList();
+
+/// Off the main isolate, matching the read-side decode path above and
+/// `XtreamApiService._getJson`'s own `compute(_decodeJsonBody, ...)`.
+/// Reported directly, live: a large account's live-channel cache write
+/// (confirmed on one real test account: 28,388 channels) froze the UI
+/// thread long enough that the Add Playlist status box appeared to
+/// "flash and go blank" for several real seconds — traced via timestamped
+/// logging to a gap between `getLiveStreams()` returning (already
+/// isolate-backgrounded) and the next status update, which is exactly
+/// where the un-computed `jsonEncode(...)` for this cache write sat,
+/// synchronously serializing the whole list on the UI isolate before the
+/// file write itself could even start.
+String _encodeJsonList(List<Map<String, dynamic>> maps) => jsonEncode(maps);
