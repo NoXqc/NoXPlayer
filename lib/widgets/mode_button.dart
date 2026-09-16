@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../services/app_preferences.dart';
+import '../utils/tv_theme.dart';
 
 /// A single-focus-target replacement for one `SegmentedButton` segment.
 /// `SegmentedButton` wraps its segments in their own internal
@@ -36,28 +40,46 @@ class _ModeButtonState extends State<ModeButton> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: _focused ? scheme.primary : (widget.selected ? scheme.primaryContainer : Colors.transparent),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(color: widget.selected ? scheme.primary : scheme.outline),
-      ),
-      child: InkWell(
-        focusNode: widget.focusNode,
-        borderRadius: BorderRadius.circular(8),
-        onTap: widget.onTap,
-        onFocusChange: (f) => setState(() => _focused = f),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (widget.icon != null) ...[
-                Icon(widget.icon, size: 18, color: _focused ? scheme.onPrimary : null),
-                const SizedBox(width: 8),
+    // Minimalist swaps the solid `scheme.primary` focus fill for a
+    // translucent one (matching `_tvButtonStyle`'s glass pattern) — see
+    // that function's doc comment for why a flat opaque white fill with
+    // computed `onPrimary` text isn't the "glass" look.
+    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
+    final useGlass = isMinimal && _focused;
+    final focusFill =
+        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
+    final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
+    return MinimalGlassFocus(
+      active: useGlass,
+      borderRadius: 8,
+      child: Material(
+        color: _focused && !useGlass
+            ? focusFill
+            : (widget.selected ? scheme.primaryContainer : Colors.transparent),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(
+              color: widget.selected ? scheme.primary : scheme.outline),
+        ),
+        child: InkWell(
+          focusNode: widget.focusNode,
+          borderRadius: BorderRadius.circular(8),
+          onTap: widget.onTap,
+          onFocusChange: (f) => setState(() => _focused = f),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (widget.icon != null) ...[
+                  Icon(widget.icon,
+                      size: 18, color: _focused ? focusForeground : null),
+                  const SizedBox(width: 8),
+                ],
+                Text(widget.label,
+                    style: TextStyle(color: _focused ? focusForeground : null)),
               ],
-              Text(widget.label, style: TextStyle(color: _focused ? scheme.onPrimary : null)),
-            ],
+            ),
           ),
         ),
       ),

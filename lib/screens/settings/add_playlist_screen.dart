@@ -16,6 +16,16 @@ import '../../widgets/settings_scaffold.dart';
 import '../catalog_sync_screen.dart';
 import 'group_management_screen.dart';
 
+/// `TextField`/`EditableText` scrolls itself into view on focus for free —
+/// plain buttons don't. Reported directly: once Smart Add's Stage 2 review
+/// adds its extra "Paste different text" button, the form's total height
+/// grows past the viewport and the "Add Playlist" button at the bottom
+/// ends up half cut off with no way to bring it fully into view. Same
+/// fix/pattern as `TvHomeScreen`'s own `_ensureVisible` helper.
+void _ensureVisible(BuildContext context) {
+  Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 150), alignment: 0.5);
+}
+
 /// Playlist source configuration — M3U URL or Xtream Codes login — plus the
 /// "download everything, or choose groups first?" choice for Xtream
 /// accounts, which decides what the catalog warm-up (see [PlaylistManager])
@@ -511,6 +521,9 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                 icon: const Icon(Icons.auto_fix_high),
                 label: const Text('Parse'),
                 onPressed: _handleSmartParse,
+                onFocusChange: (f) {
+                  if (f) _ensureVisible(context);
+                },
               ),
             ] else if (_mode == 'smart') ...[
               // Stage 2: review. Reuses the exact same server/username/
@@ -598,6 +611,9 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                 icon: const Icon(Icons.arrow_back),
                 label: const Text('Paste different text'),
                 onPressed: _resetSmartAdd,
+                onFocusChange: (f) {
+                  if (f) _ensureVisible(context);
+                },
               ),
             ] else ...[
               TextField(
@@ -674,6 +690,9 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
             FilledButton(
               focusNode: _addButtonFocus,
               onPressed: (playlist.isLoading || _saving) ? null : _save,
+              onFocusChange: (f) {
+                if (f) _ensureVisible(context);
+              },
               child: const Text('Add Playlist'),
             ),
           ],

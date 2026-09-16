@@ -585,10 +585,15 @@ class _TopBarIconButtonState extends State<_TopBarIconButton> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // Same translucent-white-fill swap as everywhere else for Minimalist
+    // — see `_tvButtonStyle`'s doc comment.
+    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
+    final focusFill = isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
+    final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
     final button = Padding(
       padding: const EdgeInsets.all(4),
       child: Material(
-        color: _focused ? scheme.primary : Colors.transparent,
+        color: _focused ? focusFill : Colors.transparent,
         shape: const CircleBorder(),
         child: InkWell(
           customBorder: const CircleBorder(),
@@ -596,7 +601,7 @@ class _TopBarIconButtonState extends State<_TopBarIconButton> {
           onFocusChange: (f) => setState(() => _focused = f),
           child: Padding(
             padding: const EdgeInsets.all(10),
-            child: Icon(widget.icon, color: _focused ? scheme.onPrimary : Colors.white, size: 22),
+            child: Icon(widget.icon, color: _focused ? focusForeground : Colors.white, size: 22),
           ),
         ),
       ),

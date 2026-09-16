@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../services/app_preferences.dart';
 import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
 import '../../widgets/settings_scaffold.dart';
@@ -29,62 +31,64 @@ class SettingsMenuScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
-      title: 'Settings',
-      body: ListView(
-        children: [
-          _MenuTile(
-            icon: Icons.playlist_add,
-            title: 'Add Playlist',
-            subtitle: 'M3U URL or Xtream Codes login',
-            onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const AddPlaylistScreen())),
-          ),
-          _MenuTile(
-            icon: Icons.video_library_outlined,
-            title: 'Content Manager',
-            subtitle: 'Playlist info, groups, enable/disable',
-            onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const ContentManagerScreen())),
-          ),
-          _MenuTile(
-            icon: Icons.palette_outlined,
-            title: 'Theme',
-            subtitle: 'Dark mode, clock, accent color, layout',
-            onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const ThemeScreen())),
-          ),
-          _MenuTile(
-            icon: Icons.calendar_month_outlined,
-            title: 'EPG',
-            subtitle: 'Auto-refresh, update now, clear cache',
-            onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const EpgSettingsScreen())),
-          ),
-          _MenuTile(
-            icon: Icons.system_update_outlined,
-            title: 'Check for Updates',
-            subtitle: 'Download and install the latest release',
-            onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const CheckUpdatesScreen())),
-          ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text(
-              'Build: ${AppConstants.buildMarker}',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Text(
-              'Report bugs to: noxqcx@gmail.com',
-              style: TextStyle(fontSize: 11, color: Colors.grey),
-            ),
-          ),
-        ],
-      ),
-    ));
+    return withTvThemeIfNeeded(
+        context,
+        (context) => SettingsScaffold(
+              title: 'Settings',
+              body: ListView(
+                children: [
+                  _MenuTile(
+                    icon: Icons.playlist_add,
+                    title: 'Add Playlist',
+                    subtitle: 'M3U URL or Xtream Codes login',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const AddPlaylistScreen())),
+                  ),
+                  _MenuTile(
+                    icon: Icons.video_library_outlined,
+                    title: 'Content Manager',
+                    subtitle: 'Playlist info, groups, enable/disable',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const ContentManagerScreen())),
+                  ),
+                  _MenuTile(
+                    icon: Icons.palette_outlined,
+                    title: 'Theme',
+                    subtitle: 'Dark mode, clock, accent color, layout',
+                    onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const ThemeScreen())),
+                  ),
+                  _MenuTile(
+                    icon: Icons.calendar_month_outlined,
+                    title: 'EPG',
+                    subtitle: 'Auto-refresh, update now, clear cache',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const EpgSettingsScreen())),
+                  ),
+                  _MenuTile(
+                    icon: Icons.system_update_outlined,
+                    title: 'Check for Updates',
+                    subtitle: 'Download and install the latest release',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const CheckUpdatesScreen())),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: Text(
+                      'Build: ${AppConstants.buildMarker}',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Text(
+                      'Report bugs to: noxqcx@gmail.com',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ),
+                ],
+              ),
+            ));
   }
 }
 
@@ -111,25 +115,43 @@ class _MenuTileState extends State<_MenuTile> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
     // ListTile's own focus overlay is a translucent tint blended under
     // the label — stays subtle at any alpha. An explicit solid tileColor
     // on focus (same treatment as _SelectableRow elsewhere) is what
-    // actually reads as "obvious" from a couch.
-    return ListTile(
-      onFocusChange: (f) => setState(() => _focused = f),
-      tileColor: _focused ? scheme.primary : null,
-      leading: CircleAvatar(
-        backgroundColor: _focused ? scheme.onPrimary.withValues(alpha: 0.2) : scheme.primary.withValues(alpha: 0.16),
-        foregroundColor: _focused ? scheme.onPrimary : scheme.primary,
-        child: Icon(widget.icon),
+    // actually reads as "obvious" from a couch. Minimalist swaps that
+    // solid fill for a translucent one (matching `_tvButtonStyle`'s own
+    // glass pattern) — a fully opaque `scheme.primary` fill would just be
+    // a solid white block, not glass, and its computed `onPrimary` text
+    // would end up dark and hard to read against it.
+    final useGlass = isMinimal && _focused;
+    final focusFill =
+        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
+    final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
+    return MinimalGlassFocus(
+      active: useGlass,
+      borderRadius: 8,
+      child: ListTile(
+        onFocusChange: (f) => setState(() => _focused = f),
+        tileColor: _focused && !useGlass ? focusFill : null,
+        leading: CircleAvatar(
+          backgroundColor: _focused
+              ? focusForeground.withValues(alpha: 0.2)
+              : scheme.primary.withValues(alpha: 0.16),
+          foregroundColor: _focused ? focusForeground : scheme.primary,
+          child: Icon(widget.icon),
+        ),
+        title: Text(widget.title,
+            style: TextStyle(color: _focused ? focusForeground : null)),
+        subtitle: Text(
+          widget.subtitle,
+          style: TextStyle(
+              color: _focused ? focusForeground.withValues(alpha: 0.85) : null),
+        ),
+        trailing:
+            Icon(Icons.chevron_right, color: _focused ? focusForeground : null),
+        onTap: widget.onTap,
       ),
-      title: Text(widget.title, style: TextStyle(color: _focused ? scheme.onPrimary : null)),
-      subtitle: Text(
-        widget.subtitle,
-        style: TextStyle(color: _focused ? scheme.onPrimary.withValues(alpha: 0.85) : null),
-      ),
-      trailing: Icon(Icons.chevron_right, color: _focused ? scheme.onPrimary : null),
-      onTap: widget.onTap,
     );
   }
 }

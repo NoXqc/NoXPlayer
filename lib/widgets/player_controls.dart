@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:video_player_hdr/video_player_hdr.dart';
 
 import '../models/channel.dart';
+import '../services/app_preferences.dart';
 import '../services/epg_service.dart';
 import '../services/playback_service.dart';
 import 'epg_guide.dart';
@@ -532,6 +533,8 @@ class _SkipButtonState extends State<_SkipButton> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
+    final focusFill = isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
     return Focus(
       onKeyEvent: _handleKeyEvent,
       onFocusChange: (f) => setState(() => _focused = f),
@@ -543,7 +546,7 @@ class _SkipButtonState extends State<_SkipButton> {
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _focused ? scheme.primary : Colors.transparent,
+            color: _focused ? focusFill : Colors.transparent,
           ),
           child: Icon(widget.icon, color: Colors.white, size: 28),
         ),

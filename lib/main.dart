@@ -18,6 +18,7 @@ import 'services/playlist_manager.dart';
 import 'services/storage_service.dart';
 import 'utils/constants.dart';
 import 'utils/route_observer.dart';
+import 'utils/tv_theme.dart';
 import 'widgets/live_resume_hint.dart';
 
 Future<void> main() async {
@@ -454,12 +455,12 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
             themeMode: prefs.themeMode,
             theme: ThemeData(
               brightness: Brightness.light,
-              colorSchemeSeed: prefs.palette.primary,
+              colorScheme: buildPaletteColorScheme(prefs.palette, Brightness.light),
               useMaterial3: true,
             ),
             darkTheme: ThemeData(
               brightness: Brightness.dark,
-              colorSchemeSeed: prefs.palette.primary,
+              colorScheme: buildPaletteColorScheme(prefs.palette, Brightness.dark),
               useMaterial3: true,
             ),
             home: Builder(

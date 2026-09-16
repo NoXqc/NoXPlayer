@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/app_preferences.dart';
+import '../utils/tv_theme.dart';
 
 /// A `SwitchListTile` with an obvious solid-fill focus highlight — see
 /// `SettingsMenuScreen`'s `_MenuTile` for why the stock widget's own
@@ -38,24 +39,33 @@ class _TvSwitchListTileState extends State<TvSwitchListTile> {
     // pattern as `_tvButtonStyle` uses for buttons, applied here since a
     // `SwitchListTile` doesn't go through that shared style.
     final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
-    final focusFill = isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
+    final useGlass = isMinimal && _focused;
+    final focusFill =
+        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
     final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      onFocusChange: (f) => setState(() => _focused = f),
-      tileColor: _focused ? focusFill : null,
-      title: DefaultTextStyle.merge(
-        style: TextStyle(color: _focused ? focusForeground : null),
-        child: widget.title,
+    return MinimalGlassFocus(
+      active: useGlass,
+      borderRadius: 8,
+      child: SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        onFocusChange: (f) => setState(() => _focused = f),
+        tileColor: _focused && !useGlass ? focusFill : null,
+        title: DefaultTextStyle.merge(
+          style: TextStyle(color: _focused ? focusForeground : null),
+          child: widget.title,
+        ),
+        subtitle: widget.subtitle == null
+            ? null
+            : DefaultTextStyle.merge(
+                style: TextStyle(
+                    color: _focused
+                        ? focusForeground.withValues(alpha: 0.85)
+                        : null),
+                child: widget.subtitle!,
+              ),
+        value: widget.value,
+        onChanged: widget.onChanged,
       ),
-      subtitle: widget.subtitle == null
-          ? null
-          : DefaultTextStyle.merge(
-              style: TextStyle(color: _focused ? focusForeground.withValues(alpha: 0.85) : null),
-              child: widget.subtitle!,
-            ),
-      value: widget.value,
-      onChanged: widget.onChanged,
     );
   }
 }
