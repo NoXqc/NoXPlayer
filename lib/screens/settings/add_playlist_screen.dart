@@ -924,105 +924,77 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                         // during a fast connection/failure, since nothing
                         // about the panel itself drew the eye there over
                         // the form on the left.
-                        // Reported directly (live on a Fire Stick, not just
-                        // from a still photo): a visible "shift"/overlap
-                        // right at the instant the idle state's "Nothing to
-                        // report yet." swapped for the loading state's
-                        // spinner row. This box's content isn't the same
-                        // height in every state (a wrapped 2-line error vs.
-                        // one line of idle/loading text), and swapping it
-                        // instantly — with nothing isolating this box's
-                        // repaint from the button/hint below it, both of
-                        // which shift position the instant this box's
-                        // height changes — is exactly the kind of abrupt,
-                        // same-frame layout jump that can read as a brief
-                        // double-exposure/overlap on TV-box hardware.
-                        // `AnimatedSize` turns that instant jump into a
-                        // smooth resize instead; `RepaintBoundary` isolates
-                        // this box (and whatever's shifting below it) into
-                        // its own compositor layer, the standard fix for a
-                        // fast-changing subtree bleeding into its
-                        // neighbors' paint on weaker GPUs.
-                        RepaintBoundary(
-                          child: AnimatedSize(
-                            duration: const Duration(milliseconds: 200),
-                            alignment: Alignment.topCenter,
-                            child: Builder(builder: (context) {
-                              final error = playlist.error;
-                              final Color accent;
-                              final Widget content;
-                              if (playlist.isLoading) {
-                                accent = Theme.of(context).colorScheme.primary;
-                                content = Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2, color: accent),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        playlist.loadingPhase ?? 'Loading...',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              } else if (error != null) {
-                                accent = Theme.of(context).colorScheme.error;
-                                content = Text(
-                                  // The raw reason (bad credentials vs. an
-                                  // unreachable/timed-out server vs. an
-                                  // inactive account all look different, e.g.
-                                  // "Invalid Xtream username/password" vs.
-                                  // "Xtream request failed... (HTTP 403)") —
-                                  // shown instead of a generic "failed" message
-                                  // so a typo can actually be told apart from a
-                                  // genuinely bad server without guessing.
-                                  'Failed to add playlist: ${error.replaceFirst('Exception: ', '')}',
-                                  style: TextStyle(
-                                      color: accent,
-                                      fontWeight: FontWeight.bold),
-                                );
-                              } else {
-                                // Was the exact same "fill in the form..."
-                                // instructional line the connecting/failed
-                                // states occupy below — reported directly as
-                                // reading like it might be sitting *in front
-                                // of*/hiding those, at a glance, since it's
-                                // the same box either way. This idle state
-                                // and the "how to use this button" hint are
-                                // two different things; the hint moved below
-                                // the button (see the Text right under it),
-                                // leaving this box's idle look genuinely
-                                // distinct from a loading/error look at rest,
-                                // not just textually different.
-                                accent = Colors.white24;
-                                content = Text(
-                                  'Nothing to report yet.',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodySmall
-                                      ?.copyWith(color: Colors.white38),
-                                );
-                              }
-                              return Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.07),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border(
-                                      left:
-                                          BorderSide(color: accent, width: 4)),
+                        // Reported directly, live: a static idle bubble in
+                        // this exact spot ("Nothing to report yet.", tried
+                        // right before this) read as sitting in front of/
+                        // hiding whatever real connecting/failed status
+                        // this box is actually for. An animated-resize
+                        // fix for that same report also didn't resolve it.
+                        // Simplest correct fix, and what was actually
+                        // asked for directly: there's nothing useful an
+                        // idle state adds here at all — the form fields
+                        // and the Add Playlist button already make "fill
+                        // this in and press this" obvious without a
+                        // placeholder box competing for the same space a
+                        // real status needs. This box now renders nothing
+                        // at rest and only appears at all once there's an
+                        // actual loading or error status to show.
+                        Builder(builder: (context) {
+                          final error = playlist.error;
+                          final Color accent;
+                          final Widget content;
+                          if (playlist.isLoading) {
+                            accent = Theme.of(context).colorScheme.primary;
+                            content = Row(
+                              children: [
+                                SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: accent),
                                 ),
-                                padding: const EdgeInsets.all(16),
-                                child: content,
-                              );
-                            }),
-                          ),
-                        ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    playlist.loadingPhase ?? 'Loading...',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            );
+                          } else if (error != null) {
+                            accent = Theme.of(context).colorScheme.error;
+                            content = Text(
+                              // The raw reason (bad credentials vs. an
+                              // unreachable/timed-out server vs. an
+                              // inactive account all look different, e.g.
+                              // "Invalid Xtream username/password" vs.
+                              // "Xtream request failed... (HTTP 403)") —
+                              // shown instead of a generic "failed" message
+                              // so a typo can actually be told apart from a
+                              // genuinely bad server without guessing.
+                              'Failed to add playlist: ${error.replaceFirst('Exception: ', '')}',
+                              style: TextStyle(
+                                  color: accent, fontWeight: FontWeight.bold),
+                            );
+                          } else {
+                            // Nothing — see this Builder's own doc comment
+                            // above for why an idle placeholder here was
+                            // removed rather than reworded/restyled again.
+                            return const SizedBox.shrink();
+                          }
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.07),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border(
+                                  left: BorderSide(color: accent, width: 4)),
+                            ),
+                            padding: const EdgeInsets.all(16),
+                            child: content,
+                          );
+                        }),
                         const SizedBox(height: 16),
                         FilledButton(
                           focusNode: _addButtonFocus,
