@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../models/channel.dart';
+import '../models/m3u_group.dart';
 import '../models/xtream_series.dart';
 import '../services/app_preferences.dart';
 import '../services/epg_service.dart';
@@ -42,12 +43,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _sidebarCollapsed = false;
   String _tab = 'TV';
-  String? _selectedGroup;
+  M3uGroup? _selectedGroup;
 
-  bool _isWide(BuildContext context) => MediaQuery.of(context).size.width >= _wideBreakpoint;
+  bool _isWide(BuildContext context) =>
+      MediaQuery.of(context).size.width >= _wideBreakpoint;
 
   void _openSearch() {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => SearchScreen(initialScope: _tab)));
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => SearchScreen(initialScope: _tab)));
   }
 
   Future<void> _selectChannel(Channel channel) async {
@@ -58,77 +61,95 @@ class _HomeScreenState extends State<HomeScreen> {
     await context.read<PlaybackService>().play(channel);
     if (!mounted) return;
     if (!_isWide(context)) {
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerScreen(channel: channel)));
+      Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => PlayerScreen(channel: channel)));
     }
   }
 
   void _openSeries(XtreamSeries series) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => SeriesDetailScreen(series: series)));
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => SeriesDetailScreen(series: series)));
   }
 
-  void _onGroupSelected(String? group) {
+  void _onGroupSelected(M3uGroup? group) {
     setState(() => _selectedGroup = group);
     if (group != null) {
-      context.read<PlaylistManager>().ensureCategoryLoaded(group, _categoryForTab(_tab));
+      context.read<PlaylistManager>().ensureCategoryLoaded(
+          group.playlistId, group.title, _categoryForTab(_tab));
     }
   }
 
+  /// Re-syncs every enabled playlist — Xtream ones via a full catalog
+  /// sync, M3U ones via a plain re-fetch of their flat list. Confirms
+  /// once up front (not once per playlist) since a stray tap on this
+  /// button shouldn't kick off several re-fetches unintentionally.
   Future<void> _refreshPlaylist() async {
-    final storage = context.read<StorageService>();
     final playlist = context.read<PlaylistManager>();
-
-    if (playlist.isXtream) {
-      final server = storage.getXtreamServer();
-      final username = storage.getXtreamUsername();
-      final password = storage.getXtreamPassword();
-      if (server == null || username == null || password == null) {
-        _promptForSettings();
-        return;
-      }
-      // Shared with Settings > Clear Cache — see its doc comment for why
-      // this needed to become a reusable helper rather than living here.
-      final didSync = await confirmAndRunFullCatalogSync(context, playlist);
-      if (didSync && mounted) _showUpdateToast();
+    if (playlist.profiles.isEmpty) {
+      _promptForSettings();
       return;
     }
 
-    // M3U mode: no per-category concept to re-sync, just a plain re-fetch
-    // of the flat list — still confirms first since a stray tap on this
-    // button shouldn't kick off a re-fetch unintentionally.
+    final hasXtream = playlist.profiles.any((p) => p.enabled && p.isXtream);
+    if (hasXtream) {
+      // Shared with Settings > Clear Cache — see its doc comment for why
+      // this needed to become a reusable helper rather than living here.
+      // Covers every enabled Xtream playlist in one pass.
+      final didSync = await confirmAndRunFullCatalogSync(context, playlist);
+      if (didSync && mounted) _showUpdateToast();
+    }
+
+    final m3uProfiles =
+        playlist.profiles.where((p) => p.enabled && !p.isXtream).toList();
+    if (m3uProfiles.isEmpty || !mounted) return;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Update content now?'),
-        content: const Text('Re-checks your playlist URL for new content.'),
+        content:
+            const Text('Re-checks your M3U playlist URL(s) for new content.'),
         actions: [
-          ModeButton(label: 'Cancel', selected: false, onTap: () => Navigator.of(context).pop(false)),
-          ModeButton(label: 'Update', selected: false, onTap: () => Navigator.of(context).pop(true)),
+          ModeButton(
+              label: 'Cancel',
+              selected: false,
+              onTap: () => Navigator.of(context).pop(false)),
+          ModeButton(
+              label: 'Update',
+              selected: false,
+              onTap: () => Navigator.of(context).pop(true)),
         ],
       ),
     );
     if (confirmed != true || !mounted) return;
-
-    final url = storage.getM3uUrl();
-    if (url == null || url.isEmpty) {
-      _promptForSettings();
-      return;
+    for (final profile in m3uProfiles) {
+      await playlist.loadPlaylist(profile.id);
     }
-    await playlist.loadFromUrl(url);
   }
 
   Future<void> _refreshEpg() async {
-    final storage = context.read<StorageService>();
-    final url = storage.getEpgUrl();
-    if (url == null || url.isEmpty) {
+    final playlist = context.read<PlaylistManager>();
+    final epg = context.read<EpgService>();
+    final sources = playlist.profiles
+        .where((p) => p.enabled && (p.epgUrl?.isNotEmpty ?? false))
+        .map((p) => (
+              url: p.epgUrl!,
+              knownChannelIds: playlist.knownChannelIdsFor(p.id)
+            ))
+        .toList();
+    if (sources.isEmpty) {
       _promptForSettings();
       return;
     }
-    await context.read<EpgService>().refresh(url);
+    for (final source in sources) {
+      await epg.refresh(source.url, knownChannelIds: source.knownChannelIds);
+    }
   }
 
   void _promptForSettings() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Set your playlist source in Settings first.')),
+      const SnackBar(
+          content: Text('Set your playlist source in Settings first.')),
     );
     _openSettings();
   }
@@ -136,12 +157,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showUpdateToast() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Content updated'), duration: Duration(seconds: 2)),
+      const SnackBar(
+          content: Text('Content updated'), duration: Duration(seconds: 2)),
     );
   }
 
   void _openSettings() {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const SettingsMenuScreen()));
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const SettingsMenuScreen()));
   }
 
   /// A horizontal "Continue Watching" strip for the Movies/TV Shows tabs,
@@ -155,7 +178,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final playback = context.watch<PlaybackService>();
     final storage = context.read<StorageService>();
     final items = playback.recentlyPlayed
-        .where((c) => c.id.startsWith(idPrefix) && storage.getLastPosition(c.id) > 0)
+        .where((c) =>
+            c.rawId.startsWith(idPrefix) && storage.getLastPosition(c.id) > 0)
         .toList();
     if (items.isEmpty) return null;
 
@@ -166,7 +190,8 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: Text('Continue Watching', style: Theme.of(context).textTheme.labelLarge),
+            child: Text('Continue Watching',
+                style: Theme.of(context).textTheme.labelLarge),
           ),
           Expanded(
             child: ListView.builder(
@@ -193,7 +218,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                       imageUrl: c.logoUrl!,
                                       fit: BoxFit.cover,
                                       width: 84,
-                                      errorWidget: (_, __, ___) => const ColoredBox(
+                                      errorWidget: (_, __, ___) =>
+                                          const ColoredBox(
                                         color: Colors.black26,
                                         child: Icon(Icons.play_circle_outline),
                                       ),
@@ -254,7 +280,9 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Update content',
             icon: playlist.isLoading
                 ? const SizedBox(
-                    width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.playlist_add_check),
             onPressed: playlist.isLoading ? null : _refreshPlaylist,
           ),
@@ -262,7 +290,9 @@ class _HomeScreenState extends State<HomeScreen> {
             tooltip: 'Update EPG now',
             icon: epg.isLoading
                 ? const SizedBox(
-                    width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.calendar_month),
             onPressed: epg.isLoading ? null : _refreshEpg,
           ),
@@ -298,8 +328,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               collapsed: _sidebarCollapsed,
                               selectedTab: _tab,
                               selectedGroup: _selectedGroup,
-                              onToggleCollapse: () =>
-                                  setState(() => _sidebarCollapsed = !_sidebarCollapsed),
+                              onToggleCollapse: () => setState(
+                                  () => _sidebarCollapsed = !_sidebarCollapsed),
                               onTabChanged: (tab) => setState(() {
                                 _tab = tab;
                                 _selectedGroup = null;
@@ -315,7 +345,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                 : Column(
                                     children: [
                                       continueStrip,
-                                      Expanded(child: _buildChannelList(playlist)),
+                                      Expanded(
+                                          child: _buildChannelList(playlist)),
                                     ],
                                   ),
                           ),
@@ -333,7 +364,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             // stale frame behind on some devices.
                             Expanded(
                               flex: 3,
-                              child: VideoPlayerPane(key: ValueKey(playback.currentChannel?.id)),
+                              child: VideoPlayerPane(
+                                  key: ValueKey(playback.currentChannel?.id)),
                             ),
                           ],
                         ],
@@ -343,7 +375,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       MiniPlayerBar(
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => PlayerScreen(channel: playback.currentChannel!),
+                            builder: (_) =>
+                                PlayerScreen(channel: playback.currentChannel!),
                           ),
                         ),
                       ),
@@ -363,7 +396,9 @@ class _HomeScreenState extends State<HomeScreen> {
     // Series aren't directly playable — in Xtream mode the TV Shows tab
     // lists series containers that drill down into episodes, not channels.
     if (_tab == 'TV Shows' && playlist.isXtream) {
-      final series = playlist.visibleSeries(_selectedGroup);
+      final series = playlist.visibleSeries(
+          playlistId: _selectedGroup?.playlistId,
+          categoryName: _selectedGroup?.title);
       // isWarmingCatalog only means "still safe to assume this could
       // populate soon" for Movies/TV Shows — Live TV is already fully
       // loaded upfront regardless of catalog warm-up progress.
@@ -371,7 +406,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return const Center(child: CircularProgressIndicator());
       }
       if (series.isEmpty) {
-        return const Center(child: Text('No TV shows found. Pick a category on the left.'));
+        return const Center(
+            child: Text('No TV shows found. Pick a category on the left.'));
       }
       return ListView.builder(
         itemCount: series.length,
@@ -385,7 +421,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   ? CachedNetworkImage(
                       imageUrl: s.coverUrl!,
                       fit: BoxFit.contain,
-                      errorWidget: (_, __, ___) => const Icon(Icons.video_library),
+                      errorWidget: (_, __, ___) =>
+                          const Icon(Icons.video_library),
                     )
                   : const Icon(Icons.video_library),
             ),
@@ -399,7 +436,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final channels = _tab == 'Favorites'
         ? playlist.favoriteChannels
-        : playlist.visibleChannels(groupTitle: _selectedGroup, category: _categoryForTab(_tab));
+        : playlist.visibleChannels(
+            playlistId: _selectedGroup?.playlistId,
+            groupTitle: _selectedGroup?.title,
+            category: _categoryForTab(_tab));
 
     // Catalog warm-up only ever affects Movies/TV Shows, never Live TV —
     // but Live TV can still genuinely be "loading" now (the kick-off
@@ -444,7 +484,8 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             const CircularProgressIndicator(),
             const SizedBox(height: 16),
-            Text(playlist.loadingPhase ?? 'Loading playlist...', textAlign: TextAlign.center),
+            Text(playlist.loadingPhase ?? 'Loading playlist...',
+                textAlign: TextAlign.center),
           ],
         ),
       ),
@@ -462,7 +503,8 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 16),
             const Text('Failed to load playlist.', textAlign: TextAlign.center),
             const SizedBox(height: 16),
-            FilledButton(onPressed: _openSettings, child: const Text('Open Settings')),
+            FilledButton(
+                onPressed: _openSettings, child: const Text('Open Settings')),
           ],
         ),
       ),

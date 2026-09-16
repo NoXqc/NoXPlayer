@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/m3u_group.dart';
 import '../services/playlist_manager.dart';
 
 /// Left navigation: TV / VOD / Favorites tabs plus a collapsible group list
@@ -20,10 +21,16 @@ class Sidebar extends StatelessWidget {
 
   final bool collapsed;
   final String selectedTab;
-  final String? selectedGroup;
+
+  /// The whole group, not just its title — group identity is
+  /// `(playlistId, title)` now that more than one playlist can exist (two
+  /// providers can share a category name), so a bare title alone isn't
+  /// enough to know which playlist's `ensureCategoryLoaded`/
+  /// `visibleChannels` call this selection actually means.
+  final M3uGroup? selectedGroup;
   final VoidCallback onToggleCollapse;
   final ValueChanged<String> onTabChanged;
-  final ValueChanged<String?> onGroupSelected;
+  final ValueChanged<M3uGroup?> onGroupSelected;
 
   static const _tabs = ['TV', 'Movies', 'TV Shows', 'Favorites'];
   static const _tabIcons = {
@@ -43,7 +50,9 @@ class Sidebar extends StatelessWidget {
       'Movies' => playlist.vodGroups,
       'TV Shows' => playlist.seriesGroups,
       _ => playlist.tvGroups,
-    }.where((g) => !g.isHidden).toList();
+    }
+        .where((g) => !g.isHidden)
+        .toList();
 
     return Column(
       children: [
@@ -92,18 +101,25 @@ class Sidebar extends StatelessWidget {
                             group.title,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: group.isHidden ? Theme.of(context).disabledColor : null,
+                              color: group.isHidden
+                                  ? Theme.of(context).disabledColor
+                                  : null,
                             ),
                           ),
-                    selected: selectedGroup == group.title,
+                    selected: selectedGroup?.playlistId == group.playlistId &&
+                        selectedGroup?.title == group.title,
                     trailing: collapsed
                         ? null
                         : IconButton(
-                            icon: Icon(group.isHidden ? Icons.visibility_off : Icons.visibility),
-                            tooltip: group.isHidden ? 'Show group' : 'Hide group',
-                            onPressed: () => playlist.toggleGroupHidden(group.title),
+                            icon: Icon(group.isHidden
+                                ? Icons.visibility_off
+                                : Icons.visibility),
+                            tooltip:
+                                group.isHidden ? 'Show group' : 'Hide group',
+                            onPressed: () => playlist.toggleGroupHidden(
+                                group.playlistId, group.title),
                           ),
-                    onTap: () => onGroupSelected(group.title),
+                    onTap: () => onGroupSelected(group),
                   ),
               ],
             ),

@@ -128,7 +128,8 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
   /// to resume.
   KeyEventResult _handleGlobalKey(KeyEvent event) {
     if (!_canResume) return KeyEventResult.ignored;
-    if (event.logicalKey != LogicalKeyboardKey.arrowRight) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.arrowRight)
+      return KeyEventResult.ignored;
 
     if (event is KeyDownEvent) {
       _holdTimer?.cancel();
@@ -164,7 +165,8 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
     // alongside it) to 0x0. See player_screen.dart's `UpNextBubble` for
     // the full story on why.
     if (!show) {
-      return const Positioned(bottom: 24, left: 0, right: 0, child: SizedBox.shrink());
+      return const Positioned(
+          bottom: 24, left: 0, right: 0, child: SizedBox.shrink());
     }
 
     return Positioned(
@@ -181,7 +183,8 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
               decoration: BoxDecoration(
                 color: Colors.black87,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Theme.of(context).colorScheme.primary, width: 1.5),
+                border: Border.all(
+                    color: Theme.of(context).colorScheme.primary, width: 1.5),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -189,12 +192,49 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
                   const Icon(Icons.circle, color: Colors.redAccent, size: 10),
                   const SizedBox(width: 8),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 260),
-                    child: Text(
-                      '${channel.name} — hold ▶ to resume',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                    constraints: const BoxConstraints(maxWidth: 320),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          channel.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600),
+                        ),
+                        // Was a single line ending in "— hold ▶ to resume"
+                        // — reported directly as confusing on two counts:
+                        // the ▶ glyph reads as "the remote's physical
+                        // Play/Pause button", not "the D-pad's Right
+                        // button" (what actually resumes here — see
+                        // [_handleGlobalKey]), and a long channel name
+                        // pushed the instruction itself off the end,
+                        // truncated. A real right-arrow icon, on its own
+                        // smaller second line, fixes both — nothing left
+                        // to truncate away, and the icon actually matches
+                        // the key being held.
+                        const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'Hold ',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 11),
+                            ),
+                            Icon(Icons.keyboard_arrow_right,
+                                color: Colors.white70, size: 14),
+                            Text(
+                              ' to resume',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ],

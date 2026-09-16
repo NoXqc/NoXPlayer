@@ -37,7 +37,8 @@ class AppUpdateService {
   /// Public, unauthenticated GitHub API — fine for a public repo at this
   /// call volume (a user tapping "Check for Updates" occasionally), no
   /// token needed and none should be embedded in a distributed APK anyway.
-  static const _apiUrl = 'https://api.github.com/repos/NoXqc/NoXPlayer/releases/latest';
+  static const _apiUrl =
+      'https://api.github.com/repos/NoXqc/NoXPlayer/releases/latest';
 
   /// Null if already up to date, the request fails, or the release has no
   /// `.apk` asset attached (shouldn't happen for a real release, but a
@@ -60,7 +61,8 @@ class AppUpdateService {
 
     final assets = (decoded['assets'] as List?) ?? const [];
     final apkAsset = assets.cast<Map<String, dynamic>>().firstWhere(
-          (a) => (a['name'] as String?)?.toLowerCase().endsWith('.apk') ?? false,
+          (a) =>
+              (a['name'] as String?)?.toLowerCase().endsWith('.apk') ?? false,
           orElse: () => const {},
         );
     final downloadUrl = apkAsset['browser_download_url'] as String?;
@@ -94,7 +96,8 @@ class AppUpdateService {
   /// FileProvider path config that grants the installer read access to
   /// exactly this one file, nothing broader) — overwrites any previous
   /// download of the same name rather than accumulating old ones.
-  Future<File> downloadUpdate(String downloadUrl, {void Function(double fraction)? onProgress}) async {
+  Future<File> downloadUpdate(String downloadUrl,
+      {void Function(double fraction)? onProgress}) async {
     final request = http.Request('GET', Uri.parse(downloadUrl));
     final response = await http.Client().send(request);
     if (response.statusCode != 200) {
@@ -129,10 +132,12 @@ class AppUpdateService {
   /// "install unknown apps" access — Android requires this be a real user
   /// action from Settings, no app (this one included) can grant it to
   /// itself. No-op on pre-Android-8, where it isn't needed.
-  Future<void> requestInstallPermission() => _channel.invokeMethod('requestInstallPermission');
+  Future<void> requestInstallPermission() =>
+      _channel.invokeMethod('requestInstallPermission');
 
   /// Hands the downloaded file to the system package installer — this is
   /// the point where the OS's own install-confirmation UI takes over;
   /// nothing past this call can be automated further from inside the app.
-  Future<void> installApk(String filePath) => _channel.invokeMethod('installApk', {'filePath': filePath});
+  Future<void> installApk(String filePath) =>
+      _channel.invokeMethod('installApk', {'filePath': filePath});
 }

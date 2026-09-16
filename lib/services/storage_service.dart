@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/playlist_profile.dart';
 import '../utils/constants.dart';
 
 /// Wraps [SharedPreferences] for small settings values, and the OS temp
@@ -56,59 +58,90 @@ class StorageService {
     }
   }
 
-  // --- Playlist / EPG source URLs -----------------------------------------
+  // --- Multi-playlist list --------------------------------------------------
 
-  String? getM3uUrl() => _prefs.getString(AppConstants.keyM3uUrl);
-  Future<void> setM3uUrl(String url) => _prefs.setString(AppConstants.keyM3uUrl, url);
+  List<PlaylistProfile> getPlaylists() {
+    final raw = _prefs.getString(AppConstants.keyPlaylists);
+    if (raw == null || raw.isEmpty) return [];
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    return decoded
+        .map((e) => PlaylistProfile.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
 
-  String? getEpgUrl() => _prefs.getString(AppConstants.keyEpgUrl);
-  Future<void> setEpgUrl(String url) => _prefs.setString(AppConstants.keyEpgUrl, url);
+  Future<void> setPlaylists(List<PlaylistProfile> playlists) =>
+      _prefs.setString(AppConstants.keyPlaylists,
+          jsonEncode(playlists.map((p) => p.toJson()).toList()));
+
+  bool getMigratedToMultiPlaylist() =>
+      _prefs.getBool(AppConstants.keyMigratedToMultiPlaylist) ?? false;
+  Future<void> setMigratedToMultiPlaylist(bool value) =>
+      _prefs.setBool(AppConstants.keyMigratedToMultiPlaylist, value);
+
+  // --- Legacy single-playlist scalars — read-only, migration use only ------
+  // See AppConstants' doc comment on these keys: nothing writes any of these
+  // anymore, they only feed PlaylistManager._migrateLegacySinglePlaylist.
+
+  String? getLegacyM3uUrl() => _prefs.getString(AppConstants.keyM3uUrl);
+  String? getLegacyEpgUrl() => _prefs.getString(AppConstants.keyEpgUrl);
+  String getLegacyPlaylistMode() =>
+      _prefs.getString(AppConstants.keyPlaylistMode) ?? 'm3u';
+  String? getLegacyXtreamServer() =>
+      _prefs.getString(AppConstants.keyXtreamServer);
+  String? getLegacyXtreamUsername() =>
+      _prefs.getString(AppConstants.keyXtreamUsername);
+  String? getLegacyXtreamPassword() =>
+      _prefs.getString(AppConstants.keyXtreamPassword);
+  bool getLegacyPlaylistEnabled() =>
+      _prefs.getBool(AppConstants.keyPlaylistEnabled) ?? true;
+  Set<String> getLegacyHiddenGroups() =>
+      (_prefs.getStringList(AppConstants.keyHiddenGroups) ?? []).toSet();
+  Set<String> getLegacyFavoritedGroups() =>
+      (_prefs.getStringList(AppConstants.keyFavoritedGroups) ?? []).toSet();
+  int getLegacySyncFrequencyDays() =>
+      _prefs.getInt(AppConstants.keySyncFrequencyDays) ??
+      AppConstants.defaultSyncFrequencyDays;
+  DateTime? getLegacyLastFullSyncAt() {
+    final raw = _prefs.getString(AppConstants.keyLastFullSyncAt);
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
 
   int getRefreshInterval() =>
-      _prefs.getInt(AppConstants.keyRefreshInterval) ?? AppConstants.defaultRefreshIntervalMinutes;
+      _prefs.getInt(AppConstants.keyRefreshInterval) ??
+      AppConstants.defaultRefreshIntervalMinutes;
   Future<void> setRefreshInterval(int minutes) =>
       _prefs.setInt(AppConstants.keyRefreshInterval, minutes);
 
-  String getThemeMode() => _prefs.getString(AppConstants.keyThemeMode) ?? 'dark';
-  Future<void> setThemeMode(String mode) => _prefs.setString(AppConstants.keyThemeMode, mode);
+  String getThemeMode() =>
+      _prefs.getString(AppConstants.keyThemeMode) ?? 'dark';
+  Future<void> setThemeMode(String mode) =>
+      _prefs.setString(AppConstants.keyThemeMode, mode);
 
   bool getShowClock() => _prefs.getBool(AppConstants.keyShowClock) ?? true;
-  Future<void> setShowClock(bool value) => _prefs.setBool(AppConstants.keyShowClock, value);
+  Future<void> setShowClock(bool value) =>
+      _prefs.setBool(AppConstants.keyShowClock, value);
 
   /// Falls back to the first entry (Purple/Magenta) when unset or when the
   /// stored id doesn't match a known palette — no migration attempted from
   /// the old single-seed-color storage, a fresh sensible default is simpler
   /// than trying to map an arbitrary old color onto the closest palette.
-  String getPaletteId() => _prefs.getString(AppConstants.keyPaletteId) ?? AppConstants.cyberpunkPalettes.first.id;
-  Future<void> setPaletteId(String id) => _prefs.setString(AppConstants.keyPaletteId, id);
+  String getPaletteId() =>
+      _prefs.getString(AppConstants.keyPaletteId) ??
+      AppConstants.cyberpunkPalettes.first.id;
+  Future<void> setPaletteId(String id) =>
+      _prefs.setString(AppConstants.keyPaletteId, id);
 
   /// 'auto', 'phone', or 'tv'.
-  String getLayoutMode() => _prefs.getString(AppConstants.keyLayoutMode) ?? AppConstants.defaultLayoutMode;
-  Future<void> setLayoutMode(String mode) => _prefs.setString(AppConstants.keyLayoutMode, mode);
+  String getLayoutMode() =>
+      _prefs.getString(AppConstants.keyLayoutMode) ??
+      AppConstants.defaultLayoutMode;
+  Future<void> setLayoutMode(String mode) =>
+      _prefs.setString(AppConstants.keyLayoutMode, mode);
 
-  bool getPlaylistEnabled() => _prefs.getBool(AppConstants.keyPlaylistEnabled) ?? true;
-  Future<void> setPlaylistEnabled(bool value) =>
-      _prefs.setBool(AppConstants.keyPlaylistEnabled, value);
+  // --- Favorites (global — shared across every playlist) -------------------
 
-  // --- Xtream Codes (XC API) credentials ------------------------------------
-
-  String getPlaylistMode() => _prefs.getString(AppConstants.keyPlaylistMode) ?? 'm3u';
-  Future<void> setPlaylistMode(String mode) => _prefs.setString(AppConstants.keyPlaylistMode, mode);
-
-  String? getXtreamServer() => _prefs.getString(AppConstants.keyXtreamServer);
-  Future<void> setXtreamServer(String value) => _prefs.setString(AppConstants.keyXtreamServer, value);
-
-  String? getXtreamUsername() => _prefs.getString(AppConstants.keyXtreamUsername);
-  Future<void> setXtreamUsername(String value) =>
-      _prefs.setString(AppConstants.keyXtreamUsername, value);
-
-  String? getXtreamPassword() => _prefs.getString(AppConstants.keyXtreamPassword);
-  Future<void> setXtreamPassword(String value) =>
-      _prefs.setString(AppConstants.keyXtreamPassword, value);
-
-  // --- Favorites / hidden groups -------------------------------------------
-
-  Set<String> getFavorites() => (_prefs.getStringList(AppConstants.keyFavorites) ?? []).toSet();
+  Set<String> getFavorites() =>
+      (_prefs.getStringList(AppConstants.keyFavorites) ?? []).toSet();
   Future<void> setFavorites(Set<String> ids) =>
       _prefs.setStringList(AppConstants.keyFavorites, ids.toList());
 
@@ -117,15 +150,26 @@ class StorageService {
   Future<void> setFavoriteSeries(Set<String> ids) =>
       _prefs.setStringList(AppConstants.keyFavoriteSeries, ids.toList());
 
-  Set<String> getHiddenGroups() =>
-      (_prefs.getStringList(AppConstants.keyHiddenGroups) ?? []).toSet();
-  Future<void> setHiddenGroups(Set<String> groups) =>
-      _prefs.setStringList(AppConstants.keyHiddenGroups, groups.toList());
+  // --- Hidden / favorited groups (per playlist) -----------------------------
+  // Group identity is (playlistId, title), not just title — two different
+  // providers can easily have a same-named category. Each playlist gets its
+  // own namespaced key rather than one shared Set, so there's no collision.
 
-  Set<String> getFavoritedGroups() =>
-      (_prefs.getStringList(AppConstants.keyFavoritedGroups) ?? []).toSet();
-  Future<void> setFavoritedGroups(Set<String> groups) =>
-      _prefs.setStringList(AppConstants.keyFavoritedGroups, groups.toList());
+  Set<String> getHiddenGroups(String playlistId) =>
+      (_prefs.getStringList('${AppConstants.keyHiddenGroups}_$playlistId') ??
+              [])
+          .toSet();
+  Future<void> setHiddenGroups(String playlistId, Set<String> groups) =>
+      _prefs.setStringList(
+          '${AppConstants.keyHiddenGroups}_$playlistId', groups.toList());
+
+  Set<String> getFavoritedGroups(String playlistId) =>
+      (_prefs.getStringList('${AppConstants.keyFavoritedGroups}_$playlistId') ??
+              [])
+          .toSet();
+  Future<void> setFavoritedGroups(String playlistId, Set<String> groups) =>
+      _prefs.setStringList(
+          '${AppConstants.keyFavoritedGroups}_$playlistId', groups.toList());
 
   // --- Search history -------------------------------------------------------
 
@@ -134,18 +178,23 @@ class StorageService {
   /// Most-recent-first. Shared across Live TV/Movies/TV Shows scopes rather
   /// than kept separate per scope — simpler, and a remembered search is
   /// useful regardless of which scope tab happens to be selected right now.
-  List<String> getRecentSearches() => _prefs.getStringList(AppConstants.keyRecentSearches) ?? [];
+  List<String> getRecentSearches() =>
+      _prefs.getStringList(AppConstants.keyRecentSearches) ?? [];
 
   Future<void> addRecentSearch(String query) {
     final trimmed = query.trim();
     if (trimmed.isEmpty) return Future.value();
-    final list = getRecentSearches().where((s) => s.toLowerCase() != trimmed.toLowerCase()).toList();
+    final list = getRecentSearches()
+        .where((s) => s.toLowerCase() != trimmed.toLowerCase())
+        .toList();
     list.insert(0, trimmed);
-    if (list.length > _maxRecentSearches) list.removeRange(_maxRecentSearches, list.length);
+    if (list.length > _maxRecentSearches)
+      list.removeRange(_maxRecentSearches, list.length);
     return _prefs.setStringList(AppConstants.keyRecentSearches, list);
   }
 
-  Future<void> clearRecentSearches() => _prefs.remove(AppConstants.keyRecentSearches);
+  Future<void> clearRecentSearches() =>
+      _prefs.remove(AppConstants.keyRecentSearches);
 
   // --- EPG cache -------------------------------------------------------------
   // The programme data itself lives in the disk-file cache now (see
@@ -162,35 +211,36 @@ class StorageService {
   Future<void> setEpgLastUpdated(DateTime time) =>
       _prefs.setString(AppConstants.keyEpgLastUpdated, time.toIso8601String());
 
-  // --- Full catalog sync -------------------------------------------------
+  // --- Full catalog sync (per playlist) -----------------------------------
+  // Sync frequency itself lives directly on PlaylistProfile.syncFrequencyDays
+  // now (see StorageService.setPlaylists) — only the "when did it last
+  // actually run" timestamp needs its own namespaced key here.
 
-  DateTime? getLastFullSyncAt() {
-    final raw = _prefs.getString(AppConstants.keyLastFullSyncAt);
+  DateTime? getLastFullSyncAt(String playlistId) {
+    final raw =
+        _prefs.getString('${AppConstants.keyLastFullSyncAt}_$playlistId');
     return raw == null ? null : DateTime.tryParse(raw);
   }
 
-  Future<void> setLastFullSyncAt(DateTime time) =>
-      _prefs.setString(AppConstants.keyLastFullSyncAt, time.toIso8601String());
-
-  int getSyncFrequencyDays() =>
-      _prefs.getInt(AppConstants.keySyncFrequencyDays) ?? AppConstants.defaultSyncFrequencyDays;
-  Future<void> setSyncFrequencyDays(int days) =>
-      _prefs.setInt(AppConstants.keySyncFrequencyDays, days);
+  Future<void> setLastFullSyncAt(String playlistId, DateTime time) =>
+      _prefs.setString('${AppConstants.keyLastFullSyncAt}_$playlistId',
+          time.toIso8601String());
 
   // --- Resume playback ---------------------------------------------------
 
   String? getLastChannelId() => _prefs.getString(AppConstants.keyLastChannelId);
-  Future<void> setLastChannelId(String id) => _prefs.setString(AppConstants.keyLastChannelId, id);
+  Future<void> setLastChannelId(String id) =>
+      _prefs.setString(AppConstants.keyLastChannelId, id);
 
   int getLastPosition(String channelId) =>
       _prefs.getInt('${AppConstants.keyLastPositionPrefix}$channelId') ?? 0;
-  Future<void> setLastPosition(String channelId, int milliseconds) =>
-      _prefs.setInt('${AppConstants.keyLastPositionPrefix}$channelId', milliseconds);
+  Future<void> setLastPosition(String channelId, int milliseconds) => _prefs
+      .setInt('${AppConstants.keyLastPositionPrefix}$channelId', milliseconds);
 
   int getLastDuration(String channelId) =>
       _prefs.getInt('${AppConstants.keyLastDurationPrefix}$channelId') ?? 0;
-  Future<void> setLastDuration(String channelId, int milliseconds) =>
-      _prefs.setInt('${AppConstants.keyLastDurationPrefix}$channelId', milliseconds);
+  Future<void> setLastDuration(String channelId, int milliseconds) => _prefs
+      .setInt('${AppConstants.keyLastDurationPrefix}$channelId', milliseconds);
 
   /// Fraction watched (0.0-1.0), or null when there's nothing to compute
   /// one from — no saved position, or duration was never recorded (e.g.
@@ -223,7 +273,8 @@ class StorageService {
         .getKeys()
         .where((k) =>
             k.startsWith(AppConstants.keyLastPositionPrefix) ||
-            k.startsWith(AppConstants.keyLastDurationPrefix))
+            k.startsWith(AppConstants.keyLastDurationPrefix) ||
+            k.startsWith('${AppConstants.keyLastFullSyncAt}_'))
         .toList();
     for (final key in positionKeys) {
       await _prefs.remove(key);

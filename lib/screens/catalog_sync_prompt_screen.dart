@@ -9,7 +9,8 @@ import '../widgets/mode_button.dart';
 /// leaves the last-synced timestamp untouched, so this asks again next
 /// launch rather than silently postponing forever.
 class CatalogSyncPromptScreen extends StatelessWidget {
-  const CatalogSyncPromptScreen({super.key, required this.lastSyncedAt, required this.onRespond});
+  const CatalogSyncPromptScreen(
+      {super.key, required this.lastSyncedAt, required this.onRespond});
 
   final DateTime? lastSyncedAt;
   final void Function(bool confirmed) onRespond;
@@ -35,11 +36,15 @@ class CatalogSyncPromptScreen extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.cloud_sync_outlined, color: Colors.white70, size: 48),
+                  const Icon(Icons.cloud_sync_outlined,
+                      color: Colors.white70, size: 48),
                   const SizedBox(height: 24),
                   const Text(
                     'Update content now?',
-                    style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
                   Text(

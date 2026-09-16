@@ -5,7 +5,8 @@ import 'package:flutter/services.dart';
 /// (Flutter has no built-in way to ask "how much RAM does this device
 /// have").
 class DeviceMemoryInfo {
-  const DeviceMemoryInfo({required this.totalMemBytes, required this.isLowRamDevice});
+  const DeviceMemoryInfo(
+      {required this.totalMemBytes, required this.isLowRamDevice});
 
   final int totalMemBytes;
 
@@ -25,7 +26,8 @@ class DeviceMemoryService {
   /// conservative default rather than guess or crash.
   static Future<DeviceMemoryInfo?> getMemoryInfo() async {
     try {
-      final result = await _channel.invokeMapMethod<String, dynamic>('getMemoryInfo');
+      final result =
+          await _channel.invokeMapMethod<String, dynamic>('getMemoryInfo');
       if (result == null) return null;
       return DeviceMemoryInfo(
         totalMemBytes: result['totalMemBytes'] as int,

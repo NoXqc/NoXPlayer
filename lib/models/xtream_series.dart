@@ -4,14 +4,30 @@
 class XtreamSeries {
   XtreamSeries({
     required this.seriesId,
+    required this.playlistId,
     required this.name,
     required this.categoryId,
     this.coverUrl,
     this.isFavorite = false,
     this.rating,
-  });
+  }) : id = '$playlistId::series_$seriesId';
 
+  /// The raw per-provider integer Xtream itself uses — kept because
+  /// `getSeriesEpisodes` still needs it for the `get_series_info` API
+  /// call. Not safely unique across two different providers on its own
+  /// (see `id`).
   final int seriesId;
+
+  /// Which playlist this series came from — see `Channel.playlistId`.
+  final String playlistId;
+
+  /// Globally-unique stable identifier, derived from [playlistId] and
+  /// [seriesId] — this class had no string id at all before multi-playlist
+  /// support; two providers can easily both assign the same raw
+  /// `seriesId`, so favoriting/lookup code (`PlaylistManager
+  /// .toggleSeriesFavorite`, `CatalogDatabase`'s `series_items` primary
+  /// key) uses this instead of the bare int.
+  final String id;
   final String name;
   final String categoryId;
   final String? coverUrl;
@@ -28,6 +44,7 @@ class XtreamSeries {
 
   Map<String, dynamic> toJson() => {
         'seriesId': seriesId,
+        'playlistId': playlistId,
         'name': name,
         'categoryId': categoryId,
         'coverUrl': coverUrl,
@@ -35,8 +52,11 @@ class XtreamSeries {
         'rating': rating,
       };
 
+  /// `playlistId` defaults to `'migrated_default'` for the same reason as
+  /// `Channel.fromJson` — see its doc comment.
   factory XtreamSeries.fromJson(Map<String, dynamic> json) => XtreamSeries(
         seriesId: json['seriesId'] as int,
+        playlistId: json['playlistId'] as String? ?? 'migrated_default',
         name: json['name'] as String,
         categoryId: json['categoryId'] as String,
         coverUrl: json['coverUrl'] as String?,

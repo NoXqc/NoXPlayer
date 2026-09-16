@@ -30,7 +30,8 @@ class ChannelListTile extends StatelessWidget {
   void _toggleFavorite(BuildContext context) {
     context.read<PlaylistManager>().toggleFavorite(channel);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(channel.isFavorite ? 'Added to Favorites' : 'Removed from Favorites'),
+      content: Text(
+          channel.isFavorite ? 'Added to Favorites' : 'Removed from Favorites'),
       duration: const Duration(seconds: 2),
     ));
   }
@@ -52,8 +53,10 @@ class ChannelListTile extends StatelessWidget {
                   // Live channels are loaded eagerly and uncapped (unlike
                   // VOD/series) — a large channel list decoding every logo
                   // at full source resolution is a real memory contributor.
-                  memCacheWidth: (48 * MediaQuery.of(context).devicePixelRatio).round(),
-                  memCacheHeight: (48 * MediaQuery.of(context).devicePixelRatio).round(),
+                  memCacheWidth:
+                      (48 * MediaQuery.of(context).devicePixelRatio).round(),
+                  memCacheHeight:
+                      (48 * MediaQuery.of(context).devicePixelRatio).round(),
                   errorWidget: (_, __, ___) => const Icon(Icons.tv),
                 )
               : const Icon(Icons.tv),

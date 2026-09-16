@@ -15,11 +15,18 @@ class SectionLabel extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(width: 3, height: 16, color: Theme.of(context).colorScheme.secondary),
+        Container(
+            width: 3,
+            height: 16,
+            color: Theme.of(context).colorScheme.secondary),
         const SizedBox(width: 8),
         Text(
           text,
-          style: style ?? Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+          style: style ??
+              Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
         ),
       ],
     );

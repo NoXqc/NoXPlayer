@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../models/m3u_group.dart';
 import '../../services/playlist_manager.dart';
 import '../../utils/tv_theme.dart';
+import '../../widgets/mode_button.dart';
 import '../../widgets/settings_scaffold.dart';
 
 /// Lists every group/category (live, movies, TV shows) — including hidden
@@ -12,7 +13,14 @@ import '../../widgets/settings_scaffold.dart';
 /// bulk "Hide All" / "Show All" controls. Anything hidden here disappears
 /// from the corresponding tab on the main screen.
 class GroupManagementScreen extends StatefulWidget {
-  const GroupManagementScreen({super.key, this.deferLoading = false});
+  const GroupManagementScreen(
+      {super.key, required this.playlistId, this.deferLoading = false});
+
+  /// Which playlist this screen manages groups for — selecting a playlist
+  /// in `PlaylistManagerScreen`'s own list *is* the "which playlist"
+  /// picker; this screen itself only ever shows one playlist's groups at
+  /// a time, reusing the exact same Hide All/Show All UI it always has.
+  final String playlistId;
 
   /// True when opened from the initial "choose groups first" add-playlist
   /// step — checking a box there doesn't fetch that category immediately
@@ -47,9 +55,24 @@ class _GroupManagementScreenState extends State<GroupManagementScreen>
           'Your show/hide choices are saved, and anything still visible '
           'will start downloading — same as pressing Done.',
         ),
+        // Plain TextButton/FilledButton left which one has D-pad focus
+        // ambiguous — reported directly: FilledButton's permanent solid
+        // fill looks the same whether it's actually focused or not, so
+        // there's no way to tell the two apart until you guess and press
+        // one. ModeButton is this app's established fix elsewhere for
+        // exactly this — a solid fill only on real focus — just missed in
+        // this one dialog.
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Stay')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Leave')),
+          ModeButton(
+            label: 'Stay',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(false),
+          ),
+          ModeButton(
+            label: 'Leave',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(true),
+          ),
         ],
       ),
     );
@@ -73,9 +96,18 @@ class _GroupManagementScreenState extends State<GroupManagementScreen>
           'Your playlist will be saved with the selected groups. You can '
           'always add or remove groups later in Settings > Group Management.',
         ),
+        // Same ModeButton fix as _confirmLeave above — see its comment.
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Confirm')),
+          ModeButton(
+            label: 'Cancel',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(false),
+          ),
+          ModeButton(
+            label: 'Confirm',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(true),
+          ),
         ],
       ),
     );
@@ -125,7 +157,9 @@ class _GroupManagementScreenState extends State<GroupManagementScreen>
   /// move first; only switch tabs once there's nowhere further to go in
   /// that direction (same pattern as the browse grid's edge handling).
   void _handleTabArrow(TraversalDirection direction, int tabDelta) {
-    final moved = FocusManager.instance.primaryFocus?.focusInDirection(direction) ?? false;
+    final moved =
+        FocusManager.instance.primaryFocus?.focusInDirection(direction) ??
+            false;
     if (!moved) _goToTab(_tabController.index + tabDelta);
   }
 
@@ -136,10 +170,13 @@ class _GroupManagementScreenState extends State<GroupManagementScreen>
   /// Same fallback pattern as the tab arrows: try moving up normally
   /// first (into the checkbox list), and only jump to Done once there's
   /// genuinely nowhere further up to go.
-  final FocusNode _doneButtonFocusNode = FocusNode(debugLabel: 'group-mgmt-done');
+  final FocusNode _doneButtonFocusNode =
+      FocusNode(debugLabel: 'group-mgmt-done');
 
   void _handleUpArrow() {
-    final moved = FocusManager.instance.primaryFocus?.focusInDirection(TraversalDirection.up) ?? false;
+    final moved = FocusManager.instance.primaryFocus
+            ?.focusInDirection(TraversalDirection.up) ??
+        false;
     if (!moved) _doneButtonFocusNode.requestFocus();
   }
 
@@ -147,97 +184,114 @@ class _GroupManagementScreenState extends State<GroupManagementScreen>
   Widget build(BuildContext context) {
     final playlist = context.watch<PlaylistManager>();
 
-    return withTvThemeIfNeeded(context, (context) => PopScope(
-      canPop: _allowPop,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        final leave = await _confirmLeave();
-        if (!context.mounted || !leave) return;
-        setState(() => _allowPop = true);
-        if (!context.mounted) return;
-        // A confirmed "Leave" is just as deliberate as pressing "Done" —
-        // the whole point of the prompt is to rule out an *accidental*
-        // exit, not to treat a confirmed one differently. Popping with
-        // `false`/no result here made AddPlaylistScreen._promptDownloadScope
-        // think the user bailed without finishing, silently skipping the
-        // warm-up download even though they'd explicitly confirmed leaving.
-        Navigator.of(context).pop(true);
-      },
-      child: SettingsScaffold(
-      title: 'Group Management',
-        // Explicit "Done" so the caller can tell a deliberate finish apart
-        // from just leaving the screen some other way (physical back, an
-        // accidental pop, or confirming "leave" in the prompt above
-        // without having pressed Done). See
-        // AddPlaylistScreen._promptDownloadScope for why that distinction
-        // matters here specifically: it decides whether to start
-        // downloading everything not yet hidden.
-        actions: [
-          TextButton(
-            focusNode: _doneButtonFocusNode,
-            onPressed: () {
+    return withTvThemeIfNeeded(
+        context,
+        (context) => PopScope(
+            canPop: _allowPop,
+            onPopInvokedWithResult: (didPop, result) async {
+              if (didPop) return;
+              final leave = await _confirmLeave();
+              if (!context.mounted || !leave) return;
               setState(() => _allowPop = true);
+              if (!context.mounted) return;
+              // A confirmed "Leave" is just as deliberate as pressing "Done" —
+              // the whole point of the prompt is to rule out an *accidental*
+              // exit, not to treat a confirmed one differently. Popping with
+              // `false`/no result here made AddPlaylistScreen._promptDownloadScope
+              // think the user bailed without finishing, silently skipping the
+              // warm-up download even though they'd explicitly confirmed leaving.
               Navigator.of(context).pop(true);
             },
-            child: const Text('Done', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'TV'),
-            Tab(text: 'Movies'),
-            Tab(text: 'TV Shows'),
-            Tab(text: 'Confirm'),
-          ],
-        ),
-      body: CallbackShortcuts(
-        bindings: <ShortcutActivator, VoidCallback>{
-          const SingleActivator(LogicalKeyboardKey.arrowLeft):
-              () => _handleTabArrow(TraversalDirection.left, -1),
-          const SingleActivator(LogicalKeyboardKey.arrowRight):
-              () => _handleTabArrow(TraversalDirection.right, 1),
-          const SingleActivator(LogicalKeyboardKey.digit1): () => _goToTab(0),
-          const SingleActivator(LogicalKeyboardKey.digit2): () => _goToTab(1),
-          const SingleActivator(LogicalKeyboardKey.digit3): () => _goToTab(2),
-          const SingleActivator(LogicalKeyboardKey.digit4): () => _goToTab(3),
-          const SingleActivator(LogicalKeyboardKey.arrowUp): _handleUpArrow,
-        },
-        child: TabBarView(
-          controller: _tabController,
-          children: [
-            FocusScope(
-              node: _tabScopes[0],
-              child: _GroupList(
-                groups: playlist.tvGroups,
-                playlist: playlist,
-                deferLoading: widget.deferLoading,
+            child: SettingsScaffold(
+              title: 'Group Management',
+              // Explicit "Done" so the caller can tell a deliberate finish apart
+              // from just leaving the screen some other way (physical back, an
+              // accidental pop, or confirming "leave" in the prompt above
+              // without having pressed Done). See
+              // AddPlaylistScreen._promptDownloadScope for why that distinction
+              // matters here specifically: it decides whether to start
+              // downloading everything not yet hidden.
+              actions: [
+                TextButton(
+                  focusNode: _doneButtonFocusNode,
+                  onPressed: () {
+                    setState(() => _allowPop = true);
+                    Navigator.of(context).pop(true);
+                  },
+                  child:
+                      const Text('Done', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+              bottom: TabBar(
+                controller: _tabController,
+                tabs: const [
+                  Tab(text: 'TV'),
+                  Tab(text: 'Movies'),
+                  Tab(text: 'TV Shows'),
+                  Tab(text: 'Confirm'),
+                ],
               ),
-            ),
-            FocusScope(
-              node: _tabScopes[1],
-              child: _GroupList(
-                groups: playlist.vodGroups,
-                playlist: playlist,
-                deferLoading: widget.deferLoading,
+              body: CallbackShortcuts(
+                bindings: <ShortcutActivator, VoidCallback>{
+                  const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+                      _handleTabArrow(TraversalDirection.left, -1),
+                  const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+                      _handleTabArrow(TraversalDirection.right, 1),
+                  const SingleActivator(LogicalKeyboardKey.digit1): () =>
+                      _goToTab(0),
+                  const SingleActivator(LogicalKeyboardKey.digit2): () =>
+                      _goToTab(1),
+                  const SingleActivator(LogicalKeyboardKey.digit3): () =>
+                      _goToTab(2),
+                  const SingleActivator(LogicalKeyboardKey.digit4): () =>
+                      _goToTab(3),
+                  const SingleActivator(LogicalKeyboardKey.arrowUp):
+                      _handleUpArrow,
+                },
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    FocusScope(
+                      node: _tabScopes[0],
+                      child: _GroupList(
+                        groups: playlist.tvGroups
+                            .where((g) => g.playlistId == widget.playlistId)
+                            .toList(),
+                        playlist: playlist,
+                        playlistId: widget.playlistId,
+                        deferLoading: widget.deferLoading,
+                      ),
+                    ),
+                    FocusScope(
+                      node: _tabScopes[1],
+                      child: _GroupList(
+                        groups: playlist.vodGroups
+                            .where((g) => g.playlistId == widget.playlistId)
+                            .toList(),
+                        playlist: playlist,
+                        playlistId: widget.playlistId,
+                        deferLoading: widget.deferLoading,
+                      ),
+                    ),
+                    FocusScope(
+                      node: _tabScopes[2],
+                      child: _GroupList(
+                        groups: playlist.seriesGroups
+                            .where((g) => g.playlistId == widget.playlistId)
+                            .toList(),
+                        playlist: playlist,
+                        playlistId: widget.playlistId,
+                        deferLoading: widget.deferLoading,
+                      ),
+                    ),
+                    FocusScope(
+                      node: _tabScopes[3],
+                      child: _ConfirmTab(onConfirm: _confirmDone),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            FocusScope(
-              node: _tabScopes[2],
-              child: _GroupList(
-                groups: playlist.seriesGroups,
-                playlist: playlist,
-                deferLoading: widget.deferLoading,
-              ),
-            ),
-            FocusScope(
-              node: _tabScopes[3],
-              child: _ConfirmTab(onConfirm: _confirmDone),
-            ),
-          ],
-        ),
-      ),
-    )));
+            )));
   }
 }
 
@@ -254,7 +308,8 @@ class _ConfirmTab extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.check_circle_outline, size: 48, color: Colors.white70),
+            const Icon(Icons.check_circle_outline,
+                size: 48, color: Colors.white70),
             const SizedBox(height: 16),
             const Text(
               'If you are done selecting your groups, press Confirm below.\n\n'
@@ -276,16 +331,23 @@ class _ConfirmTab extends StatelessWidget {
 }
 
 class _GroupList extends StatelessWidget {
-  const _GroupList({required this.groups, required this.playlist, this.deferLoading = false});
+  const _GroupList({
+    required this.groups,
+    required this.playlist,
+    required this.playlistId,
+    this.deferLoading = false,
+  });
 
   final List<M3uGroup> groups;
   final PlaylistManager playlist;
+  final String playlistId;
   final bool deferLoading;
 
   @override
   Widget build(BuildContext context) {
     if (groups.isEmpty) {
-      return const Center(child: Text('No categories yet — load a playlist first.'));
+      return const Center(
+          child: Text('No categories yet — load a playlist first.'));
     }
 
     final titles = groups.map((g) => g.title);
@@ -298,15 +360,17 @@ class _GroupList extends StatelessWidget {
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () =>
-                      playlist.setGroupsHidden(titles, false, loadImmediately: !deferLoading),
+                  onPressed: () => playlist.setGroupsHidden(
+                      playlistId, titles, false,
+                      loadImmediately: !deferLoading),
                   child: const Text('Show All'),
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () => playlist.setGroupsHidden(titles, true),
+                  onPressed: () =>
+                      playlist.setGroupsHidden(playlistId, titles, true),
                   child: const Text('Hide All'),
                 ),
               ),
@@ -393,10 +457,13 @@ class _GroupList extends StatelessWidget {
                   key: ValueKey(group.isHidden),
                   child: Icon(
                     group.isHidden ? Icons.circle_outlined : Icons.check_circle,
-                    color: group.isHidden ? Colors.white54 : Theme.of(context).colorScheme.primary,
+                    color: group.isHidden
+                        ? Colors.white54
+                        : Theme.of(context).colorScheme.primary,
                   ),
                 ),
                 onTap: () => playlist.setGroupHidden(
+                  playlistId,
                   group.title,
                   !group.isHidden,
                   loadImmediately: !deferLoading,

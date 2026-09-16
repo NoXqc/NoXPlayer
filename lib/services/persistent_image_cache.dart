@@ -34,7 +34,8 @@ import 'package:path_provider/path_provider.dart';
 /// field whenever it isn't given a `cacheManager:` of its own, so no
 /// individual call site needs to change.
 final CacheManager persistentImageCacheManager = CacheManager(
-  Config('noxplayer_posters', fileSystem: _PersistentFileSystem('noxplayer_posters')),
+  Config('noxplayer_posters',
+      fileSystem: _PersistentFileSystem('noxplayer_posters')),
 );
 
 /// Identical to `flutter_cache_manager`'s own default `IOFileSystem`,
@@ -42,7 +43,8 @@ final CacheManager persistentImageCacheManager = CacheManager(
 /// [getTemporaryDirectory] — see this file's doc comment for why that's
 /// the one thing that actually needed to change.
 class _PersistentFileSystem implements FileSystem {
-  _PersistentFileSystem(this._cacheKey) : _fileDir = _createDirectory(_cacheKey);
+  _PersistentFileSystem(this._cacheKey)
+      : _fileDir = _createDirectory(_cacheKey);
 
   final String _cacheKey;
   final Future<Directory> _fileDir;

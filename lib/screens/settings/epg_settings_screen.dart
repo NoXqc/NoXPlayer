@@ -30,26 +30,41 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen> {
     _refreshInterval = context.read<StorageService>().getRefreshInterval();
   }
 
+  /// Every enabled playlist's EPG source — same shape `main.dart`'s own
+  /// app-wide auto-refresh timer builds fresh on each tick.
+  List<EpgSource> _sources() {
+    final playlist = context.read<PlaylistManager>();
+    return playlist.profiles
+        .where((p) => p.enabled && (p.epgUrl?.isNotEmpty ?? false))
+        .map((p) => (
+              url: p.epgUrl!,
+              knownChannelIds: playlist.knownChannelIdsFor(p.id)
+            ))
+        .toList();
+  }
+
   Future<void> _applyInterval(int minutes) async {
     setState(() => _refreshInterval = minutes);
     final storage = context.read<StorageService>();
     await storage.setRefreshInterval(minutes);
-    final epgUrl = storage.getEpgUrl();
-    if (epgUrl != null && epgUrl.isNotEmpty && mounted) {
-      context.read<EpgService>().startAutoRefresh(minutes, epgUrl);
+    if (mounted) {
+      context.read<EpgService>().startAutoRefresh(minutes, _sources);
     }
   }
 
   Future<void> _updateNow() async {
-    final storage = context.read<StorageService>();
-    final url = storage.getEpgUrl();
-    if (url == null || url.isEmpty) {
+    final sources = _sources();
+    if (sources.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No EPG URL set yet — add a playlist first.')),
+        const SnackBar(
+            content: Text('No EPG URL set yet — add a playlist first.')),
       );
       return;
     }
-    await context.read<EpgService>().refresh(url);
+    final epg = context.read<EpgService>();
+    for (final source in sources) {
+      await epg.refresh(source.url, knownChannelIds: source.knownChannelIds);
+    }
   }
 
   Future<void> _clearCache() async {
@@ -62,7 +77,8 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen> {
     // CatalogDatabase's doc comment.
     await catalogDb.clearAll();
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cache cleared.')));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text('Cache cleared.')));
     // clearCache() also wipes the last-full-sync timestamp, so the
     // catalog is unconditionally stale right after this — reported
     // directly as confusing when clearing cache showed no reaction at
@@ -78,53 +94,58 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen> {
   Widget build(BuildContext context) {
     final epg = context.watch<EpgService>();
 
-    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
-      title: 'EPG',
-      body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            DropdownButtonFormField<int>(
-              initialValue: _refreshInterval,
-              decoration: const InputDecoration(
-                labelText: 'Auto-refresh interval',
-                border: OutlineInputBorder(),
+    return withTvThemeIfNeeded(
+        context,
+        (context) => SettingsScaffold(
+              title: 'EPG',
+              body: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  DropdownButtonFormField<int>(
+                    initialValue: _refreshInterval,
+                    decoration: const InputDecoration(
+                      labelText: 'Auto-refresh interval',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: AppConstants.refreshIntervalOptions
+                        .map((m) => DropdownMenuItem(
+                            value: m, child: Text('$m minutes')))
+                        .toList(),
+                    onChanged: (value) {
+                      if (value != null) _applyInterval(value);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    epg.lastUpdated == null
+                        ? 'EPG never updated'
+                        : 'EPG last updated: ${DateFormat('yyyy-MM-dd HH:mm').format(epg.lastUpdated!)}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    icon: epg.isLoading
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.calendar_month),
+                    label: const Text('Update EPG Now'),
+                    onPressed: epg.isLoading ? null : _updateNow,
+                  ),
+                  const Divider(height: 32),
+                  OutlinedButton(
+                    onPressed: _clearCache,
+                    child: const Text('Clear Cache'),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Clears the cached EPG and catalog data — playlist source, '
+                    'favorites, and group visibility are kept.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ),
-              items: AppConstants.refreshIntervalOptions
-                  .map((m) => DropdownMenuItem(value: m, child: Text('$m minutes')))
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) _applyInterval(value);
-              },
-            ),
-            const SizedBox(height: 12),
-            Text(
-              epg.lastUpdated == null
-                  ? 'EPG never updated'
-                  : 'EPG last updated: ${DateFormat('yyyy-MM-dd HH:mm').format(epg.lastUpdated!)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              icon: epg.isLoading
-                  ? const SizedBox(
-                      width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.calendar_month),
-              label: const Text('Update EPG Now'),
-              onPressed: epg.isLoading ? null : _updateNow,
-            ),
-            const Divider(height: 32),
-            OutlinedButton(
-              onPressed: _clearCache,
-              child: const Text('Clear Cache'),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Clears the cached EPG and catalog data — playlist source, '
-              'favorites, and group visibility are kept.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
-    ));
+            ));
   }
 }

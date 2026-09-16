@@ -7,8 +7,8 @@ import '../../utils/tv_theme.dart';
 import '../../widgets/settings_scaffold.dart';
 import 'add_playlist_screen.dart';
 import 'check_updates_screen.dart';
-import 'content_manager_screen.dart';
 import 'epg_settings_screen.dart';
+import 'playlist_manager_screen.dart';
 import 'theme_screen.dart';
 
 /// Settings entry point — a plain menu of destinations instead of one long
@@ -46,10 +46,10 @@ class SettingsMenuScreen extends StatelessWidget {
                   ),
                   _MenuTile(
                     icon: Icons.video_library_outlined,
-                    title: 'Content Manager',
-                    subtitle: 'Playlist info, groups, enable/disable',
+                    title: 'Playlist Manager',
+                    subtitle: 'Every playlist: login, groups, enable/disable',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const ContentManagerScreen())),
+                        builder: (_) => const PlaylistManagerScreen())),
                   ),
                   _MenuTile(
                     icon: Icons.palette_outlined,

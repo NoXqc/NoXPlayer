@@ -51,7 +51,11 @@ class _SearchScreenState extends State<SearchScreen> {
   Timer? _searchDebounce;
 
   static const _scopes = ['TV', 'Movies', 'TV Shows'];
-  static const _scopeLabels = {'TV': 'Live TV', 'Movies': 'Movies', 'TV Shows': 'TV Shows'};
+  static const _scopeLabels = {
+    'TV': 'Live TV',
+    'Movies': 'Movies',
+    'TV Shows': 'TV Shows'
+  };
 
   @override
   void initState() {
@@ -88,13 +92,22 @@ class _SearchScreenState extends State<SearchScreen> {
       });
       return;
     }
-    _searchDebounce = Timer(const Duration(milliseconds: 250), () => _runDbSearch(trimmed));
+    _searchDebounce =
+        Timer(const Duration(milliseconds: 250), () => _runDbSearch(trimmed));
   }
 
   Future<void> _runDbSearch(String query) async {
     final db = context.read<CatalogDatabase>();
-    final vod = await db.searchVod(query);
-    final series = await db.searchSeries(query);
+    // Restricted to enabled playlists — a disabled playlist's stale
+    // cached rows shouldn't surface in search results.
+    final playlistIds = context
+        .read<PlaylistManager>()
+        .profiles
+        .where((p) => p.enabled && p.isXtream)
+        .map((p) => p.id)
+        .toList();
+    final vod = await db.searchVod(query, playlistIds);
+    final series = await db.searchSeries(query, playlistIds);
     // The query field may have moved on to something else (or been
     // cleared) by the time this actually returns — a stale result
     // overwriting a newer/empty one would flash wrong results on screen.
@@ -111,7 +124,9 @@ class _SearchScreenState extends State<SearchScreen> {
   void _recordSearch(String query) {
     if (query.trim().isEmpty) return;
     context.read<StorageService>().addRecentSearch(query).then((_) {
-      if (mounted) setState(() => _recentSearches = context.read<StorageService>().getRecentSearches());
+      if (mounted)
+        setState(() => _recentSearches =
+            context.read<StorageService>().getRecentSearches());
     });
   }
 
@@ -133,18 +148,21 @@ class _SearchScreenState extends State<SearchScreen> {
     // explanation of the bug this avoids.
     await context.read<PlaybackService>().play(channel);
     if (!mounted) return;
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerScreen(channel: channel)));
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => PlayerScreen(channel: channel)));
   }
 
   void _openSeries(XtreamSeries series) {
     _recordSearch(_query);
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => SeriesDetailScreen(series: series)));
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => SeriesDetailScreen(series: series)));
   }
 
   void _toggleSeriesFavorite(BuildContext context, XtreamSeries series) {
     context.read<PlaylistManager>().toggleSeriesFavorite(series);
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(series.isFavorite ? 'Added to Favorites' : 'Removed from Favorites'),
+      content: Text(
+          series.isFavorite ? 'Added to Favorites' : 'Removed from Favorites'),
       duration: const Duration(seconds: 2),
     ));
   }
@@ -160,91 +178,107 @@ class _SearchScreenState extends State<SearchScreen> {
     // Scaffold approach as SettingsScaffold itself (not that widget
     // directly: this AppBar's title is a live TextField, not a plain
     // string, which SettingsScaffold's API doesn't have a slot for).
-    return withTvThemeIfNeeded(context, (context) => Stack(
-      children: [
-        const Positioned.fill(child: SettingsGradientBackground()),
-        Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: TextField(
-          controller: _controller,
-          autofocus: true,
-          textInputAction: TextInputAction.search,
-          decoration: InputDecoration(
-            hintText: 'Search ${_scopeLabels[_scope]}...',
-            border: InputBorder.none,
-            hintStyle: TextStyle(color: Theme.of(context).appBarTheme.foregroundColor?.withValues(alpha: 0.6)),
-          ),
-          style: TextStyle(
-            color: Theme.of(context).appBarTheme.foregroundColor,
-            fontSize: 18,
-          ),
-          onChanged: _onQueryChanged,
-          onSubmitted: _recordSearch,
-        ),
-        actions: [
-          if (_query.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.clear),
-              onPressed: () {
-                _searchDebounce?.cancel();
-                setState(() {
-                  _controller.clear();
-                  _query = '';
-                  _dbVodResults = null;
-                  _dbSeriesResults = null;
-                });
-              },
-            ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
+    return withTvThemeIfNeeded(
+        context,
+        (context) => Stack(
               children: [
-                for (final scope in _scopes) ...[
-                  ChoiceChip(
-                    label: Text(_scopeLabels[scope]!),
-                    selected: _scope == scope,
-                    onSelected: (_) => setState(() => _scope = scope),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-              ],
-            ),
-          ),
-          if (playlist.isXtream && playlist.isWarmingCatalog && _scope != 'TV')
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Row(
-                children: [
-                  const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Still loading the full catalog in the background '
-                      '(${playlist.warmCatalogDone}/${playlist.warmCatalogTotal} categories) — '
-                      'some results may not show up yet.',
-                      style: Theme.of(context).textTheme.bodySmall,
+                const Positioned.fill(child: SettingsGradientBackground()),
+                Scaffold(
+                  backgroundColor: Colors.transparent,
+                  appBar: AppBar(
+                    backgroundColor: Colors.transparent,
+                    elevation: 0,
+                    title: TextField(
+                      controller: _controller,
+                      autofocus: true,
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
+                        hintText: 'Search ${_scopeLabels[_scope]}...',
+                        border: InputBorder.none,
+                        hintStyle: TextStyle(
+                            color: Theme.of(context)
+                                .appBarTheme
+                                .foregroundColor
+                                ?.withValues(alpha: 0.6)),
+                      ),
+                      style: TextStyle(
+                        color: Theme.of(context).appBarTheme.foregroundColor,
+                        fontSize: 18,
+                      ),
+                      onChanged: _onQueryChanged,
+                      onSubmitted: _recordSearch,
                     ),
+                    actions: [
+                      if (_query.isNotEmpty)
+                        IconButton(
+                          icon: const Icon(Icons.clear),
+                          onPressed: () {
+                            _searchDebounce?.cancel();
+                            setState(() {
+                              _controller.clear();
+                              _query = '';
+                              _dbVodResults = null;
+                              _dbSeriesResults = null;
+                            });
+                          },
+                        ),
+                    ],
                   ),
-                ],
-              ),
-            ),
-          const Divider(height: 1),
-          Expanded(child: _buildResults(context, playlist, q)),
-        ],
-      ),
-        ),
-      ],
-    ));
+                  body: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        child: Row(
+                          children: [
+                            for (final scope in _scopes) ...[
+                              ChoiceChip(
+                                label: Text(_scopeLabels[scope]!),
+                                selected: _scope == scope,
+                                onSelected: (_) =>
+                                    setState(() => _scope = scope),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                          ],
+                        ),
+                      ),
+                      if (playlist.isXtream &&
+                          playlist.isWarmingCatalog &&
+                          _scope != 'TV')
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 4),
+                          child: Row(
+                            children: [
+                              const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2)),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  'Still loading the full catalog in the background '
+                                  '(${playlist.warmCatalogDone}/${playlist.warmCatalogTotal} categories) — '
+                                  'some results may not show up yet.',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const Divider(height: 1),
+                      Expanded(child: _buildResults(context, playlist, q)),
+                    ],
+                  ),
+                ),
+              ],
+            ));
   }
 
-  Widget _buildResults(BuildContext context, PlaylistManager playlist, String q) {
+  Widget _buildResults(
+      BuildContext context, PlaylistManager playlist, String q) {
     if (q.isEmpty) {
       if (_recentSearches.isEmpty) {
         return Center(child: Text('Search ${_scopeLabels[_scope]}'));
@@ -256,7 +290,8 @@ class _SearchScreenState extends State<SearchScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text('Recent searches', style: Theme.of(context).textTheme.labelLarge),
+                  child: Text('Recent searches',
+                      style: Theme.of(context).textTheme.labelLarge),
                 ),
                 TextButton(
                   onPressed: () {
@@ -279,7 +314,9 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     if (_scope == 'TV') {
-      final matches = playlist.channels.where((c) => c.name.toLowerCase().contains(q)).toList();
+      final matches = playlist.channels
+          .where((c) => c.name.toLowerCase().contains(q))
+          .toList();
       if (matches.isEmpty) return const _NothingFound();
       return ListView.builder(
         itemCount: matches.length,
@@ -299,7 +336,8 @@ class _SearchScreenState extends State<SearchScreen> {
       // keeps scanning the in-memory list directly.
       if (playlist.isXtream) {
         final matches = _dbVodResults;
-        if (matches == null) return const Center(child: CircularProgressIndicator());
+        if (matches == null)
+          return const Center(child: CircularProgressIndicator());
         if (matches.isEmpty) return const _NothingFound();
         return ListView.builder(
           itemCount: matches.length,
@@ -311,8 +349,10 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         );
       }
-      final matches =
-          playlist.visibleChannels(category: 'vod').where((c) => c.name.toLowerCase().contains(q)).toList();
+      final matches = playlist
+          .visibleChannels(category: 'vod')
+          .where((c) => c.name.toLowerCase().contains(q))
+          .toList();
       if (matches.isEmpty) return const _NothingFound();
       return ListView.builder(
         itemCount: matches.length,
@@ -328,7 +368,8 @@ class _SearchScreenState extends State<SearchScreen> {
     // TV Shows
     if (playlist.isXtream) {
       final matches = _dbSeriesResults;
-      if (matches == null) return const Center(child: CircularProgressIndicator());
+      if (matches == null)
+        return const Center(child: CircularProgressIndicator());
       if (matches.isEmpty) return const _NothingFound();
       return ListView.builder(
         itemCount: matches.length,
@@ -345,7 +386,8 @@ class _SearchScreenState extends State<SearchScreen> {
                     ? CachedNetworkImage(
                         imageUrl: s.coverUrl!,
                         fit: BoxFit.contain,
-                        errorWidget: (_, __, ___) => const Icon(Icons.video_library),
+                        errorWidget: (_, __, ___) =>
+                            const Icon(Icons.video_library),
                       )
                     : const Icon(Icons.video_library),
               ),
@@ -360,7 +402,10 @@ class _SearchScreenState extends State<SearchScreen> {
       );
     }
 
-    final matches = playlist.visibleChannels(category: 'series').where((c) => c.name.toLowerCase().contains(q)).toList();
+    final matches = playlist
+        .visibleChannels(category: 'series')
+        .where((c) => c.name.toLowerCase().contains(q))
+        .toList();
     if (matches.isEmpty) return const _NothingFound();
     return ListView.builder(
       itemCount: matches.length,
@@ -385,7 +430,8 @@ class _NothingFound extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.search_off, size: 48, color: Theme.of(context).disabledColor),
+            Icon(Icons.search_off,
+                size: 48, color: Theme.of(context).disabledColor),
             const SizedBox(height: 12),
             const Text('Nothing found'),
           ],

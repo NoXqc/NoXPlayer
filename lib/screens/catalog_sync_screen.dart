@@ -34,17 +34,24 @@ class CatalogSyncBody extends StatelessWidget {
               final total = playlist.warmCatalogTotal;
               final done = playlist.warmCatalogDone;
               final hasProgress = total > 0;
-              final fraction = hasProgress ? (done / total).clamp(0.0, 1.0) : null;
+              final fraction =
+                  hasProgress ? (done / total).clamp(0.0, 1.0) : null;
               final phase = playlist.loadingPhase ??
-                  (hasProgress ? 'Loading movies & TV shows...' : 'Connecting to server...');
+                  (hasProgress
+                      ? 'Loading movies & TV shows...'
+                      : 'Connecting to server...');
               return Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.cloud_sync_outlined, color: Colors.white70, size: 48),
+                  const Icon(Icons.cloud_sync_outlined,
+                      color: Colors.white70, size: 48),
                   const SizedBox(height: 24),
                   const Text(
                     'Updating Content',
-                    style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -61,14 +68,16 @@ class CatalogSyncBody extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text(
                       '$done / $total categories',
-                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                      style:
+                          const TextStyle(color: Colors.white38, fontSize: 12),
                     ),
                   ],
                   if (footer != null) ...[
                     const SizedBox(height: 32),
                     Text(
                       footer!,
-                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                      style:
+                          const TextStyle(color: Colors.white38, fontSize: 12),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -122,7 +131,8 @@ class CatalogSyncScreen extends StatelessWidget {
 ///
 /// Returns true if the sync actually ran (false if cancelled), so
 /// callers know whether to show their own "content updated" toast.
-Future<bool> confirmAndRunFullCatalogSync(BuildContext context, PlaylistManager playlist) async {
+Future<bool> confirmAndRunFullCatalogSync(
+    BuildContext context, PlaylistManager playlist) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -137,8 +147,14 @@ Future<bool> confirmAndRunFullCatalogSync(BuildContext context, PlaylistManager 
       // focus). ModeButton is this app's established fix: a solid fill
       // *only* on real focus.
       actions: [
-        ModeButton(label: 'Cancel', selected: false, onTap: () => Navigator.of(context).pop(false)),
-        ModeButton(label: 'Update', selected: false, onTap: () => Navigator.of(context).pop(true)),
+        ModeButton(
+            label: 'Cancel',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(false)),
+        ModeButton(
+            label: 'Update',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(true)),
       ],
     ),
   );
@@ -148,7 +164,9 @@ Future<bool> confirmAndRunFullCatalogSync(BuildContext context, PlaylistManager 
   if (!context.mounted) return false;
   final navigator = Navigator.of(context);
   unawaited(navigator.push(MaterialPageRoute(
-    builder: (_) => Scaffold(backgroundColor: Colors.black, body: CatalogSyncBody(playlist: playlist)),
+    builder: (_) => Scaffold(
+        backgroundColor: Colors.black,
+        body: CatalogSyncBody(playlist: playlist)),
   )));
   await syncFuture;
   if (context.mounted) navigator.pop();

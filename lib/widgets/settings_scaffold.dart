@@ -21,7 +21,12 @@ import '../services/app_preferences.dart';
 /// own `Scaffold` directly, the same "fix the look once, centrally"
 /// approach `SectionLabel`/`_SelectableRow` already use elsewhere.
 class SettingsScaffold extends StatelessWidget {
-  const SettingsScaffold({super.key, required this.title, required this.body, this.actions, this.bottom});
+  const SettingsScaffold(
+      {super.key,
+      required this.title,
+      required this.body,
+      this.actions,
+      this.bottom});
 
   final String title;
   final Widget body;

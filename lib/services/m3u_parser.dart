@@ -17,17 +17,20 @@ class M3uParser {
   /// entries can be well over 100MB of text, and materializing that as a
   /// single contiguous allocation is what triggers an OutOfMemoryError on
   /// phones with a capped per-app heap (Android's default ~256MB ceiling).
-  static Future<List<Channel>> fetchAndParse(String url) async {
+  static Future<List<Channel>> fetchAndParse(String url,
+      {required String playlistId}) async {
     final client = http.Client();
     try {
       final request = http.Request('GET', Uri.parse(url));
-      final streamedResponse = await client.send(request).timeout(const Duration(seconds: 30));
+      final streamedResponse =
+          await client.send(request).timeout(const Duration(seconds: 30));
 
       if (streamedResponse.statusCode != 200) {
-        throw Exception('Failed to load playlist (HTTP ${streamedResponse.statusCode})');
+        throw Exception(
+            'Failed to load playlist (HTTP ${streamedResponse.statusCode})');
       }
 
-      final state = _ParseState();
+      final state = _ParseState(playlistId: playlistId);
       await streamedResponse.stream
           .transform(const Utf8Decoder(allowMalformed: true))
           .transform(const LineSplitter())
@@ -43,8 +46,8 @@ class M3uParser {
   /// Parses an already-in-memory M3U string. Kept for convenience (tests,
   /// small local files) — [fetchAndParse] is what avoids buffering large
   /// remote playlists whole.
-  static List<Channel> parse(String content) {
-    final state = _ParseState();
+  static List<Channel> parse(String content, {required String playlistId}) {
+    final state = _ParseState(playlistId: playlistId);
     for (final line in content.split(RegExp(r'\r?\n'))) {
       state.consumeLine(line);
     }
@@ -56,6 +59,9 @@ class M3uParser {
 /// same logic can drive either a fully-buffered string ([M3uParser.parse])
 /// or a live stream ([M3uParser.fetchAndParse]).
 class _ParseState {
+  _ParseState({required this.playlistId});
+
+  final String playlistId;
   final List<Channel> channels = [];
   Map<String, String> _attrs = {};
   String? _pendingName;
@@ -72,7 +78,9 @@ class _ParseState {
         _attrs[match.group(1)!.toLowerCase()] = match.group(2)!;
       }
       final commaIndex = line.lastIndexOf(',');
-      _pendingName = commaIndex != -1 ? line.substring(commaIndex + 1).trim() : 'Unnamed Channel';
+      _pendingName = commaIndex != -1
+          ? line.substring(commaIndex + 1).trim()
+          : 'Unnamed Channel';
       _pendingSubtitleUrl = null;
     } else if (line.startsWith('#EXTVLCOPT:sub-file=')) {
       _pendingSubtitleUrl = line.split('=').skip(1).join('=').trim();
@@ -87,13 +95,18 @@ class _ParseState {
       if (_pendingName != null) {
         _autoId++;
         final tvgId = _attrs['tvg-id'];
-        final id = (tvgId != null && tvgId.isNotEmpty) ? tvgId : 'ch_$_autoId';
+        final rawId =
+            (tvgId != null && tvgId.isNotEmpty) ? tvgId : 'ch_$_autoId';
         final groupTitle = _attrs['group-title'];
         channels.add(
           Channel(
-            id: id,
+            id: '$playlistId::$rawId',
+            rawId: rawId,
+            playlistId: playlistId,
             name: _pendingName!,
-            group: (groupTitle != null && groupTitle.isNotEmpty) ? groupTitle : 'Uncategorized',
+            group: (groupTitle != null && groupTitle.isNotEmpty)
+                ? groupTitle
+                : 'Uncategorized',
             url: line,
             logoUrl: _attrs['tvg-logo'],
             subtitleUrl: _pendingSubtitleUrl,

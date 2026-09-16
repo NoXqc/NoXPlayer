@@ -57,7 +57,8 @@ Future<void> _configureImageCache() async {
   final info = await DeviceMemoryService.getMemoryInfo();
   final int maxBytes;
   if (info == null || info.isLowRamDevice || info.totalMemGB < 2.0) {
-    maxBytes = 100 << 20; // 100MB — the tier this session already validated as stable
+    maxBytes =
+        100 << 20; // 100MB — the tier this session already validated as stable
   } else if (info.totalMemGB < 3.0) {
     maxBytes = 175 << 20;
   } else if (info.totalMemGB < 4.0) {
@@ -88,7 +89,8 @@ class NoxIptvApp extends StatefulWidget {
   State<NoxIptvApp> createState() => _NoxIptvAppState();
 }
 
-class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateMixin {
+class _NoxIptvAppState extends State<NoxIptvApp>
+    with SingleTickerProviderStateMixin {
   late final StorageService _storage;
   late final CatalogDatabase _catalogDb;
   late final AppPreferences _preferences;
@@ -185,11 +187,8 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
       _catalogDb = CatalogDatabase();
 
       _playlistManager = PlaylistManager(_storage, _catalogDb);
-      // See EpgService._knownChannelIds' doc comment — this is what lets
-      // a huge shared EPG source get filtered down to just the channels
-      // this playlist actually has instead of retaining all of them.
-      _epgService = EpgService(_storage, knownChannelIds: () => _playlistManager.channels.map((c) => c.id).toSet());
-      _playbackService = PlaybackService(_storage, _preferences);
+      _epgService = EpgService(_storage);
+      _playbackService = PlaybackService(_storage, _playlistManager);
 
       // Restores category lists (small, fast regardless of catalog size —
       // see that method's doc comment for why live channels/category
@@ -246,12 +245,26 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
       // network fetch — no artificial delay, this is genuinely the same
       // work that would otherwise happen the moment you opened either tab.
       if (!didSync && _playlistManager.isXtream) {
-        final vodNames = _playlistManager.vodGroups.where((g) => !g.isHidden).map((g) => g.title);
-        final seriesNames = _playlistManager.seriesGroups.where((g) => !g.isHidden).map((g) => g.title);
-        await Future.wait([
-          _playlistManager.ensureCategoriesLoaded(vodNames, 'vod'),
-          _playlistManager.ensureCategoriesLoaded(seriesNames, 'series'),
-        ]);
+        // One pre-load pass per enabled Xtream playlist — group names
+        // alone aren't enough to route to the right playlist's session
+        // once more than one can exist (two playlists could share a
+        // category name), so this groups the merged vod/seriesGroups
+        // lists by their own `playlistId` first.
+        final futures = <Future<void>>[];
+        for (final profile in _playlistManager.profiles
+            .where((p) => p.enabled && p.isXtream)) {
+          final vodNames = _playlistManager.vodGroups
+              .where((g) => g.playlistId == profile.id && !g.isHidden)
+              .map((g) => g.title);
+          final seriesNames = _playlistManager.seriesGroups
+              .where((g) => g.playlistId == profile.id && !g.isHidden)
+              .map((g) => g.title);
+          futures.add(_playlistManager.ensureCategoriesLoaded(
+              profile.id, vodNames, 'vod'));
+          futures.add(_playlistManager.ensureCategoriesLoaded(
+              profile.id, seriesNames, 'series'));
+        }
+        await Future.wait(futures);
       }
 
       // A fixed floor on top of the real work above — on a very small
@@ -266,17 +279,15 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
       if (didSync) {
         // The toast needs the real MaterialApp's ScaffoldMessengerKey,
         // which doesn't exist until the tree above actually builds.
-        WidgetsBinding.instance.addPostFrameCallback((_) => _showToast('Content updated'));
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => _showToast('Content updated'));
       }
       unawaited(_autoResumeLastChannel());
 
       unawaited(_epgService.init());
       unawaited(_playbackService.init());
 
-      final epgUrl = _storage.getEpgUrl();
-      if (epgUrl != null && epgUrl.isNotEmpty) {
-        _epgService.startAutoRefresh(_storage.getRefreshInterval(), epgUrl);
-      }
+      _epgService.startAutoRefresh(_storage.getRefreshInterval(), _epgSources);
     } catch (e) {
       // Surfaces any unexpected startup failure as a retryable screen
       // instead of leaving the app stuck on the splash spinner forever.
@@ -315,6 +326,33 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
     }
   }
 
+  /// The oldest last-full-sync timestamp among enabled Xtream playlists —
+  /// the most stale one is what actually drove [needsFullSync] to true,
+  /// so it's the most representative "how out of date is this" answer to
+  /// show on the confirm-before-syncing prompt. Null if none has ever
+  /// synced at all.
+  DateTime? _oldestLastFullSyncAt() {
+    DateTime? oldest;
+    for (final profile
+        in _playlistManager.profiles.where((p) => p.enabled && p.isXtream)) {
+      final at = _storage.getLastFullSyncAt(profile.id);
+      if (at == null) return null;
+      if (oldest == null || at.isBefore(oldest)) oldest = at;
+    }
+    return oldest;
+  }
+
+  /// Every enabled playlist's EPG source, evaluated fresh on each
+  /// `EpgService.startAutoRefresh` tick — see `EpgService.refresh`'s doc
+  /// comment for why each playlist's own channel ids matter here.
+  List<EpgSource> _epgSources() => _playlistManager.profiles
+      .where((p) => p.enabled && (p.epgUrl?.isNotEmpty ?? false))
+      .map((p) => (
+            url: p.epgUrl!,
+            knownChannelIds: _playlistManager.knownChannelIdsFor(p.id)
+          ))
+      .toList();
+
   void _showToast(String message) {
     _scaffoldMessengerKey.currentState?.showSnackBar(
       SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
@@ -334,7 +372,8 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.error_outline, color: Colors.white70, size: 48),
+                  const Icon(Icons.error_outline,
+                      color: Colors.white70, size: 48),
                   const SizedBox(height: 16),
                   Text(
                     'Startup failed:\n$_bootstrapError',
@@ -342,7 +381,8 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
                     style: const TextStyle(color: Colors.white70),
                   ),
                   const SizedBox(height: 16),
-                  FilledButton(onPressed: _bootstrap, child: const Text('Retry')),
+                  FilledButton(
+                      onPressed: _bootstrap, child: const Text('Retry')),
                 ],
               ),
             ),
@@ -353,7 +393,7 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
 
     if (_syncPromptPending) {
       return CatalogSyncPromptScreen(
-        lastSyncedAt: _storage.getLastFullSyncAt(),
+        lastSyncedAt: _oldestLastFullSyncAt(),
         onRespond: _respondToSyncPrompt,
       );
     }
@@ -384,7 +424,8 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: const Color(0xFFE91E8C).withValues(alpha: glow),
+                            color:
+                                const Color(0xFFE91E8C).withValues(alpha: glow),
                             blurRadius: 40,
                             spreadRadius: 6,
                           ),
@@ -410,11 +451,15 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
                       ).createShader(bounds),
                       child: const Text(
                         AppConstants.appName,
-                        style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold),
                       ),
                     ),
                     const SizedBox(height: 20),
-                    Text(_splashStatus, style: const TextStyle(color: Colors.white70)),
+                    Text(_splashStatus,
+                        style: const TextStyle(color: Colors.white70)),
                   ],
                 );
               },
@@ -455,19 +500,22 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
             themeMode: prefs.themeMode,
             theme: ThemeData(
               brightness: Brightness.light,
-              colorScheme: buildPaletteColorScheme(prefs.palette, Brightness.light),
+              colorScheme:
+                  buildPaletteColorScheme(prefs.palette, Brightness.light),
               useMaterial3: true,
             ),
             darkTheme: ThemeData(
               brightness: Brightness.dark,
-              colorScheme: buildPaletteColorScheme(prefs.palette, Brightness.dark),
+              colorScheme:
+                  buildPaletteColorScheme(prefs.palette, Brightness.dark),
               useMaterial3: true,
             ),
             home: Builder(
               builder: (context) {
                 final useTv = prefs.layoutMode == 'tv' ||
                     (prefs.layoutMode == 'auto' &&
-                        MediaQuery.of(context).size.width >= AppConstants.tvLayoutWidthThreshold);
+                        MediaQuery.of(context).size.width >=
+                            AppConstants.tvLayoutWidthThreshold);
                 return useTv ? const TvHomeScreen() : const HomeScreen();
               },
             ),

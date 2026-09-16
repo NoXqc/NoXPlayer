@@ -34,7 +34,25 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.30.0 — New "Minimalist" theme (Settings > Theme): flat black '
+      '3.31.0 — Real multi-playlist support: add unlimited playlists in '
+      'the new Playlist Manager (Settings), each with its own login, '
+      'enable/disable, delete, and full-catalog-sync schedule. Enabled '
+      'playlists\' Live TV/Movies/TV Shows merge together in the main '
+      'browse screens, with a highlighted divider row marking where one '
+      'playlist\'s groups end and the next begin. Group Management now '
+      'runs per playlist, so you can e.g. keep one provider\'s Live TV '
+      'and hide its VOD, while doing the opposite for a second provider. '
+      'Favorites stay a single shared list across every playlist. Also '
+      'fixes: the "hold to resume" bubble on a backgrounded live channel '
+      'now shows the channel name with a clearer "Hold ▶ to resume" '
+      'hint underneath instead of one easily-truncated line; four '
+      'confirmation dialogs (leaving Group Management, deleting a '
+      'playlist, the update-install permission prompt) where the D-pad '
+      'selection on the darker button was nearly invisible; and the '
+      'Minimalist theme\'s color swatch in Settings > Theme, which used '
+      'to render identically to the real Purple/Magenta swatch. '
+      'Also includes everything from 3.30.0 — New "Minimalist" theme '
+      '(Settings > Theme): flat black '
       'background, white lettering, and a real frosted-glass blur on the '
       'D-pad focus highlight, while the NoXPlayer wordmark stays purple/'
       'magenta. Also fixes Add Playlist\'s Smart Add screen not scrolling '
@@ -61,6 +79,15 @@ class AppConstants {
       'and rounded, bordered live-preview pane.';
 
   // SharedPreferences keys.
+  //
+  // keyM3uUrl/keyEpgUrl/keyXtreamServer.../keyPlaylistMode/
+  // keyPlaylistEnabled/the global keyHiddenGroups/keyFavoritedGroups/
+  // keySyncFrequencyDays/keyLastFullSyncAt below are LEGACY —
+  // pre-multi-playlist, single global scalars. Nothing writes them
+  // anymore; they're read exactly once, by
+  // PlaylistManager._migrateLegacySinglePlaylist, to build the one
+  // PlaylistProfile an upgrading install starts with. Kept (not deleted)
+  // as a cheap fallback during early rollout of that migration.
   static const String keyM3uUrl = 'nox_m3u_url';
   static const String keyEpgUrl = 'nox_epg_url';
   static const String keyRefreshInterval = 'nox_refresh_interval_minutes';
@@ -70,26 +97,45 @@ class AppConstants {
   static const String keyHiddenGroups = 'nox_hidden_groups';
   static const String keyFavoritedGroups = 'nox_favorited_groups';
   static const String keyRecentSearches = 'nox_recent_searches';
+
+  /// The JSON-encoded `List<PlaylistProfile>` — the whole multi-playlist
+  /// list lives in one SharedPreferences string, same "small scalar" shape
+  /// as everything else in this section (unlike the EPG cache, which is
+  /// genuinely large and lives in a disk cache file instead — see
+  /// cacheFileEpgPrograms below). Deliberately NOT a cache file: this has
+  /// to survive `StorageService.clearCache()`, which wipes the whole
+  /// OS-reclaimable cache directory on purpose.
+  static const String keyPlaylists = 'nox_playlists';
+
+  /// One-time guard so `PlaylistManager._migrateLegacySinglePlaylist` only
+  /// ever runs once per install, even across many future launches.
+  static const String keyMigratedToMultiPlaylist =
+      'nox_migrated_multi_playlist';
   static const String keyEpgCache = 'nox_epg_cache';
   static const String keyEpgLastUpdated = 'nox_epg_last_updated';
   static const String keyLastChannelId = 'nox_last_channel_id';
   static const String keyLastPositionPrefix = 'nox_last_position_';
   static const String keyLastDurationPrefix = 'nox_last_duration_';
 
-  /// When the last full catalog sync (every non-hidden VOD/series
-  /// category's items, not just category lists) completed — drives
-  /// whether a launch needs to block behind a fresh sync or can open
-  /// straight into an already-populated catalog. See
-  /// PlaylistManager.needsFullSync/runFullCatalogSync.
+  /// LEGACY global scalar — when the last full catalog sync completed.
+  /// Per-playlist now (`'${keyLastFullSyncAt}_$playlistId'`, read/written
+  /// via `StorageService.getLastFullSyncAt(playlistId)`/
+  /// `setLastFullSyncAt`); this bare key is only read once, during
+  /// migration. See PlaylistManager.needsFullSync/runFullCatalogSync.
   static const String keyLastFullSyncAt = 'nox_last_full_sync_at';
 
-  /// User-configurable "how often" for the above — Content Manager exposes
-  /// this as a dropdown (same pattern as [refreshIntervalOptions] below).
+  /// LEGACY global scalar — "how often" for the above. Per-playlist now,
+  /// as `PlaylistProfile.syncFrequencyDays`; this bare key is only read
+  /// once, during migration. `defaultSyncFrequencyDays`/
+  /// `syncFrequencyDaysOptions` below are still live — they're
+  /// `PlaylistProfile.syncFrequencyDays`'s default value and the dropdown
+  /// options in its detail-panel UI, not tied to this legacy key.
   static const String keySyncFrequencyDays = 'nox_sync_frequency_days';
   static const int defaultSyncFrequencyDays = 3;
   static const List<int> syncFrequencyDaysOptions = [1, 3, 7, 10, 14];
 
-  // Playlist source mode: 'm3u' (direct URL) or 'xtream' (Xtream Codes XC API).
+  // LEGACY global scalars — one playlist's mode/login, superseded by
+  // PlaylistProfile. Only read once, during migration.
   static const String keyPlaylistMode = 'nox_playlist_mode';
   static const String keyXtreamServer = 'nox_xtream_server';
   static const String keyXtreamUsername = 'nox_xtream_username';
@@ -104,9 +150,11 @@ class AppConstants {
   /// there's no fully reliable automatic signal for "this is a TV".
   static const String keyLayoutMode = 'nox_layout_mode';
 
-  /// "Enable/disable playlist" — lets a user free up a provider's
-  /// connection slot for another device without touching the cached
-  /// catalog or credentials on this one.
+  /// LEGACY global scalar — "enable/disable playlist" (freeing a
+  /// provider's connection slot for another device without touching
+  /// cached catalog/credentials). Per-playlist now, as
+  /// `PlaylistProfile.enabled`; this bare key is only read once, during
+  /// migration.
   static const String keyPlaylistEnabled = 'nox_playlist_enabled';
 
   /// Duo-tone accent palettes offered in Settings > Theme — replaced the

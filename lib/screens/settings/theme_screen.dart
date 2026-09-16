@@ -26,73 +26,81 @@ class ThemeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final prefs = context.watch<AppPreferences>();
 
-    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
-      title: 'Theme',
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TvSwitchListTile(
-            title: const Text('Dark theme'),
-            value: prefs.themeMode == ThemeMode.dark,
-            onChanged: (value) => prefs.setThemeMode(value ? ThemeMode.dark : ThemeMode.light),
-          ),
-          TvSwitchListTile(
-            title: const Text('Show clock'),
-            subtitle: const Text('Displays the current time in the top bar'),
-            value: prefs.showClock,
-            onChanged: prefs.setShowClock,
-          ),
-          const SizedBox(height: 16),
-          const SectionLabel('Theme color'),
-          const SizedBox(height: 4),
-          Text(
-            'Drives the TV browse screens (tabs, groups, catalog) — those '
-            'always stay dark regardless of the switch above, the same '
-            'way most streaming apps do.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              for (final option in AppConstants.cyberpunkPalettes)
-                _PaletteSwatch(
-                  palette: option,
-                  selected: prefs.palette.id == option.id,
-                  onTap: () => prefs.setPalette(option),
-                ),
-            ],
-          ),
-          const Divider(height: 32),
-          const SectionLabel('Layout'),
-          const SizedBox(height: 4),
-          Text(
-            'Auto picks phone vs TV layout by screen size — force one if '
-            'your box isn\'t detected correctly.',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 8),
-          // Was a `SegmentedButton` — replaced since its internal focus
-          // traversal doesn't follow plain document order the way a
-          // regular row of widgets does.
-          Row(
-            children: [
-              for (final option in const [('auto', 'Auto'), ('phone', 'Phone'), ('tv', 'TV')]) ...[
-                Expanded(
-                  child: ModeButton(
-                    label: option.$2,
-                    selected: prefs.layoutMode == option.$1,
-                    onTap: () => prefs.setLayoutMode(option.$1),
+    return withTvThemeIfNeeded(
+        context,
+        (context) => SettingsScaffold(
+              title: 'Theme',
+              body: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  TvSwitchListTile(
+                    title: const Text('Dark theme'),
+                    value: prefs.themeMode == ThemeMode.dark,
+                    onChanged: (value) => prefs
+                        .setThemeMode(value ? ThemeMode.dark : ThemeMode.light),
                   ),
-                ),
-                if (option.$1 != 'tv') const SizedBox(width: 12),
-              ],
-            ],
-          ),
-        ],
-      ),
-    ));
+                  TvSwitchListTile(
+                    title: const Text('Show clock'),
+                    subtitle:
+                        const Text('Displays the current time in the top bar'),
+                    value: prefs.showClock,
+                    onChanged: prefs.setShowClock,
+                  ),
+                  const SizedBox(height: 16),
+                  const SectionLabel('Theme color'),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Drives the TV browse screens (tabs, groups, catalog) — those '
+                    'always stay dark regardless of the switch above, the same '
+                    'way most streaming apps do.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      for (final option in AppConstants.cyberpunkPalettes)
+                        _PaletteSwatch(
+                          palette: option,
+                          selected: prefs.palette.id == option.id,
+                          onTap: () => prefs.setPalette(option),
+                        ),
+                    ],
+                  ),
+                  const Divider(height: 32),
+                  const SectionLabel('Layout'),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Auto picks phone vs TV layout by screen size — force one if '
+                    'your box isn\'t detected correctly.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  // Was a `SegmentedButton` — replaced since its internal focus
+                  // traversal doesn't follow plain document order the way a
+                  // regular row of widgets does.
+                  Row(
+                    children: [
+                      for (final option in const [
+                        ('auto', 'Auto'),
+                        ('phone', 'Phone'),
+                        ('tv', 'TV')
+                      ]) ...[
+                        Expanded(
+                          child: ModeButton(
+                            label: option.$2,
+                            selected: prefs.layoutMode == option.$1,
+                            onTap: () => prefs.setLayoutMode(option.$1),
+                          ),
+                        ),
+                        if (option.$1 != 'tv') const SizedBox(width: 12),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ));
   }
 }
 
@@ -140,19 +148,44 @@ class _PaletteSwatchState extends State<_PaletteSwatch> {
               height: 48,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
+                // Minimalist keeps its own `primary`/`secondary` as
+                // purple/magenta deliberately (see CyberpunkPalette
+                // .isMinimal's doc comment — that's the wordmark's own
+                // accent, not this theme's real look), so the swatch here
+                // needs its own black/white gradient instead of those
+                // fields directly — reported directly as otherwise
+                // rendering identically to the actual Purple/Magenta
+                // swatch right next to it, with nothing to tell them
+                // apart in the picker itself.
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [widget.palette.primary, widget.palette.secondary],
+                  colors: widget.palette.isMinimal
+                      ? [Colors.black, Colors.white]
+                      : [widget.palette.primary, widget.palette.secondary],
                 ),
                 border: widget.selected
-                    ? Border.all(color: Theme.of(context).colorScheme.onSurface, width: 3)
+                    ? Border.all(
+                        color: Theme.of(context).colorScheme.onSurface,
+                        width: 3)
                     : null,
                 boxShadow: _focused
-                    ? [const BoxShadow(color: Colors.white, blurRadius: 0, spreadRadius: 3)]
+                    ? [
+                        const BoxShadow(
+                            color: Colors.white, blurRadius: 0, spreadRadius: 3)
+                      ]
                     : null,
               ),
-              child: widget.selected ? const Icon(Icons.check, color: Colors.white) : null,
+              // A plain white checkmark disappears against the white half
+              // of Minimalist's new black/white gradient — a dark shadow
+              // keeps it visible regardless of which half it lands on,
+              // same "readable over anything behind it" fix already used
+              // for text over the Live TV list's video preview elsewhere.
+              child: widget.selected
+                  ? const Icon(Icons.check, color: Colors.white, shadows: [
+                      Shadow(color: Colors.black, blurRadius: 4),
+                    ])
+                  : null,
             ),
             const SizedBox(height: 4),
             Text(

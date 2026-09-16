@@ -68,6 +68,15 @@ class TvHomeScreen extends StatefulWidget {
 
 class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   String _tab = 'TV';
+
+  /// Group identity is `(playlistId, title)` now that more than one
+  /// playlist can exist (two providers can share a category name), but
+  /// this field itself stays a bare title — every place that reads it
+  /// back either re-resolves its playlistId itself when it actually needs
+  /// one (Favorites-tab selections, via `_favoriteGroupCategory`) or
+  /// merges across playlists by title on purpose (Live TV's
+  /// `visibleChannels`/`_effectiveLiveGroup`, an accepted edge case if two
+  /// playlists ever share an exact live group name).
   String? _selectedGroup;
   String? _focusedTitle;
   String? _focusedImageUrl;
@@ -117,28 +126,37 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
   static const _pendingHideDuration = Duration(seconds: 30);
 
-  void _startPendingHide(String title) {
-    _pendingHideTimers[title]?.cancel();
-    setState(() => _pendingHideGroups.add(title));
-    _pendingHideTimers[title] = Timer(_pendingHideDuration, () {
-      _pendingHideTimers.remove(title);
+  /// `_pendingHideGroups`/`_pendingHideTimers`/`_groupRowKeys` are all
+  /// keyed by this composite instead of a bare title — two playlists can
+  /// share a category name, and a bare-title key would let one playlist's
+  /// "pending hide"/browse-row-scroll-target state bleed into another's
+  /// same-named group.
+  String _groupKey(String playlistId, String title) => '$playlistId::$title';
+
+  void _startPendingHide(String playlistId, String title) {
+    final key = _groupKey(playlistId, title);
+    _pendingHideTimers[key]?.cancel();
+    setState(() => _pendingHideGroups.add(key));
+    _pendingHideTimers[key] = Timer(_pendingHideDuration, () {
+      _pendingHideTimers.remove(key);
       if (!mounted) return;
-      setState(() => _pendingHideGroups.remove(title));
-      context.read<PlaylistManager>().setGroupHidden(title, true);
+      setState(() => _pendingHideGroups.remove(key));
+      context.read<PlaylistManager>().setGroupHidden(playlistId, title, true);
     });
   }
 
-  void _cancelPendingHide(String title) {
-    _pendingHideTimers.remove(title)?.cancel();
-    setState(() => _pendingHideGroups.remove(title));
+  void _cancelPendingHide(String playlistId, String title) {
+    final key = _groupKey(playlistId, title);
+    _pendingHideTimers.remove(key)?.cancel();
+    setState(() => _pendingHideGroups.remove(key));
   }
 
   /// Long-press menu for a real category row — "add/remove favorites"
   /// (the whole group's channels, not one at a time) and hide/cancel-hide.
-  Future<void> _showGroupOptions(String title) async {
+  Future<void> _showGroupOptions(String playlistId, String title) async {
     final playlist = context.read<PlaylistManager>();
-    final isFavorited = playlist.isGroupFavorited(title);
-    final isPending = _pendingHideGroups.contains(title);
+    final isFavorited = playlist.isGroupFavorited(playlistId, title);
+    final isPending = _pendingHideGroups.contains(_groupKey(playlistId, title));
 
     final choice = await showDialog<String>(
       context: context,
@@ -165,16 +183,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
     switch (choice) {
       case 'favorite':
-        playlist.setGroupFavorited(title, !isFavorited);
+        playlist.setGroupFavorited(playlistId, title, !isFavorited);
       case 'hide':
-        _startPendingHide(title);
+        _startPendingHide(playlistId, title);
       case 'cancel_hide':
-        _cancelPendingHide(title);
+        _cancelPendingHide(playlistId, title);
     }
   }
 
-  GlobalKey _keyForGroup(String title) =>
-      _groupRowKeys.putIfAbsent(title, () => GlobalKey());
+  GlobalKey _keyForGroup(String playlistId, String title) => _groupRowKeys
+      .putIfAbsent(_groupKey(playlistId, title), () => GlobalKey());
 
   /// A plain [FocusNode] for the *first* poster of each category row —
   /// separate from the scroll position entirely. Scrolling a row into
@@ -194,9 +212,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// navigation elsewhere is unaffected.
   final Map<String, FocusNode> _groupFirstPosterFocusNodes = {};
 
-  FocusNode _firstPosterFocusNodeForGroup(String title) =>
-      _groupFirstPosterFocusNodes.putIfAbsent(
-          title, () => FocusNode(debugLabel: 'row-$title-first'));
+  FocusNode _firstPosterFocusNodeForGroup(String playlistId, String title) =>
+      _groupFirstPosterFocusNodes.putIfAbsent(_groupKey(playlistId, title),
+          () => FocusNode(debugLabel: 'row-$title-first'));
 
   /// First card of the Continue Watching row, when present — that row has
   /// no group title to key off of, so it needs its own dedicated node
@@ -322,7 +340,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// the tab (the separate "Favorites" tab still exists too).
   static const _favoritesGroupSentinel = '__favorites__';
 
-  void _onGroupSelected(String? group) {
+  /// [playlistId] is required for a real group selection (from a
+  /// `_GroupRow`, which always has its own `M3uGroup.playlistId` on
+  /// hand), null for the sentinels ("All", "Favourites") — Favorites-tab
+  /// selections re-resolve their own playlistId via
+  /// [_favoriteGroupCategory] instead of trusting the caller, since that
+  /// column mixes bare titles pulled from every playlist's favorited
+  /// groups together with no single caller-known playlist.
+  void _onGroupSelected(String? group, {String? playlistId}) {
     context.read<PlaybackService>().clearSilentResume();
     setState(() => _selectedGroup = group);
     if (group == null || group == _favoritesGroupSentinel) return;
@@ -334,27 +359,40 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       // it's favorited, so a movies/series pick still needs the normal
       // on-demand fetch. A live group's channels are always already
       // loaded (Live TV has no lazy-loading), so nothing to do there.
-      final category =
+      final resolved =
           _favoriteGroupCategory(context.read<PlaylistManager>(), group);
-      if (category == 'vod' || category == 'series') {
-        context.read<PlaylistManager>().ensureCategoryLoaded(group, category!);
+      if (resolved == null) return;
+      if (resolved.category == 'vod' || resolved.category == 'series') {
+        context.read<PlaylistManager>().ensureCategoryLoaded(
+            resolved.playlistId, group, resolved.category);
       }
       return;
     }
     context
         .read<PlaylistManager>()
-        .ensureCategoryLoaded(group, _categoryForTab(_tab));
+        .ensureCategoryLoaded(playlistId!, group, _categoryForTab(_tab));
   }
 
-  /// Which tab a favorited group actually belongs to — the Favorites
-  /// tab's groups column mixes all three group kinds together (live, vod,
-  /// series), so a plain `_categoryForTab(_tab)` (always "tv" there)
-  /// isn't enough to know how to load or render a given selection. Null
-  /// if the group was un-favorited/removed since the list was built.
-  String? _favoriteGroupCategory(PlaylistManager playlist, String title) {
-    if (playlist.vodGroups.any((g) => g.title == title)) return 'vod';
-    if (playlist.seriesGroups.any((g) => g.title == title)) return 'series';
-    if (playlist.tvGroups.any((g) => g.title == title)) return 'tv';
+  /// Which tab a favorited group actually belongs to, and which playlist
+  /// it came from — the Favorites tab's groups column mixes all three
+  /// group kinds (and every playlist's own groups) together, so a plain
+  /// `_categoryForTab(_tab)` (always "tv" there) isn't enough to know how
+  /// to load or render a given selection. Null if the group was
+  /// un-favorited/removed since the list was built. Search order (vod,
+  /// series, tv) matches the original single-playlist behavior; the first
+  /// match wins if (rare) two playlists share a favorited group's title.
+  ({String category, String playlistId})? _favoriteGroupCategory(
+      PlaylistManager playlist, String title) {
+    for (final g in playlist.vodGroups) {
+      if (g.title == title) return (category: 'vod', playlistId: g.playlistId);
+    }
+    for (final g in playlist.seriesGroups) {
+      if (g.title == title)
+        return (category: 'series', playlistId: g.playlistId);
+    }
+    for (final g in playlist.tvGroups) {
+      if (g.title == title) return (category: 'tv', playlistId: g.playlistId);
+    }
     return null;
   }
 
@@ -373,17 +411,17 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   bool _hasContinueWatchingRow(String idPrefix) {
     final playback = context.read<PlaybackService>();
     final storage = context.read<StorageService>();
-    return playback.recentlyPlayed.any(
-        (c) => c.id.startsWith(idPrefix) && storage.getLastPosition(c.id) > 0);
+    return playback.recentlyPlayed.any((c) =>
+        c.rawId.startsWith(idPrefix) && storage.getLastPosition(c.id) > 0);
   }
 
   /// Movies/TV Shows groups column: a fast way to find a category, not a
   /// filter — scrolls that category's row into view in the existing
   /// catalog instead of hiding everything else, since the browse view
   /// already organizes everything by category via its row headers.
-  Future<void> _scrollToBrowseGroup(String title) async {
+  Future<void> _scrollToBrowseGroup(String playlistId, String title) async {
     final playlist = context.read<PlaylistManager>();
-    playlist.ensureCategoryLoaded(title, _categoryForTab(_tab));
+    playlist.ensureCategoryLoaded(playlistId, title, _categoryForTab(_tab));
     if (!_browseScrollController.hasClients) return;
 
     final isMovies = _tab == 'Movies';
@@ -394,7 +432,11 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             .toList()
         : playlist.seriesGroups
             .where((g) =>
-                !g.isHidden && playlist.visibleSeries(g.title).isNotEmpty)
+                !g.isHidden &&
+                playlist
+                    .visibleSeries(
+                        playlistId: g.playlistId, categoryName: g.title)
+                    .isNotEmpty)
             .map((g) => g.title)
             .toList();
     var index = titles.indexOf(title);
@@ -415,7 +457,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // card was focused from an earlier visit (possibly a different row
     // entirely), which then dragged the scroll right back to wherever
     // that was.
-    if (mounted) _firstPosterFocusNodeForGroup(title).requestFocus();
+    if (mounted)
+      _firstPosterFocusNodeForGroup(playlistId, title).requestFocus();
   }
 
   /// Right-arrow from the groups rail (browse tabs) when the user hasn't
@@ -429,18 +472,18 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   void _enterBrowseColumn() {
     final playlist = context.read<PlaylistManager>();
     final isMovies = _tab == 'Movies';
-    final titles = isMovies
-        ? playlist.vodGroups
-            .where((g) => !g.isHidden && g.channels.isNotEmpty)
-            .map((g) => g.title)
-        : playlist.seriesGroups
-            .where((g) =>
-                !g.isHidden && playlist.visibleSeries(g.title).isNotEmpty)
-            .map((g) => g.title);
+    final groups = isMovies
+        ? playlist.vodGroups.where((g) => !g.isHidden && g.channels.isNotEmpty)
+        : playlist.seriesGroups.where((g) =>
+            !g.isHidden &&
+            playlist
+                .visibleSeries(playlistId: g.playlistId, categoryName: g.title)
+                .isNotEmpty);
     final targetNode = _hasContinueWatchingRow(isMovies ? 'xt_vod_' : 'xt_ep_')
         ? _continueWatchingFirstFocusNode
-        : titles.isNotEmpty
-            ? _firstPosterFocusNodeForGroup(titles.first)
+        : groups.isNotEmpty
+            ? _firstPosterFocusNodeForGroup(
+                groups.first.playlistId, groups.first.title)
             : null;
     if (targetNode == null) {
       _col2Scope.requestFocus();
@@ -732,16 +775,23 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         MaterialPageRoute(builder: (_) => SearchScreen(initialScope: _tab)));
   }
 
+  /// Re-syncs every enabled playlist — Xtream ones via a full catalog
+  /// sync (one confirm covers all of them), M3U ones via a plain re-fetch
+  /// of their flat list.
   Future<void> _refreshPlaylist(BuildContext context) async {
-    final storage = context.read<StorageService>();
     final playlist = context.read<PlaylistManager>();
-    if (playlist.isXtream) {
+    if (playlist.profiles.isEmpty) return;
+
+    if (playlist.profiles.any((p) => p.enabled && p.isXtream)) {
       // Shared with Settings > Clear Cache — see its doc comment for why
       // this needed to become a reusable helper rather than living here.
       final didSync = await confirmAndRunFullCatalogSync(context, playlist);
       if (didSync && mounted) _showUpdateToast();
-      return;
     }
+
+    final m3uProfiles =
+        playlist.profiles.where((p) => p.enabled && !p.isXtream).toList();
+    if (m3uProfiles.isEmpty || !context.mounted) return;
 
     // M3U mode: no per-category concept to re-sync, just a plain re-fetch
     // of the flat list — still confirms first since a stray remote press
@@ -750,7 +800,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Update content now?'),
-        content: const Text('Re-checks your playlist URL for new content.'),
+        content:
+            const Text('Re-checks your M3U playlist URL(s) for new content.'),
         actions: [
           ModeButton(
               label: 'Cancel',
@@ -764,8 +815,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       ),
     );
     if (confirmed != true || !context.mounted) return;
-    final url = storage.getM3uUrl();
-    if (url != null && url.isNotEmpty) await playlist.loadFromUrl(url);
+    for (final profile in m3uProfiles) {
+      await playlist.loadPlaylist(profile.id);
+    }
   }
 
   /// Some Xtream providers cap concurrent connections per login — just
@@ -803,7 +855,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   }
 
   void _hardExit() {
-    context.read<AppPreferences>().setPlaylistEnabled(false);
+    // Disables every currently-enabled playlist (not just one, now that
+    // more than one can exist) — see this button's own dialog copy:
+    // freeing up "this login" for another device meant *every* login
+    // this device was actively holding a connection slot on.
+    final playlist = context.read<PlaylistManager>();
+    for (final profile in playlist.profiles.where((p) => p.enabled)) {
+      playlist.setPlaylistEnabled(profile.id, false);
+    }
     SystemNavigator.pop();
   }
 
@@ -1079,6 +1138,39 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     );
   }
 
+  /// Builds each visible group's row via [rowBuilder], inserting a
+  /// [_PlaylistDividerRow] wherever two consecutive groups belong to
+  /// different playlists — see that widget's doc comment. Only used by
+  /// the Live TV and Movies/TV Shows groups columns (per the user's own
+  /// scoping: "the same in movies and shows... in favourites it don't
+  /// matter" — that column mixes all three group kinds by design already,
+  /// so a playlist boundary isn't the distinction that matters there).
+  /// No-ops back to a plain row list when every group belongs to the same
+  /// playlist — the ordinary single-playlist case, nothing to mark.
+  List<Widget> _groupRowsWithPlaylistDividers(
+    List<M3uGroup> groups,
+    PlaylistManager playlist, {
+    required bool collapsed,
+    required Widget Function(M3uGroup group) rowBuilder,
+  }) {
+    final distinctPlaylistIds = groups.map((g) => g.playlistId).toSet();
+    final widgets = <Widget>[];
+    String? lastPlaylistId;
+    for (final group in groups) {
+      if (distinctPlaylistIds.length > 1 &&
+          lastPlaylistId != null &&
+          group.playlistId != lastPlaylistId) {
+        widgets.add(_PlaylistDividerRow(
+          name: playlist.playlistNameFor(group.playlistId),
+          collapsed: collapsed,
+        ));
+      }
+      lastPlaylistId = group.playlistId;
+      widgets.add(rowBuilder(group));
+    }
+    return widgets;
+  }
+
   Widget _buildGroupsColumn(PlaylistManager playlist,
       {required bool collapsed}) {
     if (_tab == 'Favorites') {
@@ -1086,7 +1178,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       // filter now: the names of groups favorited as a whole (see
       // _showGroupOptions), so you can jump to just one group's favorites
       // instead of everything landing in one flat list.
-      final favoritedGroupTitles = playlist.favoritedGroups.toList()..sort();
+      final favoritedGroupTitles = playlist.allFavoritedGroupTitles.toList()
+        ..sort();
       return ListView(
         children: [
           _SelectableRow(
@@ -1134,18 +1227,25 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           fontSize: _groupFontSize,
           onTap: () => _onGroupSelected(_favoritesGroupSentinel),
         ),
-        for (final group in groups)
-          _GroupRow(
+        ..._groupRowsWithPlaylistDividers(
+          groups,
+          playlist,
+          collapsed: collapsed,
+          rowBuilder: (group) => _GroupRow(
             icon: Icons.grid_view_rounded,
             label: group.title,
             selected: effectiveGroup == group.title,
             collapsed: collapsed,
             fontSize: _groupFontSize,
-            isFavorited: playlist.isGroupFavorited(group.title),
-            isPendingHide: _pendingHideGroups.contains(group.title),
-            onTap: () => _onGroupSelected(group.title),
-            onLongPress: () => _showGroupOptions(group.title),
+            isFavorited:
+                playlist.isGroupFavorited(group.playlistId, group.title),
+            isPendingHide: _pendingHideGroups
+                .contains(_groupKey(group.playlistId, group.title)),
+            onTap: () =>
+                _onGroupSelected(group.title, playlistId: group.playlistId),
+            onLongPress: () => _showGroupOptions(group.playlistId, group.title),
           ),
+        ),
       ],
     );
   }
@@ -1160,14 +1260,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// the catalog below, at which point it shows up here too.
   Widget _buildBrowseGroupsColumn(PlaylistManager playlist,
       {required bool collapsed}) {
-    final titles = _tab == 'Movies'
-        ? playlist.vodGroups
-            .where((g) => !g.isHidden && g.channels.isNotEmpty)
-            .map((g) => g.title)
-        : playlist.seriesGroups
-            .where((g) =>
-                !g.isHidden && playlist.visibleSeries(g.title).isNotEmpty)
-            .map((g) => g.title);
+    final groups = (_tab == 'Movies'
+            ? playlist.vodGroups
+                .where((g) => !g.isHidden && g.channels.isNotEmpty)
+            : playlist.seriesGroups.where((g) =>
+                !g.isHidden &&
+                playlist
+                    .visibleSeries(
+                        playlistId: g.playlistId, categoryName: g.title)
+                    .isNotEmpty))
+        .toList();
 
     return ListView(
       children: [
@@ -1179,18 +1281,24 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           fontSize: _groupFontSize,
           onTap: _scrollBrowseToTop,
         ),
-        for (final title in titles)
-          _GroupRow(
+        ..._groupRowsWithPlaylistDividers(
+          groups,
+          playlist,
+          collapsed: collapsed,
+          rowBuilder: (group) => _GroupRow(
             icon: Icons.grid_view_rounded,
-            label: title,
+            label: group.title,
             selected: false,
             collapsed: collapsed,
             fontSize: _groupFontSize,
-            isFavorited: playlist.isGroupFavorited(title),
-            isPendingHide: _pendingHideGroups.contains(title),
-            onTap: () => _scrollToBrowseGroup(title),
-            onLongPress: () => _showGroupOptions(title),
+            isFavorited:
+                playlist.isGroupFavorited(group.playlistId, group.title),
+            isPendingHide: _pendingHideGroups
+                .contains(_groupKey(group.playlistId, group.title)),
+            onTap: () => _scrollToBrowseGroup(group.playlistId, group.title),
+            onLongPress: () => _showGroupOptions(group.playlistId, group.title),
           ),
+        ),
       ],
     );
   }
@@ -1241,9 +1349,11 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     if (_tab == 'Favorites' &&
         _selectedGroup != null &&
         _selectedGroup != _favoritesGroupSentinel) {
-      final category = _favoriteGroupCategory(playlist, _selectedGroup!);
-      if (category == 'vod' || category == 'series') {
-        return _buildFavoriteGroupCatalog(playlist, category!, _selectedGroup!);
+      final resolved = _favoriteGroupCategory(playlist, _selectedGroup!);
+      if (resolved != null &&
+          (resolved.category == 'vod' || resolved.category == 'series')) {
+        return _buildFavoriteGroupCatalog(
+            playlist, resolved.category, resolved.playlistId, _selectedGroup!);
       }
     }
 
@@ -1492,14 +1602,15 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
   /// Poster grid for a single favorited movies/TV-shows group, filling the
   /// same region the live list+video normally occupies on this tab.
-  Widget _buildFavoriteGroupCatalog(
-      PlaylistManager playlist, String category, String title) {
+  Widget _buildFavoriteGroupCatalog(PlaylistManager playlist, String category,
+      String playlistId, String title) {
     final storage = context.read<StorageService>();
     final Widget grid;
     if (category == 'vod') {
       final group = playlist.vodGroups.firstWhere(
-        (g) => g.title == title,
-        orElse: () => M3uGroup(title: title, channels: const []),
+        (g) => g.title == title && g.playlistId == playlistId,
+        orElse: () =>
+            M3uGroup(title: title, playlistId: playlistId, channels: const []),
       );
       grid = _posterGrid(
           group.channels,
@@ -1515,7 +1626,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 onFocusGained: () {},
               ));
     } else {
-      final series = playlist.visibleSeries(title);
+      final series =
+          playlist.visibleSeries(playlistId: playlistId, categoryName: title);
       grid = _posterGrid(
           series,
           (s) => PosterCard(
@@ -1650,7 +1762,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     final storage = context.read<StorageService>();
     var items = playback.recentlyPlayed
         .where((c) =>
-            c.id.startsWith(idPrefix) && storage.getLastPosition(c.id) > 0)
+            c.rawId.startsWith(idPrefix) && storage.getLastPosition(c.id) > 0)
         .toList();
 
     // Episodes: one card per *show*, not per episode. recentlyPlayed is
@@ -1692,6 +1804,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             onTap: () => asSeries
                 ? _openSeries(XtreamSeries(
                     seriesId: c.seriesId!,
+                    playlistId: c.playlistId,
                     name: c.seriesName ?? c.name,
                     categoryId: '',
                     coverUrl: c.seriesCoverUrl,
@@ -1731,11 +1844,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // only shows categories that already have items, and the groups
     // quick-jump column requires the same — with nothing pre-populating
     // them, Movies/TV Shows was stuck forever on "Loading movie
-    // categories...".
-    unawaited(playlist.ensureCategoriesLoaded(
-      visibleGroups.where((g) => g.channels.isEmpty).map((g) => g.title),
-      'vod',
-    ));
+    // categories...". Grouped by playlistId first — ensureCategoriesLoaded
+    // now targets one specific playlist's session, so a merged list
+    // spanning more than one playlist needs one call per playlist.
+    for (final entry
+        in _groupByPlaylist(visibleGroups.where((g) => g.channels.isEmpty))) {
+      unawaited(playlist.ensureCategoriesLoaded(
+          entry.playlistId, entry.groups.map((g) => g.title), 'vod'));
+    }
     final groupsWithItems =
         visibleGroups.where((g) => g.channels.isNotEmpty).toList();
     final continueRow =
@@ -1745,14 +1861,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         if (continueRow != null) continueRow,
         for (final group in groupsWithItems)
           KeyedSubtree(
-            key: _keyForGroup(group.title),
+            key: _keyForGroup(group.playlistId, group.title),
             child: _CategoryRow<Channel>(
               // The real category size (which can be well past the
               // _maxItemsPerCategory render cap that group.channels.length
               // is limited to) when known — see
               // PlaylistManager.vodCategoryTotalCount's doc comment.
               title:
-                  '${group.title} (${playlist.vodCategoryTotalCount(group.title) ?? group.channels.length})',
+                  '${group.title} (${playlist.vodCategoryTotalCount(group.playlistId, group.title) ?? group.channels.length})',
               items: group.channels,
               itemBuilder: (c, index) => PosterCard(
                 title: c.name,
@@ -1761,14 +1877,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 watched: storage.isFullyWatched(c.id),
                 progressFraction: storage.getWatchedFraction(c.id),
                 focusNode: index == 0
-                    ? _firstPosterFocusNodeForGroup(group.title)
+                    ? _firstPosterFocusNodeForGroup(
+                        group.playlistId, group.title)
                     : null,
                 isFavorite: c.isFavorite,
                 onToggleFavorite: () => _toggleFavoriteWithFeedback(context, c),
                 onTap: () => _openMovie(c),
                 onFocusGained: () {
                   _updateBrowseFocus(c.name, c.logoUrl);
-                  _ensureRowVisible(_keyForGroup(group.title));
+                  _ensureRowVisible(
+                      _keyForGroup(group.playlistId, group.title));
                 },
               ),
             ),
@@ -1776,6 +1894,19 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       ],
       emptyText: groupsWithItems.isEmpty ? 'Loading movie categories...' : null,
     );
+  }
+
+  /// Splits a merged group list back out by playlist — used wherever an
+  /// operation (`ensureCategoriesLoaded`) targets one specific playlist's
+  /// session and needs one call per playlist rather than one call for a
+  /// list that might span several.
+  Iterable<({String playlistId, List<M3uGroup> groups})> _groupByPlaylist(
+      Iterable<M3uGroup> groups) {
+    final byId = <String, List<M3uGroup>>{};
+    for (final g in groups) {
+      byId.putIfAbsent(g.playlistId, () => []).add(g);
+    }
+    return byId.entries.map((e) => (playlistId: e.key, groups: e.value));
   }
 
   Widget _buildShowsBrowse(PlaylistManager playlist) {
@@ -1792,37 +1923,41 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // See the identical kick-off in _buildMoviesBrowse (concurrency-capped
     // via ensureCategoriesLoaded — a plain per-category loop here fired
     // every category's network fetch at once on a brand-new provider,
-    // confirmed to cause a real ANR).
-    unawaited(playlist.ensureCategoriesLoaded(
-      groups
-          .where((g) => playlist.visibleSeries(g.title).isEmpty)
-          .map((g) => g.title),
-      'series',
-    ));
+    // confirmed to cause a real ANR). Grouped by playlist — see
+    // _groupByPlaylist's doc comment.
+    final emptyGroups = groups.where((g) => playlist
+        .visibleSeries(playlistId: g.playlistId, categoryName: g.title)
+        .isEmpty);
+    for (final entry in _groupByPlaylist(emptyGroups)) {
+      unawaited(playlist.ensureCategoriesLoaded(
+          entry.playlistId, entry.groups.map((g) => g.title), 'series'));
+    }
     for (final group in groups) {
-      final items = playlist.visibleSeries(group.title);
+      final items = playlist.visibleSeries(
+          playlistId: group.playlistId, categoryName: group.title);
       if (items.isEmpty) continue;
       rows.add(KeyedSubtree(
-        key: _keyForGroup(group.title),
+        key: _keyForGroup(group.playlistId, group.title),
         child: _CategoryRow<XtreamSeries>(
           // See _buildMoviesBrowse's identical fix for why this isn't
           // just items.length.
           title:
-              '${group.title} (${playlist.seriesCategoryTotalCount(group.title) ?? items.length})',
+              '${group.title} (${playlist.seriesCategoryTotalCount(group.playlistId, group.title) ?? items.length})',
           items: items,
           itemBuilder: (s, index) => PosterCard(
             title: s.name,
             imageUrl: s.coverUrl,
             rating: s.rating,
-            focusNode:
-                index == 0 ? _firstPosterFocusNodeForGroup(group.title) : null,
+            focusNode: index == 0
+                ? _firstPosterFocusNodeForGroup(group.playlistId, group.title)
+                : null,
             isFavorite: s.isFavorite,
             onToggleFavorite: () =>
                 _toggleSeriesFavoriteWithFeedback(context, s),
             onTap: () => _openSeries(s),
             onFocusGained: () {
               _updateBrowseFocus(s.name, s.coverUrl);
-              _ensureRowVisible(_keyForGroup(group.title));
+              _ensureRowVisible(_keyForGroup(group.playlistId, group.title));
             },
           ),
         ),
@@ -2052,6 +2187,49 @@ class _SelectableRowState extends State<_SelectableRow> {
                       ],
                     ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Marks a transition between two playlists' groups in a merged column —
+/// reported directly: with two playlists enabled, their groups landed in
+/// one flat list with nothing showing where one ended and the other
+/// began. Deliberately not focusable/selectable (this is a label, not a
+/// row) and not shown at all in [collapsed] mode — there's no room for a
+/// name in the icon-only strip, so it collapses to a plain divider line
+/// instead of trying to cram text in.
+class _PlaylistDividerRow extends StatelessWidget {
+  const _PlaylistDividerRow({required this.name, required this.collapsed});
+
+  final String name;
+  final bool collapsed;
+
+  @override
+  Widget build(BuildContext context) {
+    if (collapsed) {
+      return const Divider(height: 16, color: Colors.white24);
+    }
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 16, 8, 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: scheme.primary.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          name.isEmpty ? 'Playlist' : name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: scheme.primary,
+            fontWeight: FontWeight.bold,
+            fontSize: 12,
+            letterSpacing: 0.3,
           ),
         ),
       ),

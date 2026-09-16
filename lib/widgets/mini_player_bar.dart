@@ -49,18 +49,22 @@ class MiniPlayerBar extends StatelessWidget {
                               // gives FittedBox a well-defined size, video
                               // frame available or not.
                               child: AspectRatio(
-                                aspectRatio: value.aspectRatio == 0 ? 16 / 9 : value.aspectRatio,
+                                aspectRatio: value.aspectRatio == 0
+                                    ? 16 / 9
+                                    : value.aspectRatio,
                                 // See VideoPlayerPane's identical fix for
                                 // why this is keyed — without it, a
                                 // channel switch can leave the previous
                                 // channel's last frame frozen here on
                                 // hardware where an in-place platform-view
                                 // rebind doesn't fully take.
-                                child: VideoPlayerHdr(controller, key: ObjectKey(controller)),
+                                child: VideoPlayerHdr(controller,
+                                    key: ObjectKey(controller)),
                               ),
                             ),
                           )
-                        : const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                        : const Center(
+                            child: CircularProgressIndicator(strokeWidth: 2)),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -72,10 +76,14 @@ class MiniPlayerBar extends StatelessWidget {
                     ),
                   ),
                   IconButton(
-                    icon: Icon(value.isPlaying ? Icons.pause : Icons.play_arrow),
-                    onPressed: () => value.isPlaying ? controller.pause() : controller.play(),
+                    icon:
+                        Icon(value.isPlaying ? Icons.pause : Icons.play_arrow),
+                    onPressed: () => value.isPlaying
+                        ? controller.pause()
+                        : controller.play(),
                   ),
-                  IconButton(icon: const Icon(Icons.fullscreen), onPressed: onTap),
+                  IconButton(
+                      icon: const Icon(Icons.fullscreen), onPressed: onTap),
                   const SizedBox(width: 4),
                 ],
               );

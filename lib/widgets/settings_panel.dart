@@ -2,11 +2,10 @@ import 'package:flutter/material.dart';
 
 /// A semi-transparent, rounded card grouping a related set of settings
 /// rows — the "Login Details"/"Content Overview" panel treatment from the
-/// reference screenshot, applied to [ContentManagerScreen]'s existing
-/// sections (Playlist Info, Full Catalog Sync, This Device), which
-/// already had that exact logical grouping — they just used to render as
-/// plain text floating directly on the background with nothing to
-/// visually tie each group together.
+/// reference screenshot, originally applied to the old single-playlist
+/// `ContentManagerScreen`'s sections (Playlist Info, Full Catalog Sync,
+/// This Device) and now used the same way by each playlist's own detail
+/// screen in `PlaylistManagerScreen`.
 ///
 /// A flat white fill at low alpha (rather than `Theme.of(context)
 /// .colorScheme.surface`, which is a near-opaque dark color in this app's
@@ -14,7 +13,10 @@ import 'package:flutter/material.dart';
 /// gradient" — the gradient shows through, tinted, instead of the panel
 /// blocking it out with its own solid color.
 class SettingsPanel extends StatelessWidget {
-  const SettingsPanel({super.key, required this.children, this.padding = const EdgeInsets.all(16)});
+  const SettingsPanel(
+      {super.key,
+      required this.children,
+      this.padding = const EdgeInsets.all(16)});
 
   final List<Widget> children;
   final EdgeInsetsGeometry padding;
@@ -34,7 +36,8 @@ class SettingsPanel extends StatelessWidget {
       ),
       child: Padding(
         padding: padding,
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
+        child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: children),
       ),
     );
   }

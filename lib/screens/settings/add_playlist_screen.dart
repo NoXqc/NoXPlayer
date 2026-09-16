@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/playlist_profile.dart';
 import '../../services/epg_service.dart';
 import '../../services/playlist_manager.dart';
-import '../../services/storage_service.dart';
+import '../../utils/constants.dart';
 import '../../utils/smart_add_parser.dart';
 import '../../utils/tv_theme.dart';
 import '../../utils/xtream.dart';
@@ -23,7 +24,8 @@ import 'group_management_screen.dart';
 /// ends up half cut off with no way to bring it fully into view. Same
 /// fix/pattern as `TvHomeScreen`'s own `_ensureVisible` helper.
 void _ensureVisible(BuildContext context) {
-  Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 150), alignment: 0.5);
+  Scrollable.ensureVisible(context,
+      duration: const Duration(milliseconds: 150), alignment: 0.5);
 }
 
 /// Playlist source configuration — M3U URL or Xtream Codes login — plus the
@@ -31,7 +33,15 @@ void _ensureVisible(BuildContext context) {
 /// accounts, which decides what the catalog warm-up (see [PlaylistManager])
 /// actually fetches.
 class AddPlaylistScreen extends StatefulWidget {
-  const AddPlaylistScreen({super.key});
+  const AddPlaylistScreen({super.key, this.editPlaylistId});
+
+  /// Set when opened from `PlaylistManagerScreen`'s detail panel to edit
+  /// an existing playlist's login details, instead of adding a new one —
+  /// the whole reason this screen takes an *optional* id rather than being
+  /// two separate screens: it's the exact same form either way, just
+  /// prefilled from a `PlaylistProfile` instead of starting blank, and
+  /// saving updates that profile in place instead of creating a new one.
+  final String? editPlaylistId;
 
   @override
   State<AddPlaylistScreen> createState() => _AddPlaylistScreenState();
@@ -39,6 +49,7 @@ class AddPlaylistScreen extends StatefulWidget {
 
 class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   late String _mode; // 'm3u', 'xtream', or 'smart' (a UI-only tab — see _save)
+  late TextEditingController _nameController;
   late TextEditingController _m3uController;
   late TextEditingController _epgController;
   late TextEditingController _xtreamServerController;
@@ -78,11 +89,29 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   /// the one thing guaranteed to be reachable by the remote's select/OK
   /// button regardless of that, so field-to-field movement goes through
   /// `onSubmitted` + these explicit nodes instead of relying on arrow keys.
+  final _nameFocus = FocusNode();
   final _m3uFocus = FocusNode();
   final _epgFocus = FocusNode();
   final _serverFocus = FocusNode();
   final _usernameFocus = FocusNode();
   final _passwordFocus = FocusNode();
+
+  /// The three "Playlist source" mode buttons — targeted explicitly by
+  /// [_handleFieldEscapeKey] when Up escapes past the *first* tracked
+  /// field. Reported directly: relying on plain default traversal for
+  /// that specific boundary (the same thing this whole mechanism exists
+  /// to route around everywhere else — see this class's doc comment) left
+  /// Up from the URL/Server field going nowhere once the on-screen
+  /// keyboard was closed, with no way back to the mode row at all.
+  final _modeM3uFocus = FocusNode();
+  final _modeXtreamFocus = FocusNode();
+  final _modeSmartFocus = FocusNode();
+
+  FocusNode get _currentModeButtonFocus => switch (_mode) {
+        'xtream' => _modeXtreamFocus,
+        'smart' => _modeSmartFocus,
+        _ => _modeM3uFocus,
+      };
 
   /// Smart Add's paste box and Parse button — reported directly: with no
   /// `onSubmitted` wired here (unlike every other field on this screen),
@@ -114,7 +143,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   FocusNode? _lastFocusedTextField;
 
   void _trackTextFieldFocus() {
-    for (final node in [_m3uFocus, _epgFocus, _serverFocus, _usernameFocus, _passwordFocus]) {
+    for (final node in _allTrackedFields) {
       if (node.hasFocus) {
         _lastFocusedTextField = node;
         return;
@@ -130,18 +159,39 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   /// which is how two overlapping warm-up passes happened.
   bool _saving = false;
 
+  /// The profile being edited, or null when adding a brand-new playlist —
+  /// resolved once in [initState] rather than re-looked-up on every
+  /// build, since `_save` needs the *original* profile's `sortOrder`/
+  /// `createdAt` even after the user's edits change every other field.
+  PlaylistProfile? _editingProfile;
+
   @override
   void initState() {
     super.initState();
-    final storage = context.read<StorageService>();
-    _mode = storage.getPlaylistMode();
-    _m3uController = TextEditingController(text: storage.getM3uUrl() ?? '');
-    _epgController = TextEditingController(text: storage.getEpgUrl() ?? '');
-    _xtreamServerController = TextEditingController(text: storage.getXtreamServer() ?? '');
-    _xtreamUsernameController = TextEditingController(text: storage.getXtreamUsername() ?? '');
-    _xtreamPasswordController = TextEditingController(text: storage.getXtreamPassword() ?? '');
+    final editId = widget.editPlaylistId;
+    PlaylistProfile? existing;
+    if (editId != null) {
+      for (final p in context.read<PlaylistManager>().profiles) {
+        if (p.id == editId) {
+          existing = p;
+          break;
+        }
+      }
+    }
+    _editingProfile = existing;
+
+    _mode = existing?.mode ?? 'm3u';
+    _nameController = TextEditingController(text: existing?.name ?? '');
+    _m3uController = TextEditingController(text: existing?.m3uUrl ?? '');
+    _epgController = TextEditingController(text: existing?.epgUrl ?? '');
+    _xtreamServerController =
+        TextEditingController(text: existing?.xtreamServer ?? '');
+    _xtreamUsernameController =
+        TextEditingController(text: existing?.xtreamUsername ?? '');
+    _xtreamPasswordController =
+        TextEditingController(text: existing?.xtreamPassword ?? '');
     HardwareKeyboard.instance.addHandler(_handleFieldEscapeKey);
-    for (final node in [_m3uFocus, _epgFocus, _serverFocus, _usernameFocus, _passwordFocus]) {
+    for (final node in _allTrackedFields) {
       node.addListener(_trackTextFieldFocus);
     }
   }
@@ -149,15 +199,17 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleFieldEscapeKey);
-    for (final node in [_m3uFocus, _epgFocus, _serverFocus, _usernameFocus, _passwordFocus]) {
+    for (final node in _allTrackedFields) {
       node.removeListener(_trackTextFieldFocus);
     }
+    _nameController.dispose();
     _m3uController.dispose();
     _epgController.dispose();
     _xtreamServerController.dispose();
     _xtreamUsernameController.dispose();
     _xtreamPasswordController.dispose();
     _smartPasteController.dispose();
+    _nameFocus.dispose();
     _m3uFocus.dispose();
     _epgFocus.dispose();
     _serverFocus.dispose();
@@ -166,6 +218,9 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
     _addButtonFocus.dispose();
     _smartPasteFocus.dispose();
     _parseButtonFocus.dispose();
+    _modeM3uFocus.dispose();
+    _modeXtreamFocus.dispose();
+    _modeSmartFocus.dispose();
     super.dispose();
   }
 
@@ -198,19 +253,71 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
       return false;
     }
 
-    final fields = _mode == 'm3u' ? [_m3uFocus, _epgFocus] : [_serverFocus, _usernameFocus, _passwordFocus];
+    // The field actually being escaped — `current` when it's a tracked
+    // field, otherwise the last one this handler saw focused (see
+    // [_lastFocusedTextField]'s own doc comment for the real-hardware case
+    // that fallback covers).
     final current = FocusManager.instance.primaryFocus;
-    var index = fields.indexWhere((n) => n == current);
-    if (index < 0) index = fields.indexWhere((n) => n == _lastFocusedTextField);
+    final effective =
+        (current == _nameFocus || _allTrackedFields.contains(current))
+            ? current
+            : _lastFocusedTextField;
+
+    // Name is handled on its own, not folded into `fields` below — a whole
+    // "Playlist source" ModeButton row sits between it and the next
+    // tracked field, so it's never a *sibling* to escape between the way
+    // the fields below it are; it only ever has one real neighbor (the
+    // mode row), reached from either direction since it's the very first
+    // field on the screen.
+    if (effective == _nameFocus) {
+      _currentModeButtonFocus.requestFocus();
+      return true;
+    }
+
+    final fields = _mode == 'm3u'
+        ? [_m3uFocus, _epgFocus]
+        : [_serverFocus, _usernameFocus, _passwordFocus];
+    final index = fields.indexWhere((n) => n == effective);
     if (index < 0) return false;
 
     final delta = event.logicalKey == LogicalKeyboardKey.arrowDown ? 1 : -1;
     final next = index + delta;
-    if (next < 0 || next >= fields.length) return false;
+    if (next < 0) {
+      // Escaping UP past the first tracked field — this handler exists
+      // specifically because plain default arrow-key traversal doesn't
+      // reliably escape a focused text field at all (see this method's
+      // own doc comment), and that's exactly as true at this boundary as
+      // anywhere else. Reported directly: assuming default traversal
+      // would land on the mode row here left Up going nowhere once the
+      // on-screen keyboard was closed.
+      _currentModeButtonFocus.requestFocus();
+      return true;
+    }
+    if (next >= fields.length) {
+      // Escaping DOWN past the last tracked field — same reasoning as
+      // above, landing explicitly on Add Playlist instead of trusting
+      // default traversal to find it. Reported directly: stuck unable to
+      // reach Add Playlist at all once the keyboard was closed.
+      _addButtonFocus.requestFocus();
+      return true;
+    }
     fields[next].requestFocus();
     _lastFocusedTextField = fields[next];
     return true;
   }
+
+  /// Every text field this screen's escape mechanism tracks, across every
+  /// mode — used by [_handleFieldEscapeKey] to tell "a tracked field lost
+  /// bare focus but is still the logical last-known one" apart from "focus
+  /// moved somewhere this handler has no opinion about".
+  List<FocusNode> get _allTrackedFields => [
+        _nameFocus,
+        _m3uFocus,
+        _epgFocus,
+        _serverFocus,
+        _usernameFocus,
+        _passwordFocus
+      ];
 
   /// Smart Add has no save path of its own — parsing just fills the same
   /// controllers the Xtream tab reads from, so from here on it's really an
@@ -228,13 +335,16 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
     final result = parseSmartAddText(raw);
     if (result.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Couldn't find anything usable in that text.")),
+        const SnackBar(
+            content: Text("Couldn't find anything usable in that text.")),
       );
       return;
     }
     setState(() {
       _smartServerCandidates = result.serverCandidates;
-      _smartSelectedServer = result.serverCandidates.isNotEmpty ? result.serverCandidates.first : null;
+      _smartSelectedServer = result.serverCandidates.isNotEmpty
+          ? result.serverCandidates.first
+          : null;
       _xtreamServerController.text = _smartSelectedServer ?? '';
       _xtreamUsernameController.text = result.username;
       _xtreamPasswordController.text = result.password;
@@ -252,17 +362,30 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
 
   Future<void> _save() async {
     if (_saving) return;
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Playlist name is required.')),
+      );
+      return;
+    }
     setState(() => _saving = true);
     try {
-      final storage = context.read<StorageService>();
       final mode = _effectiveMode;
-      await storage.setPlaylistMode(mode);
+      final isEditing = _editingProfile != null;
+      // Fixed, identifiable, generated once and never reused for the
+      // lifetime of this playlist — every per-playlist prefs key, cache
+      // file, and catalog-database row this playlist owns is namespaced
+      // by this same id (see Channel.playlistId's doc comment).
+      final playlistId = _editingProfile?.id ??
+          DateTime.now().microsecondsSinceEpoch.toString();
 
       if (!mounted) return;
       final playlist = context.read<PlaylistManager>();
       final epg = context.read<EpgService>();
 
       String epgUrl;
+      PlaylistProfile profile;
 
       if (mode == 'xtream') {
         final server = _xtreamServerController.text.trim();
@@ -271,7 +394,9 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
 
         if (server.isEmpty || username.isEmpty || password.isEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Server, username, and password are all required.')),
+            const SnackBar(
+                content:
+                    Text('Server, username, and password are all required.')),
           );
           return;
         }
@@ -281,41 +406,72 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
         // playlist itself always goes through the real API, not a derived
         // M3U URL. xmltv.php is still used for EPG since that endpoint is
         // commonly left enabled even when get.php isn't.
-        epgUrl = XtreamHelper.buildEpgUrl(server: server, username: username, password: password);
-        await storage.setEpgUrl(epgUrl);
-
-        await playlist.loadFromXtream(server: server, username: username, password: password);
-
-        // A failed authenticate() (bad credentials, server down/blocked,
-        // account expired) sets playlist.error and returns normally rather
-        // than throwing — so this must be checked explicitly. Previously
-        // the success toast + pop-to-main-app below ran unconditionally,
-        // meaning a genuine auth failure still told the user "Playlist
-        // added" and dropped them on the empty-catalog home screen with no
-        // indication anything went wrong — confirmed directly against a
-        // backup server that was actually rejecting the credentials.
-        if (!mounted) return;
-        if (playlist.error != null) return;
-
-        await _promptDownloadScope(playlist);
+        epgUrl = XtreamHelper.buildEpgUrl(
+            server: server, username: username, password: password);
+        profile = PlaylistProfile(
+          id: playlistId,
+          name: name,
+          mode: 'xtream',
+          xtreamServer: server,
+          xtreamUsername: username,
+          xtreamPassword: password,
+          epgUrl: epgUrl,
+          enabled: _editingProfile?.enabled ?? true,
+          sortOrder: _editingProfile?.sortOrder ?? playlist.profiles.length,
+          syncFrequencyDays: _editingProfile?.syncFrequencyDays ??
+              AppConstants.defaultSyncFrequencyDays,
+          createdAt: _editingProfile?.createdAt ?? DateTime.now(),
+        );
       } else {
         final m3uUrl = _m3uController.text.trim();
         epgUrl = _epgController.text.trim();
-
-        await storage.setM3uUrl(m3uUrl);
-        await storage.setEpgUrl(epgUrl);
-
-        if (m3uUrl.isNotEmpty) {
-          await playlist.loadFromUrl(m3uUrl);
-          if (!mounted) return;
-          if (playlist.error != null) return;
+        if (m3uUrl.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('M3U playlist URL is required.')),
+          );
+          return;
         }
+        profile = PlaylistProfile(
+          id: playlistId,
+          name: name,
+          mode: 'm3u',
+          m3uUrl: m3uUrl,
+          epgUrl: epgUrl,
+          enabled: _editingProfile?.enabled ?? true,
+          sortOrder: _editingProfile?.sortOrder ?? playlist.profiles.length,
+          syncFrequencyDays: _editingProfile?.syncFrequencyDays ??
+              AppConstants.defaultSyncFrequencyDays,
+          createdAt: _editingProfile?.createdAt ?? DateTime.now(),
+        );
+      }
+
+      if (isEditing) {
+        await playlist.updatePlaylist(profile);
+      } else {
+        await playlist.addPlaylist(profile);
+      }
+      await playlist.loadPlaylist(playlistId);
+
+      // A failed authenticate() (bad credentials, server down/blocked,
+      // account expired) sets the session's error and returns normally
+      // rather than throwing — so this must be checked explicitly.
+      // `loadPlaylist` sets this playlist as the "foreground" session, so
+      // `playlist.error` here reflects specifically this add/edit, not any
+      // other playlist. Previously the success toast + pop-to-main-app
+      // below ran unconditionally, meaning a genuine auth failure still
+      // told the user "Playlist added" and dropped them on the empty-
+      // catalog home screen with no indication anything went wrong —
+      // confirmed directly against a backup server that was actually
+      // rejecting the credentials.
+      if (!mounted) return;
+      if (playlist.error != null) return;
+
+      if (!isEditing && mode == 'xtream') {
+        await _promptDownloadScope(playlist, playlistId);
       }
 
       if (!mounted) return;
-      final refreshInterval = storage.getRefreshInterval();
       if (epgUrl.isNotEmpty) {
-        epg.startAutoRefresh(refreshInterval, epgUrl);
         // Not awaited — reported directly as "confirm the groups, and it
         // just goes back to the URL/username/password screen instead of
         // the main app." Root cause: this was awaited, so a slow EPG
@@ -324,22 +480,31 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
         // main app — and if the fetch ever threw (a timeout, a malformed
         // response), it aborted the rest of this method silently, with
         // no error shown, leaving the form sitting there looking stuck.
-        // Warming the catalog already works this same fire-and-forget
-        // way for the identical reason.
-        unawaited(epg.refresh(epgUrl));
-      } else {
-        epg.stopAutoRefresh();
+        // The periodic app-wide EPG timer (see main.dart) already covers
+        // this playlist going forward on its own; this is just the
+        // immediate first-fetch so the guide isn't empty until that
+        // timer's next tick.
+        unawaited(epg.refresh(epgUrl,
+            knownChannelIds: playlist.knownChannelIdsFor(playlistId)));
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Playlist added.')));
-      // Land back on the main app instead of leaving the user sitting on
-      // this form — reported directly: finishing the whole add-playlist
-      // (and Group Management confirm) flow left them stuck back here,
-      // still with a text field focused, instead of on the TV/Movies/
-      // TV Shows tabs. `scaffoldMessengerKey` is app-wide (see main.dart),
-      // so the snackbar above still shows after this pop.
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(isEditing ? 'Playlist updated.' : 'Playlist added.')));
+      if (isEditing) {
+        // Back to PlaylistManagerScreen's detail panel, which is what
+        // pushed this screen in edit mode — one level up, not all the way
+        // to the app root (unlike a brand-new add, below).
+        Navigator.of(context).pop();
+      } else {
+        // Land back on the main app instead of leaving the user sitting on
+        // this form — reported directly: finishing the whole add-playlist
+        // (and Group Management confirm) flow left them stuck back here,
+        // still with a text field focused, instead of on the TV/Movies/
+        // TV Shows tabs. `scaffoldMessengerKey` is app-wide (see main.dart),
+        // so the snackbar above still shows after this pop.
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -348,8 +513,12 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   /// Asks "download everything, or choose groups first?" — and, crucially,
   /// doesn't start the background catalog warm-up until this is settled,
   /// so a "choose groups" pick actually takes effect on what gets fetched
-  /// instead of racing an already-running fetch-everything pass.
-  Future<void> _promptDownloadScope(PlaylistManager playlist) async {
+  /// instead of racing an already-running fetch-everything pass. Only
+  /// asked for a brand-new Xtream playlist — editing an existing one's
+  /// login already has its hidden-group choices saved from the first time
+  /// around.
+  Future<void> _promptDownloadScope(
+      PlaylistManager playlist, String playlistId) async {
     final choice = await showDialog<String>(
       context: context,
       barrierDismissible: false,
@@ -369,14 +538,19 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
             selected: false,
             onTap: () => Navigator.of(context).pop('choose'),
           ),
-          ModeButton(label: 'Download All', selected: false, onTap: () => Navigator.of(context).pop('all')),
+          ModeButton(
+              label: 'Download All',
+              selected: false,
+              onTap: () => Navigator.of(context).pop('all')),
         ],
       ),
     );
 
     if (choice == 'choose' && mounted) {
       final finished = await Navigator.of(context).push<bool>(
-        MaterialPageRoute(builder: (_) => const GroupManagementScreen(deferLoading: true)),
+        MaterialPageRoute(
+            builder: (_) => GroupManagementScreen(
+                playlistId: playlistId, deferLoading: true)),
       );
       if (finished != true) {
         // Left without pressing "Done" — physical back, or (what was
@@ -390,18 +564,24 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
       }
     }
 
-    // Was `unawaited(playlist.warmAllCategories())` — fired the download
-    // invisibly in the background with no indication of progress or even
-    // that anything was happening, confirmed directly as confusing
-    // ("I don't know if I'll get a prompt when it's done... we don't have
-    // the same *freeze* loading page"). Same blocking progress screen
-    // "Update Content"/Clear Cache already use, so every path that
-    // triggers a full catalog load behaves identically.
+    // Was `unawaited(playlist.warmAllCategories(playlistId))` — fired the
+    // download invisibly in the background with no indication of progress
+    // or even that anything was happening, confirmed directly as
+    // confusing ("I don't know if I'll get a prompt when it's done... we
+    // don't have the same *freeze* loading page"). Same blocking progress
+    // screen "Update Content"/Clear Cache already use, so every path that
+    // triggers a full catalog load behaves identically — deliberately
+    // still mandatory here for every playlist add, first or not (adding a
+    // second/third playlist while others are already loaded must not let
+    // the user wander off and start playback while this one's still
+    // warming up, competing for memory in the background).
     if (!mounted) return;
-    final warmFuture = playlist.warmAllCategories();
+    final warmFuture = playlist.warmAllCategories(playlistId);
     final navigator = Navigator.of(context);
     unawaited(navigator.push(MaterialPageRoute(
-      builder: (_) => Scaffold(backgroundColor: Colors.black, body: CatalogSyncBody(playlist: playlist)),
+      builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          body: CatalogSyncBody(playlist: playlist)),
     )));
     await warmFuture;
     if (mounted) navigator.pop();
@@ -411,292 +591,399 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   Widget build(BuildContext context) {
     final playlist = context.watch<PlaylistManager>();
 
-    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
-      title: 'Add Playlist',
-      // No custom D-pad handling for anything but the text fields' own
-      // Next/Done wiring above — see SettingsMenuScreen's doc comment for
-      // why: plain Flutter default focus traversal is what actually
-      // works reliably on real remote hardware here.
-      body: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            const SectionLabel('Playlist source'),
-            const SizedBox(height: 8),
-            // Was a `SegmentedButton` — reported directly as making D-pad
-            // navigation into this form erratic ("click multiple times
-            // down up down up... got lucky"). `SegmentedButton` wraps its
-            // segments in their own internal focus-traversal handling that
-            // doesn't reliably follow this screen's simple top-to-bottom
-            // document order. Two plain single-target buttons behave
-            // exactly like every other row on this screen.
-            Row(
-              children: [
-                Expanded(
-                  child: ModeButton(
-                    icon: Icons.link,
-                    label: 'M3U URL',
-                    selected: _mode == 'm3u',
-                    onTap: () => setState(() => _mode = 'm3u'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ModeButton(
-                    icon: Icons.dns,
-                    label: 'Xtream Codes',
-                    selected: _mode == 'xtream',
-                    onTap: () => setState(() => _mode = 'xtream'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ModeButton(
-                    icon: Icons.auto_fix_high,
-                    label: 'Smart Add',
-                    selected: _mode == 'smart',
-                    onTap: () => setState(() => _mode = 'smart'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (_mode == 'm3u') ...[
-              TextField(
-                controller: _m3uController,
-                focusNode: _m3uFocus,
-                decoration: const InputDecoration(
-                  labelText: 'M3U Playlist URL',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.next,
-                onSubmitted: (_) => _epgFocus.requestFocus(),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _epgController,
-                focusNode: _epgFocus,
-                decoration: const InputDecoration(
-                  labelText: 'EPG (XMLTV) URL',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _addButtonFocus.requestFocus(),
-              ),
-            ] else if (_mode == 'smart' && !_smartParsed) ...[
-              // Stage 1: paste box. Deliberately doesn't try to guess a
-              // name/activation-date the way this doesn't apply to us at
-              // all — server/username/password are the only fields this
-              // screen has, unlike iptv-manager's subscription tracker.
-              Text(
-                'Paste the message your provider sent you — we\'ll pull out '
-                'the server, username, and password.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _smartPasteController,
-                focusNode: _smartPasteFocus,
-                maxLines: 6,
-                minLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Paste provider message',
-                  hintText: 'username=...\npassword=...\nhttp://server.example.com/get.php?...',
-                  alignLabelWithHint: true,
-                  border: OutlineInputBorder(),
-                ),
-                // A paste (the normal way this field gets filled, via the
-                // Fire Stick's QR-code-to-phone-keyboard relay) inserts the
-                // whole multi-line block directly — it doesn't need the
-                // IME's own return key to type newlines one at a time, so
-                // claiming that key for a real "next field" action instead
-                // costs nothing real.
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _parseButtonFocus.requestFocus(),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                focusNode: _parseButtonFocus,
-                icon: const Icon(Icons.auto_fix_high),
-                label: const Text('Parse'),
-                onPressed: _handleSmartParse,
-                onFocusChange: (f) {
-                  if (f) _ensureVisible(context);
-                },
-              ),
-            ] else if (_mode == 'smart') ...[
-              // Stage 2: review. Reuses the exact same server/username/
-              // password controllers (and fields, below) the Xtream tab
-              // has — Smart Add is just a different way to fill them in,
-              // not a different destination for the data.
-              Text('Confirm the server', style: Theme.of(context).textTheme.titleSmall),
-              const SizedBox(height: 4),
-              if (_smartServerCandidates.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    'No server URL found in that text — enter it below.',
-                    style: TextStyle(color: Theme.of(context).colorScheme.error),
-                  ),
-                )
-              else
-                // A sloppy copy-paste (selecting across a line break, for
-                // instance) can glue a stray character from an adjacent
-                // line onto an otherwise-correct URL — requested directly:
-                // offer every candidate found instead of silently
-                // committing to the first, so a mangled one can be spotted
-                // and a clean alternative picked instead. RadioGroup (not
-                // each tile's own groupValue/onChanged, deprecated as of
-                // this Flutter version) also gets D-pad Up/Down-between-
-                // options and wraparound for free.
-                RadioGroup<String>(
-                  groupValue: _smartSelectedServer,
-                  onChanged: (value) => setState(() {
-                    _smartSelectedServer = value;
-                    _xtreamServerController.text = value ?? '';
-                  }),
-                  child: Column(
-                    children: _smartServerCandidates
-                        .map((url) => RadioListTile<String>(
-                              value: url,
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(url, style: const TextStyle(fontFamily: 'monospace')),
-                            ))
-                        .toList(),
-                  ),
-                ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _xtreamServerController,
-                focusNode: _serverFocus,
-                decoration: const InputDecoration(
-                  labelText: 'Server URL (e.g. http://host:port)',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.next,
-                onSubmitted: (_) => _usernameFocus.requestFocus(),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _xtreamUsernameController,
-                focusNode: _usernameFocus,
-                decoration: const InputDecoration(
-                  labelText: 'Username',
-                  border: OutlineInputBorder(),
-                ),
-                textInputAction: TextInputAction.next,
-                onSubmitted: (_) => _passwordFocus.requestFocus(),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _xtreamPasswordController,
-                focusNode: _passwordFocus,
-                obscureText: _obscurePassword,
-                decoration: InputDecoration(
-                  labelText: 'Password',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
-                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                  ),
-                ),
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _addButtonFocus.requestFocus(),
-              ),
-              const SizedBox(height: 8),
-              TextButton.icon(
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Paste different text'),
-                onPressed: _resetSmartAdd,
-                onFocusChange: (f) {
-                  if (f) _ensureVisible(context);
-                },
-              ),
-            ] else ...[
-              TextField(
-                controller: _xtreamServerController,
-                focusNode: _serverFocus,
-                decoration: const InputDecoration(
-                  labelText: 'Server URL (e.g. http://host:port)',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.url,
-                textInputAction: TextInputAction.next,
-                onSubmitted: (_) => _usernameFocus.requestFocus(),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _xtreamUsernameController,
-                focusNode: _usernameFocus,
-                decoration: const InputDecoration(
-                  labelText: 'Username',
-                  border: OutlineInputBorder(),
-                ),
-                textInputAction: TextInputAction.next,
-                onSubmitted: (_) => _passwordFocus.requestFocus(),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _xtreamPasswordController,
-                focusNode: _passwordFocus,
-                obscureText: _obscurePassword,
-                decoration: InputDecoration(
-                  labelText: 'Password',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
-                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-                  ),
-                ),
-                textInputAction: TextInputAction.done,
-                onSubmitted: (_) => _addButtonFocus.requestFocus(),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'The EPG (xmltv.php) URL is derived automatically from these credentials.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-            const SizedBox(height: 16),
-            if (playlist.isLoading) ...[
-              Row(
+    return withTvThemeIfNeeded(
+        context,
+        (context) => SettingsScaffold(
+              title: _editingProfile != null ? 'Edit Playlist' : 'Add Playlist',
+              // No custom D-pad handling for anything but the text fields' own
+              // Next/Done wiring above — see SettingsMenuScreen's doc comment for
+              // why: plain Flutter default focus traversal is what actually
+              // works reliably on real remote hardware here.
+              //
+              // Two columns — the form (left, scrollable) and a fixed
+              // status/Add-Playlist panel (right) that never scrolls —
+              // instead of one long single-column form. Reported directly
+              // after the Name field made every mode's form one field
+              // taller: the "Connecting to server..."/error block and the
+              // Add Playlist button itself could end up below the fold
+              // with nothing making them visible again short of a manual
+              // scroll (an auto-scroll-on-submit fix was tried and
+              // rejected here — the ask was to not need one at all, not a
+              // better-timed one). Pinning the status+button in their own
+              // never-scrolling column means they're always on screen
+              // regardless of which mode's fields — or how many Smart Add
+              // server candidates — make the left column tall.
+              body: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        const SectionLabel('Playlist name'),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _nameController,
+                          focusNode: _nameFocus,
+                          decoration: const InputDecoration(
+                            labelText: 'Name',
+                            hintText: 'e.g. My Provider, or 8kStrong',
+                            border: OutlineInputBorder(),
+                          ),
+                          textInputAction: TextInputAction.next,
+                          onSubmitted: (_) =>
+                              (_mode == 'm3u' ? _m3uFocus : _serverFocus)
+                                  .requestFocus(),
+                        ),
+                        const SizedBox(height: 16),
+                        const SectionLabel('Playlist source'),
+                        const SizedBox(height: 8),
+                        // Was a `SegmentedButton` — reported directly as making D-pad
+                        // navigation into this form erratic ("click multiple times
+                        // down up down up... got lucky"). `SegmentedButton` wraps its
+                        // segments in their own internal focus-traversal handling that
+                        // doesn't reliably follow this screen's simple top-to-bottom
+                        // document order. Two plain single-target buttons behave
+                        // exactly like every other row on this screen.
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ModeButton(
+                                focusNode: _modeM3uFocus,
+                                icon: Icons.link,
+                                label: 'M3U URL',
+                                selected: _mode == 'm3u',
+                                onTap: () => setState(() => _mode = 'm3u'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ModeButton(
+                                focusNode: _modeXtreamFocus,
+                                icon: Icons.dns,
+                                label: 'Xtream Codes',
+                                selected: _mode == 'xtream',
+                                onTap: () => setState(() => _mode = 'xtream'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ModeButton(
+                                focusNode: _modeSmartFocus,
+                                icon: Icons.auto_fix_high,
+                                label: 'Smart Add',
+                                selected: _mode == 'smart',
+                                onTap: () => setState(() => _mode = 'smart'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        if (_mode == 'm3u') ...[
+                          TextField(
+                            controller: _m3uController,
+                            focusNode: _m3uFocus,
+                            decoration: const InputDecoration(
+                              labelText: 'M3U Playlist URL',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => _epgFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _epgController,
+                            focusNode: _epgFocus,
+                            decoration: const InputDecoration(
+                              labelText: 'EPG (XMLTV) URL',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => _addButtonFocus.requestFocus(),
+                          ),
+                        ] else if (_mode == 'smart' && !_smartParsed) ...[
+                          // Stage 1: paste box. Deliberately doesn't try to guess a
+                          // name/activation-date the way this doesn't apply to us at
+                          // all — server/username/password are the only fields this
+                          // screen has, unlike iptv-manager's subscription tracker.
+                          Text(
+                            'Paste the message your provider sent you — we\'ll pull out '
+                            'the server, username, and password.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _smartPasteController,
+                            focusNode: _smartPasteFocus,
+                            maxLines: 6,
+                            minLines: 3,
+                            decoration: const InputDecoration(
+                              labelText: 'Paste provider message',
+                              hintText:
+                                  'username=...\npassword=...\nhttp://server.example.com/get.php?...',
+                              alignLabelWithHint: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            // A paste (the normal way this field gets filled, via the
+                            // Fire Stick's QR-code-to-phone-keyboard relay) inserts the
+                            // whole multi-line block directly — it doesn't need the
+                            // IME's own return key to type newlines one at a time, so
+                            // claiming that key for a real "next field" action instead
+                            // costs nothing real.
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) =>
+                                _parseButtonFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            focusNode: _parseButtonFocus,
+                            icon: const Icon(Icons.auto_fix_high),
+                            label: const Text('Parse'),
+                            onPressed: _handleSmartParse,
+                            onFocusChange: (f) {
+                              if (f) _ensureVisible(context);
+                            },
+                          ),
+                        ] else if (_mode == 'smart') ...[
+                          // Stage 2: review. Reuses the exact same server/username/
+                          // password controllers (and fields, below) the Xtream tab
+                          // has — Smart Add is just a different way to fill them in,
+                          // not a different destination for the data.
+                          Text('Confirm the server',
+                              style: Theme.of(context).textTheme.titleSmall),
+                          const SizedBox(height: 4),
+                          if (_smartServerCandidates.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Text(
+                                'No server URL found in that text — enter it below.',
+                                style: TextStyle(
+                                    color: Theme.of(context).colorScheme.error),
+                              ),
+                            )
+                          else
+                            // A sloppy copy-paste (selecting across a line break, for
+                            // instance) can glue a stray character from an adjacent
+                            // line onto an otherwise-correct URL — requested directly:
+                            // offer every candidate found instead of silently
+                            // committing to the first, so a mangled one can be spotted
+                            // and a clean alternative picked instead. RadioGroup (not
+                            // each tile's own groupValue/onChanged, deprecated as of
+                            // this Flutter version) also gets D-pad Up/Down-between-
+                            // options and wraparound for free.
+                            RadioGroup<String>(
+                              groupValue: _smartSelectedServer,
+                              onChanged: (value) => setState(() {
+                                _smartSelectedServer = value;
+                                _xtreamServerController.text = value ?? '';
+                              }),
+                              child: Column(
+                                children: _smartServerCandidates
+                                    .map((url) => RadioListTile<String>(
+                                          value: url,
+                                          dense: true,
+                                          contentPadding: EdgeInsets.zero,
+                                          title: Text(url,
+                                              style: const TextStyle(
+                                                  fontFamily: 'monospace')),
+                                        ))
+                                    .toList(),
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _xtreamServerController,
+                            focusNode: _serverFocus,
+                            decoration: const InputDecoration(
+                              labelText: 'Server URL (e.g. http://host:port)',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => _usernameFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _xtreamUsernameController,
+                            focusNode: _usernameFocus,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              border: OutlineInputBorder(),
+                            ),
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => _passwordFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _xtreamPasswordController,
+                            focusNode: _passwordFocus,
+                            obscureText: _obscurePassword,
+                            decoration: InputDecoration(
+                              labelText: 'Password',
+                              border: const OutlineInputBorder(),
+                              suffixIcon: IconButton(
+                                icon: Icon(_obscurePassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off),
+                                onPressed: () => setState(
+                                    () => _obscurePassword = !_obscurePassword),
+                              ),
+                            ),
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => _addButtonFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            icon: const Icon(Icons.arrow_back),
+                            label: const Text('Paste different text'),
+                            onPressed: _resetSmartAdd,
+                            onFocusChange: (f) {
+                              if (f) _ensureVisible(context);
+                            },
+                          ),
+                        ] else ...[
+                          TextField(
+                            controller: _xtreamServerController,
+                            focusNode: _serverFocus,
+                            decoration: const InputDecoration(
+                              labelText: 'Server URL (e.g. http://host:port)',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: TextInputType.url,
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => _usernameFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _xtreamUsernameController,
+                            focusNode: _usernameFocus,
+                            decoration: const InputDecoration(
+                              labelText: 'Username',
+                              border: OutlineInputBorder(),
+                            ),
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => _passwordFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _xtreamPasswordController,
+                            focusNode: _passwordFocus,
+                            obscureText: _obscurePassword,
+                            decoration: InputDecoration(
+                              labelText: 'Password',
+                              border: const OutlineInputBorder(),
+                              suffixIcon: IconButton(
+                                icon: Icon(_obscurePassword
+                                    ? Icons.visibility
+                                    : Icons.visibility_off),
+                                onPressed: () => setState(
+                                    () => _obscurePassword = !_obscurePassword),
+                              ),
+                            ),
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) => _addButtonFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'The EPG (xmltv.php) URL is derived automatically from these credentials.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(child: Text(playlist.loadingPhase ?? 'Loading...')),
+                  const SizedBox(width: 16),
+                  // Fixed width, not Expanded/flex — a status panel and one
+                  // button don't need to grow with a wide TV screen the way
+                  // the form column benefits from the extra room.
+                  SizedBox(
+                    width: 320,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const SectionLabel('Status'),
+                        const SizedBox(height: 8),
+                        // A colored accent bar + bold text when something's
+                        // actually happening (connecting or failed) instead
+                        // of the same flat panel style regardless of state
+                        // — reported directly as easy to miss entirely
+                        // during a fast connection/failure, since nothing
+                        // about the panel itself drew the eye there over
+                        // the form on the left.
+                        Builder(builder: (context) {
+                          final error = playlist.error;
+                          final Color accent;
+                          final Widget content;
+                          if (playlist.isLoading) {
+                            accent = Theme.of(context).colorScheme.primary;
+                            content = Row(
+                              children: [
+                                SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: accent),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    playlist.loadingPhase ?? 'Loading...',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ],
+                            );
+                          } else if (error != null) {
+                            accent = Theme.of(context).colorScheme.error;
+                            content = Text(
+                              // The raw reason (bad credentials vs. an
+                              // unreachable/timed-out server vs. an
+                              // inactive account all look different, e.g.
+                              // "Invalid Xtream username/password" vs.
+                              // "Xtream request failed... (HTTP 403)") —
+                              // shown instead of a generic "failed" message
+                              // so a typo can actually be told apart from a
+                              // genuinely bad server without guessing.
+                              'Failed to add playlist: ${error.replaceFirst('Exception: ', '')}',
+                              style: TextStyle(
+                                  color: accent, fontWeight: FontWeight.bold),
+                            );
+                          } else {
+                            accent = Colors.white24;
+                            content = Text(
+                              'Fill in the form and press '
+                              '${_editingProfile != null ? 'Save Changes' : 'Add Playlist'} below.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            );
+                          }
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.07),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border(
+                                  left: BorderSide(color: accent, width: 4)),
+                            ),
+                            padding: const EdgeInsets.all(16),
+                            child: content,
+                          );
+                        }),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          focusNode: _addButtonFocus,
+                          onPressed:
+                              (playlist.isLoading || _saving) ? null : _save,
+                          child: Text(_editingProfile != null
+                              ? 'Save Changes'
+                              : 'Add Playlist'),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
-              const SizedBox(height: 12),
-            ] else if (playlist.error != null) ...[
-              Text(
-                // The raw reason (bad credentials vs. an unreachable/timed-out
-                // server vs. an inactive account all look different, e.g.
-                // "Invalid Xtream username/password" vs. "Xtream request
-                // failed... (HTTP 403)") — shown instead of a generic
-                // "failed" message so a typo can actually be told apart from
-                // a genuinely bad server without guessing.
-                'Failed to add playlist: ${playlist.error!.replaceFirst('Exception: ', '')}',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-              const SizedBox(height: 12),
-            ],
-            FilledButton(
-              focusNode: _addButtonFocus,
-              onPressed: (playlist.isLoading || _saving) ? null : _save,
-              onFocusChange: (f) {
-                if (f) _ensureVisible(context);
-              },
-              child: const Text('Add Playlist'),
-            ),
-          ],
-        ),
-    ));
+            ));
   }
 }

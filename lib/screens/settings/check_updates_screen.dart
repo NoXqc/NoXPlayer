@@ -3,6 +3,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../services/app_update_service.dart';
 import '../../utils/tv_theme.dart';
+import '../../widgets/mode_button.dart';
 import '../../widgets/settings_scaffold.dart';
 
 /// Settings > Check for Updates — the in-app replacement for a Play Store
@@ -19,7 +20,15 @@ class CheckUpdatesScreen extends StatefulWidget {
   State<CheckUpdatesScreen> createState() => _CheckUpdatesScreenState();
 }
 
-enum _Status { idle, checking, upToDate, updateAvailable, downloading, readyToInstall, error }
+enum _Status {
+  idle,
+  checking,
+  upToDate,
+  updateAvailable,
+  downloading,
+  readyToInstall,
+  error
+}
 
 class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
   final _updateService = AppUpdateService();
@@ -103,9 +112,21 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
             'settings — turn the toggle on, then come back here and press '
             'Install again.',
           ),
+          // Plain TextButton/FilledButton left which one has D-pad focus
+          // ambiguous — FilledButton's permanent solid fill looks the
+          // same whether it's actually focused or not. ModeButton is this
+          // app's established fix elsewhere for exactly this.
           actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Open Settings')),
+            ModeButton(
+              label: 'Cancel',
+              selected: false,
+              onTap: () => Navigator.of(context).pop(false),
+            ),
+            ModeButton(
+              label: 'Open Settings',
+              selected: false,
+              onTap: () => Navigator.of(context).pop(true),
+            ),
           ],
         ),
       );
@@ -117,20 +138,24 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return withTvThemeIfNeeded(context, (context) => SettingsScaffold(
-      title: 'Check for Updates',
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            _currentVersion.isEmpty ? 'Current version: —' : 'Current version: $_currentVersion',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 16),
-          ..._buildStatusContent(context),
-        ],
-      ),
-    ));
+    return withTvThemeIfNeeded(
+        context,
+        (context) => SettingsScaffold(
+              title: 'Check for Updates',
+              body: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  Text(
+                    _currentVersion.isEmpty
+                        ? 'Current version: —'
+                        : 'Current version: $_currentVersion',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 16),
+                  ..._buildStatusContent(context),
+                ],
+              ),
+            ));
   }
 
   List<Widget> _buildStatusContent(BuildContext context) {
@@ -147,7 +172,10 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
         return [
           const Row(
             children: [
-              SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+              SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
               SizedBox(width: 12),
               Text('Checking...'),
             ],
@@ -168,7 +196,8 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
           ),
           if (update.releaseNotes.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Text(update.releaseNotes, style: Theme.of(context).textTheme.bodySmall),
+            Text(update.releaseNotes,
+                style: Theme.of(context).textTheme.bodySmall),
           ],
           const SizedBox(height: 16),
           FilledButton.icon(
@@ -179,9 +208,11 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
         ];
       case _Status.downloading:
         return [
-          Text('Downloading update... ${(_downloadProgress * 100).toStringAsFixed(0)}%'),
+          Text(
+              'Downloading update... ${(_downloadProgress * 100).toStringAsFixed(0)}%'),
           const SizedBox(height: 12),
-          LinearProgressIndicator(value: _downloadProgress > 0 ? _downloadProgress : null),
+          LinearProgressIndicator(
+              value: _downloadProgress > 0 ? _downloadProgress : null),
         ];
       case _Status.readyToInstall:
         return [

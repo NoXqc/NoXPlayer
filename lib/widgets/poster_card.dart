@@ -101,7 +101,9 @@ class _PosterCardState extends State<PosterCard> {
                   decoration: BoxDecoration(
                     color: Colors.grey.shade900,
                     borderRadius: BorderRadius.circular(10),
-                    border: _focused ? Border.all(color: scheme.primary, width: 3) : null,
+                    border: _focused
+                        ? Border.all(color: scheme.primary, width: 3)
+                        : null,
                     // Was two layered shadows (primary + secondary at
                     // different blur/spread) for a duo-tone glow — on this
                     // hardware (Impeller already disabled elsewhere for GPU
@@ -112,7 +114,8 @@ class _PosterCardState extends State<PosterCard> {
                     boxShadow: _focused
                         ? [
                             BoxShadow(
-                              color: Color.lerp(scheme.primary, scheme.secondary, 0.5)!
+                              color: Color.lerp(
+                                      scheme.primary, scheme.secondary, 0.5)!
                                   .withValues(alpha: 0.6),
                               blurRadius: 18,
                               spreadRadius: 1,
@@ -140,9 +143,11 @@ class _PosterCardState extends State<PosterCard> {
                             // roughly the card's physical size cuts each
                             // cached image's memory footprint by an order
                             // of magnitude or more.
-                            memCacheWidth:
-                                (PosterCard.width * MediaQuery.of(context).devicePixelRatio).round(),
-                            memCacheHeight: (PosterCard.posterHeight * MediaQuery.of(context).devicePixelRatio)
+                            memCacheWidth: (PosterCard.width *
+                                    MediaQuery.of(context).devicePixelRatio)
+                                .round(),
+                            memCacheHeight: (PosterCard.posterHeight *
+                                    MediaQuery.of(context).devicePixelRatio)
                                 .round(),
                             // A poster popping in instantly from the grey
                             // placeholder reads as a jarring flash,
@@ -156,7 +161,8 @@ class _PosterCardState extends State<PosterCard> {
                             // which the memory cache ceiling alone
                             // couldn't do.
                             fadeInDuration: const Duration(milliseconds: 250),
-                            errorWidget: (_, __, ___) => const _PosterFallbackIcon(),
+                            errorWidget: (_, __, ___) =>
+                                const _PosterFallbackIcon(),
                           ),
                         )
                       else
@@ -165,24 +171,30 @@ class _PosterCardState extends State<PosterCard> {
                         Positioned(
                           top: 6,
                           right: 6,
-                          child: Icon(Icons.check_circle, color: scheme.primary, size: 22, shadows: const [
-                            Shadow(color: Colors.black, blurRadius: 4),
-                          ]),
+                          child: Icon(Icons.check_circle,
+                              color: scheme.primary,
+                              size: 22,
+                              shadows: const [
+                                Shadow(color: Colors.black, blurRadius: 4),
+                              ]),
                         )
                       else if (widget.rating != null)
                         Positioned(
                           top: 6,
                           left: 6,
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.75),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
                               '★ ${widget.rating}',
-                              style:
-                                  const TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold),
+                              style: const TextStyle(
+                                  color: Colors.amber,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold),
                             ),
                           ),
                         ),
@@ -193,9 +205,12 @@ class _PosterCardState extends State<PosterCard> {
                         Positioned(
                           top: widget.watched ? 32 : 6,
                           right: 6,
-                          child: const Icon(Icons.star, color: Colors.amber, size: 20, shadows: [
-                            Shadow(color: Colors.black, blurRadius: 4),
-                          ]),
+                          child: const Icon(Icons.star,
+                              color: Colors.amber,
+                              size: 20,
+                              shadows: [
+                                Shadow(color: Colors.black, blurRadius: 4),
+                              ]),
                         ),
                       if (showProgress)
                         Positioned(
@@ -229,7 +244,8 @@ class _PosterCardState extends State<PosterCard> {
                       style: TextStyle(
                         color: _focused ? scheme.primary : Colors.white,
                         fontSize: 11,
-                        fontWeight: _focused ? FontWeight.bold : FontWeight.normal,
+                        fontWeight:
+                            _focused ? FontWeight.bold : FontWeight.normal,
                         height: 1.15,
                       ),
                     ),
@@ -244,7 +260,8 @@ class _PosterCardState extends State<PosterCard> {
 
     final onToggleFavorite = widget.onToggleFavorite;
     if (onToggleFavorite == null) return card;
-    return HoldToActivate(onTap: widget.onTap, onHold: onToggleFavorite, child: card);
+    return HoldToActivate(
+        onTap: widget.onTap, onHold: onToggleFavorite, child: card);
   }
 }
 
@@ -257,7 +274,8 @@ class _PosterFallbackIcon extends StatelessWidget {
       color: Colors.grey.shade800,
       alignment: Alignment.center,
       padding: const EdgeInsets.all(8),
-      child: const Icon(Icons.movie_creation_outlined, color: Colors.white38, size: 40),
+      child: const Icon(Icons.movie_creation_outlined,
+          color: Colors.white38, size: 40),
     );
   }
 }

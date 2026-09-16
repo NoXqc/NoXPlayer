@@ -18,7 +18,8 @@ import 'epg_guide.dart';
 /// something, and every mounted [VideoPlayerPane] (inline pane, fullscreen
 /// screen, mini-player) reflects the same live video.
 class VideoPlayerPane extends StatelessWidget {
-  const VideoPlayerPane({super.key, this.showEpgBar = true, this.showControls = true});
+  const VideoPlayerPane(
+      {super.key, this.showEpgBar = true, this.showControls = true});
 
   final bool showEpgBar;
 
@@ -44,16 +45,19 @@ class VideoPlayerPane extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(_friendlyPlaybackError(playback.error!), textAlign: TextAlign.center),
+              Text(_friendlyPlaybackError(playback.error!),
+                  textAlign: TextAlign.center),
               const SizedBox(height: 12),
               ExpansionTile(
-                title: const Text('Technical details', style: TextStyle(fontSize: 12)),
+                title: const Text('Technical details',
+                    style: TextStyle(fontSize: 12)),
                 children: [
                   Padding(
                     padding: const EdgeInsets.all(8),
                     child: Text(
                       playback.error!,
-                      style: const TextStyle(fontSize: 11, color: Colors.white54),
+                      style:
+                          const TextStyle(fontSize: 11, color: Colors.white54),
                     ),
                   ),
                 ],
@@ -86,8 +90,9 @@ class VideoPlayerPane extends StatelessWidget {
                   // workaround for at all.
                   Center(
                     child: AspectRatio(
-                      aspectRatio:
-                          controller.value.aspectRatio == 0 ? 16 / 9 : controller.value.aspectRatio,
+                      aspectRatio: controller.value.aspectRatio == 0
+                          ? 16 / 9
+                          : controller.value.aspectRatio,
                       // Keyed to the controller instance — confirmed on
                       // real hardware as the cause of a frozen frame
                       // surviving a channel switch: with no key here,
@@ -103,7 +108,8 @@ class VideoPlayerPane extends StatelessWidget {
                       // earlier this session: force element recreation
                       // via a changing key instead of relying on an
                       // in-place update this hardware silently drops.
-                      child: VideoPlayerHdr(controller, key: ObjectKey(controller)),
+                      child: VideoPlayerHdr(controller,
+                          key: ObjectKey(controller)),
                     ),
                   ),
                   if (showControls)
@@ -140,7 +146,8 @@ class VideoPlayerPane extends StatelessWidget {
 /// stops surfacing that as a raw stack-trace-shaped string.
 String _friendlyPlaybackError(String raw) {
   final lower = raw.toLowerCase();
-  if (lower.contains('mediacodecvideorenderer') || (lower.contains('hevc') && lower.contains('10bit'))) {
+  if (lower.contains('mediacodecvideorenderer') ||
+      (lower.contains('hevc') && lower.contains('10bit'))) {
     return 'This device\'s hardware video decoder can\'t play this stream — '
         'likely a 4K HDR (HEVC 10-bit) format it doesn\'t support, even '
         'though it claims to. This is a hardware limitation, not something '
@@ -234,13 +241,15 @@ class PlayerControls extends StatelessWidget {
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                   ),
                   if (showSeek)
                     Text(
                       '${_formatDuration(position)} / ${_formatDuration(duration)}',
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 12),
                     )
                   else if (isLive)
                     _LiveRemainingLabel(channelId: channelId),
@@ -255,9 +264,12 @@ class PlayerControls extends StatelessWidget {
               if (showSeek)
                 ExcludeFocus(
                   child: Slider(
-                    value: position.inMilliseconds.clamp(0, duration.inMilliseconds).toDouble(),
+                    value: position.inMilliseconds
+                        .clamp(0, duration.inMilliseconds)
+                        .toDouble(),
                     max: duration.inMilliseconds.toDouble(),
-                    onChanged: (v) => controller.seekTo(Duration(milliseconds: v.toInt())),
+                    onChanged: (v) =>
+                        controller.seekTo(Duration(milliseconds: v.toInt())),
                   ),
                 ),
               // All the action buttons live in one row now — favorite
@@ -275,7 +287,9 @@ class PlayerControls extends StatelessWidget {
                         isFavorite == true ? Icons.star : Icons.star_border,
                         color: isFavorite == true ? Colors.amber : Colors.white,
                       ),
-                      tooltip: isFavorite == true ? 'Remove from favorites' : 'Add to favorites',
+                      tooltip: isFavorite == true
+                          ? 'Remove from favorites'
+                          : 'Add to favorites',
                       onPressed: onToggleFavorite,
                     ),
                   // Episode nav — distinct icon shape (skip_previous/next,
@@ -284,7 +298,8 @@ class PlayerControls extends StatelessWidget {
                   // of play/pause already do.
                   if (onPrevious != null)
                     IconButton(
-                      icon: const Icon(Icons.skip_previous, color: Colors.white),
+                      icon:
+                          const Icon(Icons.skip_previous, color: Colors.white),
                       tooltip: 'Previous episode',
                       onPressed: onPrevious,
                     ),
@@ -294,19 +309,24 @@ class PlayerControls extends StatelessWidget {
                       icon: Icons.replay_10,
                       onSeek: (amount) {
                         final target = position - amount;
-                        controller.seekTo(target < Duration.zero ? Duration.zero : target);
+                        controller.seekTo(
+                            target < Duration.zero ? Duration.zero : target);
                       },
                     ),
                   IconButton(
-                    icon: Icon(value.isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
-                    onPressed: () => value.isPlaying ? controller.pause() : controller.play(),
+                    icon: Icon(value.isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: Colors.white),
+                    onPressed: () => value.isPlaying
+                        ? controller.pause()
+                        : controller.play(),
                   ),
                   if (showSeek)
                     _SkipButton(
                       icon: Icons.forward_10,
                       onSeek: (amount) {
                         final target = position + amount;
-                        controller.seekTo(target > duration ? duration : target);
+                        controller
+                            .seekTo(target > duration ? duration : target);
                       },
                     ),
                   if (onNext != null)
@@ -399,7 +419,8 @@ class _AudioTrackButtonState extends State<_AudioTrackButton> {
     final label = track.label;
     if (label != null && label.isNotEmpty) return label;
     final language = track.language;
-    if (language != null && language.isNotEmpty && language != 'und') return language.toUpperCase();
+    if (language != null && language.isNotEmpty && language != 'und')
+      return language.toUpperCase();
     return 'Track ${track.id}';
   }
 
@@ -427,7 +448,10 @@ class _AudioTrackButtonState extends State<_AudioTrackButton> {
               padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Text(
                 'Audio Track',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16),
               ),
             ),
             for (final track in tracks)
@@ -436,7 +460,8 @@ class _AudioTrackButtonState extends State<_AudioTrackButton> {
                   track.isSelected ? Icons.check_circle : Icons.circle_outlined,
                   color: track.isSelected ? Colors.amber : Colors.white54,
                 ),
-                title: Text(_trackLabel(track), style: const TextStyle(color: Colors.white)),
+                title: Text(_trackLabel(track),
+                    style: const TextStyle(color: Colors.white)),
                 onTap: () => Navigator.of(sheetContext).pop(track),
               ),
           ],
@@ -534,7 +559,8 @@ class _SkipButtonState extends State<_SkipButton> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
-    final focusFill = isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
+    final focusFill =
+        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
     return Focus(
       onKeyEvent: _handleKeyEvent,
       onFocusChange: (f) => setState(() => _focused = f),

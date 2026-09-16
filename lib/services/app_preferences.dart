@@ -21,18 +21,18 @@ class AppPreferences extends ChangeNotifier {
   late bool showClock;
   late CyberpunkPalette palette;
   late String layoutMode; // 'auto', 'phone', 'tv'
-  late bool playlistEnabled;
 
   Future<void> init() async {
-    themeMode = _storage.getThemeMode() == 'light' ? ThemeMode.light : ThemeMode.dark;
+    themeMode =
+        _storage.getThemeMode() == 'light' ? ThemeMode.light : ThemeMode.dark;
     showClock = _storage.getShowClock();
     palette = _paletteById(_storage.getPaletteId());
     layoutMode = _storage.getLayoutMode();
-    playlistEnabled = _storage.getPlaylistEnabled();
   }
 
-  CyberpunkPalette _paletteById(String id) => AppConstants.cyberpunkPalettes
-      .firstWhere((p) => p.id == id, orElse: () => AppConstants.cyberpunkPalettes.first);
+  CyberpunkPalette _paletteById(String id) =>
+      AppConstants.cyberpunkPalettes.firstWhere((p) => p.id == id,
+          orElse: () => AppConstants.cyberpunkPalettes.first);
 
   void setThemeMode(ThemeMode mode) {
     themeMode = mode;
@@ -55,16 +55,6 @@ class AppPreferences extends ChangeNotifier {
   void setLayoutMode(String mode) {
     layoutMode = mode;
     _storage.setLayoutMode(mode);
-    notifyListeners();
-  }
-
-  /// Whether this device is allowed to start/continue playback — the
-  /// "enable/disable playlist" feature: flipping this off frees up a
-  /// provider's connection slot (many panels cap concurrent streams) for
-  /// another device, without touching the cached catalog or credentials.
-  void setPlaylistEnabled(bool value) {
-    playlistEnabled = value;
-    _storage.setPlaylistEnabled(value);
     notifyListeners();
   }
 }

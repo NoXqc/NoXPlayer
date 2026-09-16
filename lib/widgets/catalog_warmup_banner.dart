@@ -29,7 +29,10 @@ class CatalogWarmupBanner extends StatelessWidget {
           children: [
             Row(
               children: [
-                const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
@@ -94,7 +97,8 @@ class _TypeProgress extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = doneOverride ?? (total == 0 ? '$done' : '$done/$total categories');
+    final text =
+        doneOverride ?? (total == 0 ? '$done' : '$done/$total categories');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

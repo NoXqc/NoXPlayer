@@ -9,6 +9,10 @@ import '../models/epg_program.dart';
 import '../utils/constants.dart';
 import 'storage_service.dart';
 
+/// One playlist's EPG URL plus the channel ids it's allowed to populate
+/// programmes for — see [EpgService.refresh]'s doc comment.
+typedef EpgSource = ({String url, Set<String> knownChannelIds});
+
 /// Top-level (isolate-safe) so [compute] can run them off the main
 /// isolate — a full-catalog EPG cache is easily tens of thousands of
 /// programmes, and decoding/encoding that much JSON synchronously on the
@@ -19,8 +23,9 @@ Map<String, List<EpgProgram>> _decodeEpgCache(String json) {
   final decoded = jsonDecode(json) as Map<String, dynamic>;
   final result = <String, List<EpgProgram>>{};
   decoded.forEach((channelId, list) {
-    result[channelId] =
-        (list as List).map((e) => EpgProgram.fromJson(e as Map<String, dynamic>)).toList();
+    result[channelId] = (list as List)
+        .map((e) => EpgProgram.fromJson(e as Map<String, dynamic>))
+        .toList();
   });
   return result;
 }
@@ -39,28 +44,9 @@ String _encodeEpgCache(Map<String, List<EpgProgram>> programs) {
 /// something to show immediately on launch, before the first network
 /// refresh completes.
 class EpgService extends ChangeNotifier {
-  EpgService(this._storage, {Set<String> Function()? knownChannelIds}) : _knownChannelIds = knownChannelIds;
+  EpgService(this._storage);
 
   final StorageService _storage;
-
-  /// Wired in `main.dart` to `PlaylistManager.channels`' ids — lets
-  /// [_parseXmltvStream] discard `<programme>` entries for channels the
-  /// user's own playlist doesn't even have, instead of holding every
-  /// single one the EPG source provides in memory. Confirmed directly as
-  /// the cause of a real hard crash (not a catchable Dart exception —
-  /// Android's own OOM kill, since a full 100MB+ XMLTV feed with no
-  /// per-programme filter is easily millions of retained EpgProgram
-  /// objects for a big shared multi-provider EPG source): reported after
-  /// tapping "Update EPG" for the first time on a 28,000+-live-channel
-  /// Xtream account, no crash log obtainable (a real phone, not one of
-  /// the ADB-reachable test devices) but this is the one unbounded
-  /// allocation anywhere in the EPG pipeline — everything else here
-  /// already streams events instead of building a DOM specifically to
-  /// avoid exactly this class of crash (see this class's other doc
-  /// comments). Null (the default) disables filtering entirely rather
-  /// than risk showing an empty guide if this ever races ahead of the
-  /// playlist actually loading.
-  final Set<String> Function()? _knownChannelIds;
 
   final Map<String, List<EpgProgram>> _programs = {};
   DateTime? lastUpdated;
@@ -69,9 +55,17 @@ class EpgService extends ChangeNotifier {
 
   Timer? _refreshTimer;
 
+  /// Evaluated fresh on every auto-refresh tick (not a frozen snapshot
+  /// taken once at `startAutoRefresh` time) — playlists can be
+  /// added/removed/enabled/disabled while the timer is running, and the
+  /// next tick should reflect whichever playlists are enabled *then*, not
+  /// whatever was true when the timer was first started.
+  List<EpgSource> Function()? _sourcesProvider;
+
   Future<void> init() async {
     lastUpdated = _storage.getEpgLastUpdated();
-    final cached = await _storage.readCacheFile(AppConstants.cacheFileEpgPrograms);
+    final cached =
+        await _storage.readCacheFile(AppConstants.cacheFileEpgPrograms);
     if (cached != null) {
       try {
         final decoded = await compute(_decodeEpgCache, cached);
@@ -86,12 +80,17 @@ class EpgService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// (Re)starts the periodic auto-refresh timer. Call again whenever the
-  /// interval or URL changes; safe to call with an empty [url] to no-op.
-  void startAutoRefresh(int minutes, String url) {
+  /// (Re)starts the periodic auto-refresh timer, refreshing every source
+  /// [sourcesProvider] returns (one per enabled playlist with a non-empty
+  /// EPG URL — see [EpgSource]) each tick. Call again whenever the
+  /// interval changes. Safe to call unconditionally; a tick with no
+  /// sources just no-ops.
+  void startAutoRefresh(
+      int minutes, List<EpgSource> Function() sourcesProvider) {
     _refreshTimer?.cancel();
-    if (url.isEmpty) return;
-    _refreshTimer = Timer.periodic(Duration(minutes: minutes), (_) => refresh(url));
+    _sourcesProvider = sourcesProvider;
+    _refreshTimer =
+        Timer.periodic(Duration(minutes: minutes), (_) => refreshAll());
   }
 
   void stopAutoRefresh() {
@@ -99,7 +98,32 @@ class EpgService extends ChangeNotifier {
     _refreshTimer = null;
   }
 
-  Future<void> refresh(String url) async {
+  /// Refreshes every source [_sourcesProvider] currently returns, one at a
+  /// time (each call to [refresh] below only ever replaces *that* source's
+  /// own channels' programmes — see its doc comment — so there's no
+  /// correctness reason these need to run concurrently, and running them
+  /// one at a time keeps `isLoading`/`error` meaningful for whichever one
+  /// is actually in flight).
+  Future<void> refreshAll() async {
+    final sources = _sourcesProvider?.call() ?? const [];
+    for (final source in sources) {
+      await refresh(source.url, knownChannelIds: source.knownChannelIds);
+    }
+  }
+
+  /// Refreshes one EPG source. [knownChannelIds] scopes both the parse
+  /// filter (see [_parseXmltvStream]'s doc comment) *and* which existing
+  /// entries in [_programs] get replaced — a shared multi-provider EPG
+  /// source can cover vastly more channels than one playlist actually
+  /// has, and refreshing one playlist's source must never wipe another
+  /// playlist's already-cached programmes (the previous single-playlist-
+  /// only version of this method unconditionally cleared the whole map on
+  /// every call, which is exactly wrong once there's more than one
+  /// source). Empty [knownChannelIds] disables filtering entirely rather
+  /// than risking an empty guide if this ever races ahead of the
+  /// playlist's own channels finishing their load.
+  Future<void> refresh(String url,
+      {required Set<String> knownChannelIds}) async {
     if (url.isEmpty) return;
     isLoading = true;
     error = null;
@@ -108,22 +132,33 @@ class EpgService extends ChangeNotifier {
     final client = http.Client();
     try {
       final request = http.Request('GET', Uri.parse(url));
-      final streamedResponse = await client.send(request).timeout(const Duration(seconds: 30));
+      final streamedResponse =
+          await client.send(request).timeout(const Duration(seconds: 30));
       if (streamedResponse.statusCode != 200) {
-        throw Exception('Failed to load EPG (HTTP ${streamedResponse.statusCode})');
+        throw Exception(
+            'Failed to load EPG (HTTP ${streamedResponse.statusCode})');
       }
 
-      // Empty (not just null) also disables filtering — a playlist that
-      // genuinely hasn't loaded any channels yet shouldn't turn "show
-      // everything" into "show nothing" just because this raced ahead of
-      // it.
-      final known = _knownChannelIds?.call();
+      final effectiveFilter =
+          knownChannelIds.isNotEmpty ? knownChannelIds : null;
       final parsed = await _parseXmltvStream(
         streamedResponse.stream,
-        knownChannelIds: (known != null && known.isNotEmpty) ? known : null,
+        knownChannelIds: effectiveFilter,
       ).timeout(const Duration(minutes: 10));
 
-      _programs.clear();
+      // Only ever removes *this source's own* stale entries (channels
+      // that had programmes before but don't appear in this fresh parse)
+      // before merging the new ones in — never a blanket clear. With more
+      // than one playlist sharing this same `_programs` map, a blanket
+      // clear here would wipe every other playlist's already-cached
+      // programmes on every single refresh. When `effectiveFilter` is
+      // null (this playlist's own channels haven't finished loading yet
+      // — see this method's doc comment), skip the stale-removal step
+      // entirely rather than guessing; `addAll` below still merges in
+      // whatever this unfiltered parse found.
+      if (effectiveFilter != null) {
+        _programs.removeWhere((id, _) => effectiveFilter.contains(id));
+      }
       _programs.addAll(parsed);
 
       lastUpdated = DateTime.now();
@@ -168,15 +203,19 @@ class EpgService extends ChangeNotifier {
 
     void finalizeProgramme() {
       if (channelId == null || startRaw == null || stopRaw == null) return;
-      if (knownChannelIds != null && !knownChannelIds.contains(channelId)) return;
+      if (knownChannelIds != null && !knownChannelIds.contains(channelId))
+        return;
       try {
         final start = _parseXmltvTime(startRaw);
         final stop = _parseXmltvTime(stopRaw);
         result.putIfAbsent(channelId, () => []).add(
               EpgProgram(
                 channelId: channelId,
-                title: title?.trim().isNotEmpty == true ? title!.trim() : 'No Title',
-                description: (desc?.trim().isNotEmpty ?? false) ? desc!.trim() : null,
+                title: title?.trim().isNotEmpty == true
+                    ? title!.trim()
+                    : 'No Title',
+                description:
+                    (desc?.trim().isNotEmpty ?? false) ? desc!.trim() : null,
                 start: start,
                 stop: stop,
               ),
@@ -225,7 +264,8 @@ class EpgService extends ChangeNotifier {
           // A self-closing <programme/> has no title/desc children and no
           // matching end event, so it must be recorded right here.
           if (event.isSelfClosing) finalizeProgramme();
-        } else if ((event.name == 'title' || event.name == 'desc') && !event.isSelfClosing) {
+        } else if ((event.name == 'title' || event.name == 'desc') &&
+            !event.isSelfClosing) {
           // Self-closing <title/> / <desc/> carry no text — leave
           // currentTextTag unset so we don't wait on an end event that
           // will never arrive for them.

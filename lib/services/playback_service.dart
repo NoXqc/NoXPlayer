@@ -7,7 +7,7 @@ import 'package:video_player_hdr/video_player_hdr.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/channel.dart';
-import 'app_preferences.dart';
+import 'playlist_manager.dart';
 import 'storage_service.dart';
 
 /// Owns the single, app-wide [VideoPlayerHdrController] for whatever channel
@@ -39,13 +39,13 @@ import 'storage_service.dart';
 /// the same live controller — switching between them is just a different
 /// wrapper around the same video, never a restart.
 class PlaybackService extends ChangeNotifier {
-  PlaybackService(this._storage, this._preferences);
+  PlaybackService(this._storage, this._playlistManager);
 
   static const _recentlyPlayedCacheKey = 'recently_played';
   static const _maxRecentlyPlayed = 30;
 
   final StorageService _storage;
-  final AppPreferences _preferences;
+  final PlaylistManager _playlistManager;
 
   Channel? currentChannel;
   VideoPlayerHdrController? controller;
@@ -179,8 +179,9 @@ class PlaybackService extends ChangeNotifier {
     final raw = await _storage.readCacheFile(_recentlyPlayedCacheKey);
     if (raw == null) return;
     try {
-      _recentlyPlayed =
-          (jsonDecode(raw) as List).map((e) => Channel.fromJson(e as Map<String, dynamic>)).toList();
+      _recentlyPlayed = (jsonDecode(raw) as List)
+          .map((e) => Channel.fromJson(e as Map<String, dynamic>))
+          .toList();
     } catch (_) {
       _recentlyPlayed = [];
     }
@@ -206,8 +207,9 @@ class PlaybackService extends ChangeNotifier {
   /// [silent] is only ever passed by `main.dart`'s cold-start auto-resume
   /// — see [isSilentlyResuming]'s doc comment.
   Future<void> play(Channel channel, {bool silent = false}) async {
-    if (!_preferences.playlistEnabled) {
-      error = 'Playlist is disabled on this device — enable it in Settings > Content Manager to watch.';
+    if (!_playlistManager.isPlaylistEnabled(channel.playlistId)) {
+      error =
+          'This playlist is disabled on this device — enable it in Settings > Playlist Manager to watch.';
       notifyListeners();
       return;
     }
@@ -243,11 +245,15 @@ class PlaybackService extends ChangeNotifier {
     final savedPositionMs = isLive ? 0 : _storage.getLastPosition(channel.id);
     final newController = VideoPlayerHdrController.networkUrl(
       Uri.parse(channel.url),
-      closedCaptionFile: channel.subtitleUrl != null ? _loadCaptions(channel.subtitleUrl!) : null,
+      closedCaptionFile: channel.subtitleUrl != null
+          ? _loadCaptions(channel.subtitleUrl!)
+          : null,
     );
     controller = newController;
 
-    initFuture = newController.initialize(viewType: VideoViewType.platformView).then((_) async {
+    initFuture = newController
+        .initialize(viewType: VideoViewType.platformView)
+        .then((_) async {
       if (savedPositionMs > 0) {
         await newController.seekTo(Duration(milliseconds: savedPositionMs));
       }
@@ -277,14 +283,18 @@ class PlaybackService extends ChangeNotifier {
       // See the doc comment above `isLive` — never persist a "resume
       // point" for a live channel in the first place, not just skip
       // reading one back.
-      if (c != null && ch != null && c.value.isInitialized && !Channel.isLiveId(ch.id)) {
+      if (c != null &&
+          ch != null &&
+          c.value.isInitialized &&
+          !Channel.isLiveId(ch.id)) {
         _storage.setLastPosition(ch.id, c.value.position.inMilliseconds);
         final duration = c.value.duration;
         if (duration > Duration.zero) {
           _storage.setLastDuration(ch.id, duration.inMilliseconds);
           // Auto-advance a season/series near the end.
           final remaining = duration - c.value.position;
-          if (remaining <= const Duration(seconds: 30) && !_autoAdvanceDismissed) {
+          if (remaining <= const Duration(seconds: 30) &&
+              !_autoAdvanceDismissed) {
             final next = _nextInQueue;
             if (next != null) unawaited(play(next));
           }

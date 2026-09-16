@@ -20,7 +20,8 @@ const _passwordLabels = 'password|pass|pwd|psw|pw';
 /// Field labels this parser recognizes when scanning pasted provider text.
 /// Used to split fields apart when a provider's message has zero
 /// whitespace between them (e.g. "38827a0e8cf2Password:f8504889f9").
-const _labelWords = '$_usernameLabels|$_passwordLabels|url|dns|server|domain|type|exp|expiry|backup|m3u';
+const _labelWords =
+    '$_usernameLabels|$_passwordLabels|url|dns|server|domain|type|exp|expiry|backup|m3u';
 
 /// Descriptor words that sometimes get glued directly onto a credential
 /// with no separator (e.g. "f8504889f9SmartTV") — stops a value capture
@@ -28,7 +29,10 @@ const _labelWords = '$_usernameLabels|$_passwordLabels|url|dns|server|domain|typ
 const _descriptorStopWords = r'smarttv|smarters|xtream|enigma|\bmag\b|m3u8?';
 
 class SmartAddResult {
-  const SmartAddResult({required this.serverCandidates, required this.username, required this.password});
+  const SmartAddResult(
+      {required this.serverCandidates,
+      required this.username,
+      required this.password});
 
   /// Every distinct server origin (`scheme://host[:port]`) found in the
   /// pasted text, in best-guess-first order (a real Xtream/M3U stream URL
@@ -41,10 +45,12 @@ class SmartAddResult {
   final String username;
   final String password;
 
-  bool get isEmpty => serverCandidates.isEmpty && username.isEmpty && password.isEmpty;
+  bool get isEmpty =>
+      serverCandidates.isEmpty && username.isEmpty && password.isEmpty;
 }
 
-String _stripTrailingPunctuation(String s) => s.replaceFirst(RegExp(r'''[),.;:'"]+$'''), '');
+String _stripTrailingPunctuation(String s) =>
+    s.replaceFirst(RegExp(r'''[),.;:'"]+$'''), '');
 
 String _normalizeProviderText(String raw) {
   var text = raw.replaceAll('：', ':').replaceAll('＝', '=');
@@ -57,14 +63,18 @@ String _normalizeProviderText(String raw) {
   // Split known field labels glued directly onto preceding text
   // (e.g. "38827a0e8cf2Password:f8504889f9"). Excludes '?'/'&' so this
   // never touches a URL's own query string (e.g. "&type=m3u_plus").
-  final labelRe = RegExp('([^\\s?&])(?=(?:$_labelWords)\\s*[:=])', caseSensitive: false);
+  final labelRe =
+      RegExp('([^\\s?&])(?=(?:$_labelWords)\\s*[:=])', caseSensitive: false);
   text = text.replaceAllMapped(labelRe, (m) => '${m[1]} ');
   return text;
 }
 
 bool _isStreamUrl(String u) {
-  if (RegExp(r'[?&](username|user)=', caseSensitive: false).hasMatch(u)) return true;
-  if (RegExp(r'get\.php|player_api\.php|panel_api\.php|xmltv\.php', caseSensitive: false).hasMatch(u)) {
+  if (RegExp(r'[?&](username|user)=', caseSensitive: false).hasMatch(u))
+    return true;
+  if (RegExp(r'get\.php|player_api\.php|panel_api\.php|xmltv\.php',
+          caseSensitive: false)
+      .hasMatch(u)) {
     return true;
   }
   return false;
@@ -84,7 +94,9 @@ SmartAddResult parseSmartAddText(String raw) {
   final text = _normalizeProviderText(raw);
 
   final urlRegex = RegExp(r'''https?://[^\s"'<>]+''', caseSensitive: false);
-  final foundUrls = urlRegex.allMatches(text).map((m) => _stripTrailingPunctuation(m.group(0)!));
+  final foundUrls = urlRegex
+      .allMatches(text)
+      .map((m) => _stripTrailingPunctuation(m.group(0)!));
   final urls = foundUrls.toSet().toList(); // dedupe, preserve first-seen order
 
   var username = '';
@@ -104,12 +116,14 @@ SmartAddResult parseSmartAddText(String raw) {
     '\\b(?:$_usernameLabels)\\b$labelSeparator([^\\s&]+?)$stopLookahead',
     caseSensitive: false,
   ).firstMatch(text);
-  if (userMatch != null) username = _stripTrailingPunctuation(userMatch.group(1)!);
+  if (userMatch != null)
+    username = _stripTrailingPunctuation(userMatch.group(1)!);
   final passMatch = RegExp(
     '\\b(?:$_passwordLabels)\\b$labelSeparator([^\\s&]+?)$stopLookahead',
     caseSensitive: false,
   ).firstMatch(text);
-  if (passMatch != null) password = _stripTrailingPunctuation(passMatch.group(1)!);
+  if (passMatch != null)
+    password = _stripTrailingPunctuation(passMatch.group(1)!);
 
   final streamUrls = urls.where(_isStreamUrl).toList();
   final plainUrls = urls.where((u) => !_isStreamUrl(u)).toList();
@@ -120,8 +134,10 @@ SmartAddResult parseSmartAddText(String raw) {
   if (streamUrls.isNotEmpty) {
     final parsed = Uri.tryParse(streamUrls.first);
     if (parsed != null) {
-      final qUser = parsed.queryParameters['username'] ?? parsed.queryParameters['user'];
-      final qPass = parsed.queryParameters['password'] ?? parsed.queryParameters['pass'];
+      final qUser =
+          parsed.queryParameters['username'] ?? parsed.queryParameters['user'];
+      final qPass =
+          parsed.queryParameters['password'] ?? parsed.queryParameters['pass'];
       if (username.isEmpty && qUser != null) username = qUser;
       if (password.isEmpty && qPass != null) password = qPass;
     }
@@ -133,5 +149,6 @@ SmartAddResult parseSmartAddText(String raw) {
     if (origin != null && !origins.contains(origin)) origins.add(origin);
   }
 
-  return SmartAddResult(serverCandidates: origins, username: username, password: password);
+  return SmartAddResult(
+      serverCandidates: origins, username: username, password: password);
 }

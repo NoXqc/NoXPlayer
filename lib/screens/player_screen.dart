@@ -66,7 +66,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _isTvLayout = false;
 
   final FocusScopeNode _topScope = FocusScopeNode(debugLabel: 'player-top');
-  final FocusScopeNode _bottomScope = FocusScopeNode(debugLabel: 'player-bottom');
+  final FocusScopeNode _bottomScope =
+      FocusScopeNode(debugLabel: 'player-bottom');
 
   bool get _focusInBar => _topScope.hasFocus || _bottomScope.hasFocus;
 
@@ -133,7 +134,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _handleUp() {
     _resetHideTimer();
     if (_focusInBar) {
-      final moved = FocusManager.instance.primaryFocus?.focusInDirection(TraversalDirection.up) ?? false;
+      final moved = FocusManager.instance.primaryFocus
+              ?.focusInDirection(TraversalDirection.up) ??
+          false;
       if (moved) return;
     }
     if (!_topVisible) {
@@ -146,7 +149,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _handleDown() {
     _resetHideTimer();
     if (_focusInBar) {
-      final moved = FocusManager.instance.primaryFocus?.focusInDirection(TraversalDirection.down) ?? false;
+      final moved = FocusManager.instance.primaryFocus
+              ?.focusInDirection(TraversalDirection.down) ??
+          false;
       if (moved) return;
     }
     if (!_bottomVisible) {
@@ -212,7 +217,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // down this route, not a safe time for another widget's `setState`
     // to land. `_playback` is a long-lived singleton, safe to touch
     // after this widget's own disposal.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _playback.setFullscreenActive(false));
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _playback.setFullscreenActive(false));
     _hideTimer?.cancel();
     _topScope.removeListener(_onBarFocusChange);
     _bottomScope.removeListener(_onBarFocusChange);
@@ -240,187 +246,210 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final channel = playback.currentChannel ?? widget.channel;
     _isTvLayout = prefs.layoutMode == 'tv' ||
         (prefs.layoutMode == 'auto' &&
-            MediaQuery.of(context).size.width >= AppConstants.tvLayoutWidthThreshold);
+            MediaQuery.of(context).size.width >=
+                AppConstants.tvLayoutWidthThreshold);
 
-    return withTvThemeIfNeeded(context, (context) => Scaffold(
-      backgroundColor: Colors.black,
-      body: CallbackShortcuts(
-        bindings: <ShortcutActivator, VoidCallback>{
-          const SingleActivator(LogicalKeyboardKey.arrowUp): _handleUp,
-          const SingleActivator(LogicalKeyboardKey.arrowDown): _handleDown,
-          // Some remotes send a single combined key, others send separate
-          // Play and Pause keys (e.g. a dedicated Pause button) — bound to
-          // the same toggle handler either way, since it already checks
-          // the actual current state rather than assuming.
-          const SingleActivator(LogicalKeyboardKey.mediaPlayPause): _handlePlayPause,
-          const SingleActivator(LogicalKeyboardKey.mediaPlay): _handlePlayPause,
-          const SingleActivator(LogicalKeyboardKey.mediaPause): _handlePlayPause,
-          if (!_focusInBar) ...{
-            const SingleActivator(LogicalKeyboardKey.arrowLeft): () => Navigator.of(context).pop(),
-            // Right never had any established purpose here — it simply had
-            // no handler at all, so with no bar focused (nothing else on
-            // this screen to move to) it fell through to Flutter's
-            // *default* directional focus search across every focusable
-            // widget currently attached, including whatever's still
-            // mounted (just covered, never torn down) on the route
-            // underneath. If that was a big Movies/TV Shows catalog with
-            // hundreds of poster cards, that geometric search over a huge
-            // focus graph is expensive enough to hang weaker hardware —
-            // confirmed on real hardware as a genuine ANR ("Input
-            // dispatching timed out... Waited 5004ms for KeyEvent", CPU at
-            // 186%), not a clean exception: the video kept playing (it's
-            // driven independently of the Dart UI thread) while the UI
-            // froze solid until Android force-killed the app. A no-op here,
-            // same as Left/Up/Down always being consumed, is enough.
-            const SingleActivator(LogicalKeyboardKey.arrowRight): () {},
-          },
-        },
-        child: Focus(
-          autofocus: true,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _revealBottomOnTap,
-            // No outer SafeArea here (deliberately — it was tried and
-            // wasn't the fix; left off anyway since it's unneeded once the
-            // real bug below is fixed). The top/bottom bars keep their own
-            // narrow `SafeArea(bottom: false)` for their own content.
-            //
-            // Every entry in this Stack's children list must resolve to a
-            // `Positioned` widget, with no exceptions — see [_UpNextBubble]
-            // for why: Stack only sizes itself to fill the available space
-            // (`constraints.biggest`) when *every* child is `Positioned`;
-            // a single non-positioned child (even a zero-size
-            // `SizedBox.shrink()`) makes Stack size itself to fit that
-            // child instead, which was collapsing this entire Stack —
-            // video included — to 0x0 whenever `_UpNextBubble` had nothing
-            // to show (i.e. essentially always). That was the actual cause
-            // of the black fullscreen screen.
-            child: Stack(
-              children: [
-                  Positioned.fill(
-                    // See HomeScreen's identical fix for why this is
-                    // keyed to the channel rather than const.
-                    child: VideoPlayerPane(
-                      key: ValueKey(channel.id),
-                      showControls: false,
-                      showEpgBar: false,
-                    ),
-                  ),
+    return withTvThemeIfNeeded(
+        context,
+        (context) => Scaffold(
+              backgroundColor: Colors.black,
+              body: CallbackShortcuts(
+                bindings: <ShortcutActivator, VoidCallback>{
+                  const SingleActivator(LogicalKeyboardKey.arrowUp): _handleUp,
+                  const SingleActivator(LogicalKeyboardKey.arrowDown):
+                      _handleDown,
+                  // Some remotes send a single combined key, others send separate
+                  // Play and Pause keys (e.g. a dedicated Pause button) — bound to
+                  // the same toggle handler either way, since it already checks
+                  // the actual current state rather than assuming.
+                  const SingleActivator(LogicalKeyboardKey.mediaPlayPause):
+                      _handlePlayPause,
+                  const SingleActivator(LogicalKeyboardKey.mediaPlay):
+                      _handlePlayPause,
+                  const SingleActivator(LogicalKeyboardKey.mediaPause):
+                      _handlePlayPause,
+                  if (!_focusInBar) ...{
+                    const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+                        Navigator.of(context).pop(),
+                    // Right never had any established purpose here — it simply had
+                    // no handler at all, so with no bar focused (nothing else on
+                    // this screen to move to) it fell through to Flutter's
+                    // *default* directional focus search across every focusable
+                    // widget currently attached, including whatever's still
+                    // mounted (just covered, never torn down) on the route
+                    // underneath. If that was a big Movies/TV Shows catalog with
+                    // hundreds of poster cards, that geometric search over a huge
+                    // focus graph is expensive enough to hang weaker hardware —
+                    // confirmed on real hardware as a genuine ANR ("Input
+                    // dispatching timed out... Waited 5004ms for KeyEvent", CPU at
+                    // 186%), not a clean exception: the video kept playing (it's
+                    // driven independently of the Dart UI thread) while the UI
+                    // froze solid until Android force-killed the app. A no-op here,
+                    // same as Left/Up/Down always being consumed, is enough.
+                    const SingleActivator(LogicalKeyboardKey.arrowRight): () {},
+                  },
+                },
+                child: Focus(
+                  autofocus: true,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _revealBottomOnTap,
+                    // No outer SafeArea here (deliberately — it was tried and
+                    // wasn't the fix; left off anyway since it's unneeded once the
+                    // real bug below is fixed). The top/bottom bars keep their own
+                    // narrow `SafeArea(bottom: false)` for their own content.
+                    //
+                    // Every entry in this Stack's children list must resolve to a
+                    // `Positioned` widget, with no exceptions — see [_UpNextBubble]
+                    // for why: Stack only sizes itself to fill the available space
+                    // (`constraints.biggest`) when *every* child is `Positioned`;
+                    // a single non-positioned child (even a zero-size
+                    // `SizedBox.shrink()`) makes Stack size itself to fit that
+                    // child instead, which was collapsing this entire Stack —
+                    // video included — to 0x0 whenever `_UpNextBubble` had nothing
+                    // to show (i.e. essentially always). That was the actual cause
+                    // of the black fullscreen screen.
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          // See HomeScreen's identical fix for why this is
+                          // keyed to the channel rather than const.
+                          child: VideoPlayerPane(
+                            key: ValueKey(channel.id),
+                            showControls: false,
+                            showEpgBar: false,
+                          ),
+                        ),
 
-                  // Top bar: back, current/next EPG line (live only), search,
-                  // fullscreen toggle. Positioned has to be the outermost
-                  // widget of this Stack entry — burying it under
-                  // ExcludeFocus/AnimatedOpacity (as an earlier draft of
-                  // this did) breaks Stack's "nearest RenderObjectWidget
-                  // ancestor" resolution for Positioned's parent data.
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: ExcludeFocus(
-                      excluding: !_topVisible,
-                      child: AnimatedOpacity(
-                        opacity: _topVisible ? 1 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: FocusTraversalGroup(
-                          child: FocusScope(
-                            node: _topScope,
-                            child: Container(
-                              color: Colors.black54,
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                              child: SafeArea(
-                                bottom: false,
-                                child: Row(
-                                  children: [
-                                    _TopBarIconButton(
-                                      icon: Icons.arrow_back,
-                                      tooltip: 'Back',
-                                      onPressed: () => Navigator.of(context).pop(),
-                                    ),
-                                    Expanded(
-                                      child: _searchScope == 'TV'
-                                          ? EpgGuide(channelId: channel.id)
-                                          : Text(
-                                              channel.name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                              style: const TextStyle(color: Colors.white),
+                        // Top bar: back, current/next EPG line (live only), search,
+                        // fullscreen toggle. Positioned has to be the outermost
+                        // widget of this Stack entry — burying it under
+                        // ExcludeFocus/AnimatedOpacity (as an earlier draft of
+                        // this did) breaks Stack's "nearest RenderObjectWidget
+                        // ancestor" resolution for Positioned's parent data.
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: ExcludeFocus(
+                            excluding: !_topVisible,
+                            child: AnimatedOpacity(
+                              opacity: _topVisible ? 1 : 0,
+                              duration: const Duration(milliseconds: 200),
+                              child: FocusTraversalGroup(
+                                child: FocusScope(
+                                  node: _topScope,
+                                  child: Container(
+                                    color: Colors.black54,
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 4, vertical: 4),
+                                    child: SafeArea(
+                                      bottom: false,
+                                      child: Row(
+                                        children: [
+                                          _TopBarIconButton(
+                                            icon: Icons.arrow_back,
+                                            tooltip: 'Back',
+                                            onPressed: () =>
+                                                Navigator.of(context).pop(),
+                                          ),
+                                          Expanded(
+                                            child: _searchScope == 'TV'
+                                                ? EpgGuide(
+                                                    channelId: channel.id)
+                                                : Text(
+                                                    channel.name,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                        color: Colors.white),
+                                                  ),
+                                          ),
+                                          _TopBarIconButton(
+                                            icon: Icons.search,
+                                            tooltip: 'Search',
+                                            onPressed: () =>
+                                                Navigator.of(context).push(
+                                              MaterialPageRoute(
+                                                builder: (_) => SearchScreen(
+                                                    initialScope: _searchScope),
+                                              ),
                                             ),
-                                    ),
-                                    _TopBarIconButton(
-                                      icon: Icons.search,
-                                      tooltip: 'Search',
-                                      onPressed: () => Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) => SearchScreen(initialScope: _searchScope),
-                                        ),
+                                          ),
+                                          _TopBarIconButton(
+                                            icon: _immersive
+                                                ? Icons.fullscreen_exit
+                                                : Icons.fullscreen,
+                                            tooltip: _immersive
+                                                ? 'Exit fullscreen'
+                                                : 'Fullscreen',
+                                            onPressed: _toggleImmersive,
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                    _TopBarIconButton(
-                                      icon: _immersive ? Icons.fullscreen_exit : Icons.fullscreen,
-                                      tooltip: _immersive ? 'Exit fullscreen' : 'Fullscreen',
-                                      onPressed: _toggleImmersive,
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
-                  ),
 
-                  // Bottom bar: title, seek bar, play/pause.
-                  if (controller != null)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: ExcludeFocus(
-                        excluding: !_bottomVisible,
-                        child: AnimatedOpacity(
-                          opacity: _bottomVisible ? 1 : 0,
-                          duration: const Duration(milliseconds: 200),
-                          child: FocusTraversalGroup(
-                            child: FocusScope(
-                              node: _bottomScope,
-                              child: PlayerControls(
-                                controller: controller,
-                                title: channel.name,
-                                channelId: channel.id,
-                                isLive: Channel.isLiveId(channel.id),
-                                isFavorite: channel.isFavorite,
-                                onToggleFavorite: () => playlist.toggleFavorite(channel),
-                                onPrevious: playback.previousUpChannel != null
-                                    ? () => playback.play(playback.previousUpChannel!)
-                                    : null,
-                                onNext: playback.nextUpChannel != null
-                                    ? () => playback.play(playback.nextUpChannel!)
-                                    : null,
+                        // Bottom bar: title, seek bar, play/pause.
+                        if (controller != null)
+                          Positioned(
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            child: ExcludeFocus(
+                              excluding: !_bottomVisible,
+                              child: AnimatedOpacity(
+                                opacity: _bottomVisible ? 1 : 0,
+                                duration: const Duration(milliseconds: 200),
+                                child: FocusTraversalGroup(
+                                  child: FocusScope(
+                                    node: _bottomScope,
+                                    child: PlayerControls(
+                                      controller: controller,
+                                      title: channel.name,
+                                      channelId: channel.id,
+                                      isLive: Channel.isLiveId(channel.id),
+                                      isFavorite: channel.isFavorite,
+                                      onToggleFavorite: () =>
+                                          playlist.toggleFavorite(channel),
+                                      onPrevious: playback.previousUpChannel !=
+                                              null
+                                          ? () => playback
+                                              .play(playback.previousUpChannel!)
+                                          : null,
+                                      onNext: playback.nextUpChannel != null
+                                          ? () => playback
+                                              .play(playback.nextUpChannel!)
+                                          : null,
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                    ),
 
-                  if (controller != null)
-                    _UpNextBubble(
-                      controller: controller,
-                      nextChannel: playback.nextUpChannel,
-                      onPlayNow: () {
-                        final next = playback.nextUpChannel;
-                        if (next != null) playback.play(next);
-                      },
-                      onDismiss: playback.dismissAutoAdvance,
+                        if (controller != null)
+                          _UpNextBubble(
+                            controller: controller,
+                            nextChannel: playback.nextUpChannel,
+                            onPlayNow: () {
+                              final next = playback.nextUpChannel;
+                              if (next != null) playback.play(next);
+                            },
+                            onDismiss: playback.dismissAutoAdvance,
+                          ),
+                      ],
                     ),
-                ],
+                  ),
+                ),
               ),
-          ),
-        ),
-      ),
-    ));
+            ));
   }
 }
 
@@ -459,7 +488,8 @@ class _UpNextBubble extends StatelessWidget {
   // cause of the black fullscreen screen; confirmed via a LayoutBuilder +
   // RenderBox size dump (NOX_DIAG) showing bounded incoming constraints
   // but a 0x0 resulting Stack size.
-  static const _hidden = Positioned(right: 24, bottom: 110, width: 0, height: 0, child: SizedBox.shrink());
+  static const _hidden = Positioned(
+      right: 24, bottom: 110, width: 0, height: 0, child: SizedBox.shrink());
 
   @override
   Widget build(BuildContext context) {
@@ -498,7 +528,8 @@ class _UpNextBubble extends StatelessWidget {
                           ? CachedNetworkImage(
                               imageUrl: next.logoUrl!,
                               fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) => const _UpNextFallbackIcon(),
+                              errorWidget: (_, __, ___) =>
+                                  const _UpNextFallbackIcon(),
                             )
                           : const _UpNextFallbackIcon(),
                     ),
@@ -509,17 +540,23 @@ class _UpNextBubble extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text('Up Next', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                        const Text('Up Next',
+                            style:
+                                TextStyle(color: Colors.white70, fontSize: 12)),
                         Text(
                           next.name,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          countdown > 0 ? 'Playing in ${countdown}s' : 'Playing now...',
-                          style: const TextStyle(color: Colors.white54, fontSize: 12),
+                          countdown > 0
+                              ? 'Playing in ${countdown}s'
+                              : 'Playing now...',
+                          style: const TextStyle(
+                              color: Colors.white54, fontSize: 12),
                         ),
                       ],
                     ),
@@ -528,12 +565,14 @@ class _UpNextBubble extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.play_circle_fill, color: Colors.white, size: 30),
+                        icon: const Icon(Icons.play_circle_fill,
+                            color: Colors.white, size: 30),
                         tooltip: 'Play now',
                         onPressed: onPlayNow,
                       ),
                       IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white54, size: 18),
+                        icon: const Icon(Icons.close,
+                            color: Colors.white54, size: 18),
                         tooltip: 'Dismiss',
                         onPressed: onDismiss,
                       ),
@@ -569,7 +608,8 @@ class _UpNextFallbackIcon extends StatelessWidget {
 /// (Material+InkWell+onFocusChange, e.g. TvHomeScreen's _SelectableRow): a
 /// solid filled circle behind the icon while focused.
 class _TopBarIconButton extends StatefulWidget {
-  const _TopBarIconButton({required this.icon, required this.onPressed, this.tooltip});
+  const _TopBarIconButton(
+      {required this.icon, required this.onPressed, this.tooltip});
 
   final IconData icon;
   final VoidCallback onPressed;
@@ -588,7 +628,8 @@ class _TopBarIconButtonState extends State<_TopBarIconButton> {
     // Same translucent-white-fill swap as everywhere else for Minimalist
     // — see `_tvButtonStyle`'s doc comment.
     final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
-    final focusFill = isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
+    final focusFill =
+        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
     final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
     final button = Padding(
       padding: const EdgeInsets.all(4),
@@ -601,11 +642,14 @@ class _TopBarIconButtonState extends State<_TopBarIconButton> {
           onFocusChange: (f) => setState(() => _focused = f),
           child: Padding(
             padding: const EdgeInsets.all(10),
-            child: Icon(widget.icon, color: _focused ? focusForeground : Colors.white, size: 22),
+            child: Icon(widget.icon,
+                color: _focused ? focusForeground : Colors.white, size: 22),
           ),
         ),
       ),
     );
-    return widget.tooltip != null ? Tooltip(message: widget.tooltip!, child: button) : button;
+    return widget.tooltip != null
+        ? Tooltip(message: widget.tooltip!, child: button)
+        : button;
   }
 }
