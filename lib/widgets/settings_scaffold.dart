@@ -68,6 +68,12 @@ class _SettingsGradientBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.watch<AppPreferences>().palette;
+    // Flat black, no gradient at all — the whole point of the
+    // Minimalist palette. Everything painted on top of this (panels,
+    // focus fills) already goes translucent-white/"glass" instead of a
+    // saturated color for this same palette, so this stays a true flat
+    // black rather than a very-dark tint of it.
+    if (palette.isMinimal) return const ColoredBox(color: Colors.black);
     return DecoratedBox(
       decoration: BoxDecoration(
         gradient: LinearGradient(

@@ -184,7 +184,10 @@ class _NoxIptvAppState extends State<NoxIptvApp> with SingleTickerProviderStateM
       _catalogDb = CatalogDatabase();
 
       _playlistManager = PlaylistManager(_storage, _catalogDb);
-      _epgService = EpgService(_storage);
+      // See EpgService._knownChannelIds' doc comment — this is what lets
+      // a huge shared EPG source get filtered down to just the channels
+      // this playlist actually has instead of retaining all of them.
+      _epgService = EpgService(_storage, knownChannelIds: () => _playlistManager.channels.map((c) => c.id).toSet());
       _playbackService = PlaybackService(_storage, _preferences);
 
       // Restores category lists (small, fast regardless of catalog size —

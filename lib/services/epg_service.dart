@@ -39,9 +39,28 @@ String _encodeEpgCache(Map<String, List<EpgProgram>> programs) {
 /// something to show immediately on launch, before the first network
 /// refresh completes.
 class EpgService extends ChangeNotifier {
-  EpgService(this._storage);
+  EpgService(this._storage, {Set<String> Function()? knownChannelIds}) : _knownChannelIds = knownChannelIds;
 
   final StorageService _storage;
+
+  /// Wired in `main.dart` to `PlaylistManager.channels`' ids — lets
+  /// [_parseXmltvStream] discard `<programme>` entries for channels the
+  /// user's own playlist doesn't even have, instead of holding every
+  /// single one the EPG source provides in memory. Confirmed directly as
+  /// the cause of a real hard crash (not a catchable Dart exception —
+  /// Android's own OOM kill, since a full 100MB+ XMLTV feed with no
+  /// per-programme filter is easily millions of retained EpgProgram
+  /// objects for a big shared multi-provider EPG source): reported after
+  /// tapping "Update EPG" for the first time on a 28,000+-live-channel
+  /// Xtream account, no crash log obtainable (a real phone, not one of
+  /// the ADB-reachable test devices) but this is the one unbounded
+  /// allocation anywhere in the EPG pipeline — everything else here
+  /// already streams events instead of building a DOM specifically to
+  /// avoid exactly this class of crash (see this class's other doc
+  /// comments). Null (the default) disables filtering entirely rather
+  /// than risk showing an empty guide if this ever races ahead of the
+  /// playlist actually loading.
+  final Set<String> Function()? _knownChannelIds;
 
   final Map<String, List<EpgProgram>> _programs = {};
   DateTime? lastUpdated;
@@ -94,8 +113,15 @@ class EpgService extends ChangeNotifier {
         throw Exception('Failed to load EPG (HTTP ${streamedResponse.statusCode})');
       }
 
-      final parsed = await _parseXmltvStream(streamedResponse.stream)
-          .timeout(const Duration(minutes: 10));
+      // Empty (not just null) also disables filtering — a playlist that
+      // genuinely hasn't loaded any channels yet shouldn't turn "show
+      // everything" into "show nothing" just because this raced ahead of
+      // it.
+      final known = _knownChannelIds?.call();
+      final parsed = await _parseXmltvStream(
+        streamedResponse.stream,
+        knownChannelIds: (known != null && known.isNotEmpty) ? known : null,
+      ).timeout(const Duration(minutes: 10));
 
       _programs.clear();
       _programs.addAll(parsed);
@@ -119,7 +145,18 @@ class EpgService extends ChangeNotifier {
   /// over 100MB of XML, and loading that into one String plus a full
   /// [XmlDocument] tree is exactly the kind of allocation that triggers an
   /// OutOfMemoryError on a phone's capped per-app heap.
-  Future<Map<String, List<EpgProgram>>> _parseXmltvStream(Stream<List<int>> byteStream) async {
+  ///
+  /// [knownChannelIds], when non-null, discards a `<programme>` for any
+  /// channel not in it right at parse time instead of retaining it — a
+  /// shared multi-provider EPG source routinely covers far more channels
+  /// than any one playlist actually has, and retaining every one of them
+  /// is the one *unbounded* allocation left in this otherwise-streaming
+  /// pipeline (see this method's own doc comment above, and
+  /// [EpgService._knownChannelIds]).
+  Future<Map<String, List<EpgProgram>>> _parseXmltvStream(
+    Stream<List<int>> byteStream, {
+    Set<String>? knownChannelIds,
+  }) async {
     final result = <String, List<EpgProgram>>{};
 
     String? channelId;
@@ -131,6 +168,7 @@ class EpgService extends ChangeNotifier {
 
     void finalizeProgramme() {
       if (channelId == null || startRaw == null || stopRaw == null) return;
+      if (knownChannelIds != null && !knownChannelIds.contains(channelId)) return;
       try {
         final start = _parseXmltvTime(startRaw);
         final stop = _parseXmltvTime(stopRaw);

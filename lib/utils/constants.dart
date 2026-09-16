@@ -34,23 +34,25 @@ class AppConstants {
   /// the user just "installed" the new file) — this reads whatever code
   /// is actually running, independent of any of that.
   static const String buildMarker =
-      '3.28.0 — Actually fixed the Group Management checkbox freeze on a '
-      'fresh Xtream login (the earlier Icon-swap fix only masked a '
-      'different, older issue). Root cause, found via a debug-mode-only '
-      'Flutter assertion: PlaylistManager fired notifyListeners() '
-      'synchronously *during* TvHomeScreen\'s own build — "allowed" by '
-      'Flutter but fragile, and confirmed on real hardware to leave '
-      'release-mode rendering in a state where nothing on the '
-      'Group Management screen visually updates again for the rest of '
-      'that screen\'s life, even though the underlying show/hide data '
-      'was always correct. Deferred that notification by a frame; '
-      'confirmed fixed end-to-end on a real Fire Stick, same exact '
-      'repro as before. Also includes everything from 3.27.0: explicit '
-      'Previous/Next episode buttons in the player; hardware Play/Pause '
-      'key support; Add Playlist\'s "Smart Add" paste-and-parse tab; the '
-      'Settings redesign; persistent poster-image caching; and the main '
-      'Live TV/Movies/TV Shows screen\'s bright gradient background and '
-      'rounded, bordered live-preview pane.';
+      '3.29.0 — Fixed a real crash on "Update EPG" for large multi-'
+      'provider EPG sources: programme data was being retained for every '
+      'channel the EPG source covers, not just the ones in your actual '
+      'playlist, which on a big shared EPG feed could be a multi-million-'
+      'object unbounded allocation and a native out-of-memory kill. Now '
+      'filtered down to just the playlist\'s own channels while parsing. '
+      'Also fixed Add Playlist\'s "Smart Add" paste box getting the '
+      'remote\'s Select button stuck reopening the on-screen keyboard '
+      'instead of moving on to Parse. Also includes everything from '
+      '3.28.0: the real fix for the Group Management checkbox freeze on '
+      'a fresh Xtream login (the earlier Icon-swap fix only masked a '
+      'different, older issue) — root cause was PlaylistManager firing '
+      'notifyListeners() synchronously *during* TvHomeScreen\'s own '
+      'build, "allowed" by Flutter but fragile, confirmed fixed end-to-'
+      'end on a real Fire Stick. And from 3.27.0: explicit Previous/Next '
+      'episode buttons in the player; hardware Play/Pause key support; '
+      'the Settings redesign; persistent poster-image caching; and the '
+      'main Live TV/Movies/TV Shows screen\'s bright gradient background '
+      'and rounded, bordered live-preview pane.';
 
   // SharedPreferences keys.
   static const String keyM3uUrl = 'nox_m3u_url';
@@ -134,6 +136,16 @@ class AppConstants {
       label: 'Dark / Gold',
       primary: Color(0xFFD4AF37),
       secondary: Color(0xFF8C6D1F),
+    ),
+    // Same purple/magenta as the palette above — not shown as a colored
+    // gradient/fill anywhere (see CyberpunkPalette.isMinimal), just kept
+    // as the wordmark's own accent so it isn't plain white too.
+    CyberpunkPalette(
+      id: 'minimal',
+      label: 'Minimalist',
+      primary: Color(0xFF7C3AED),
+      secondary: Color(0xFFE91E8C),
+      isMinimal: true,
     ),
   ];
 

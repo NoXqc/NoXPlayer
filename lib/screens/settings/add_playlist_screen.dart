@@ -74,6 +74,17 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   final _usernameFocus = FocusNode();
   final _passwordFocus = FocusNode();
 
+  /// Smart Add's paste box and Parse button — reported directly: with no
+  /// `onSubmitted` wired here (unlike every other field on this screen),
+  /// pressing the remote's Select button on the keyboard's own action key
+  /// did nothing reliable, leaving the user stuck unable to reach "Add
+  /// Playlist" at all. Only need a *forward* path here (paste box ->
+  /// Parse), unlike the other fields' full escape mechanism below — this
+  /// is the only text field on its stage, so there's no sibling to escape
+  /// *between*, just one to escape *out of*.
+  final _smartPasteFocus = FocusNode();
+  final _parseButtonFocus = FocusNode();
+
   /// Target for the last field's "Done" action in each mode — landing on
   /// `.unfocus()` moved focus to the ambient scope rather than anywhere
   /// specific, which then made the *next* Down press restart from the
@@ -143,6 +154,8 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
     _usernameFocus.dispose();
     _passwordFocus.dispose();
     _addButtonFocus.dispose();
+    _smartPasteFocus.dispose();
+    _parseButtonFocus.dispose();
     super.dispose();
   }
 
@@ -474,6 +487,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
               const SizedBox(height: 8),
               TextField(
                 controller: _smartPasteController,
+                focusNode: _smartPasteFocus,
                 maxLines: 6,
                 minLines: 3,
                 decoration: const InputDecoration(
@@ -482,9 +496,18 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                   alignLabelWithHint: true,
                   border: OutlineInputBorder(),
                 ),
+                // A paste (the normal way this field gets filled, via the
+                // Fire Stick's QR-code-to-phone-keyboard relay) inserts the
+                // whole multi-line block directly — it doesn't need the
+                // IME's own return key to type newlines one at a time, so
+                // claiming that key for a real "next field" action instead
+                // costs nothing real.
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _parseButtonFocus.requestFocus(),
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
+                focusNode: _parseButtonFocus,
                 icon: const Icon(Icons.auto_fix_high),
                 label: const Text('Parse'),
                 onPressed: _handleSmartParse,

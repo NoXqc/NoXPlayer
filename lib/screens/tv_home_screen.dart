@@ -2207,7 +2207,14 @@ class _TvTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    // Deliberately the palette's own colors, not `Theme.of(context)
+    // .colorScheme` — for the Minimalist palette specifically, that
+    // scheme's primary/secondary are a neutral white/light-gray (see
+    // `withTvThemeIfNeeded`), which would otherwise turn the wordmark
+    // plain white too. Every other palette's `primary`/`secondary` are
+    // already identical to what the scheme derives from them, so this
+    // changes nothing for them.
+    final palette = context.watch<AppPreferences>().palette;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
@@ -2215,7 +2222,7 @@ class _TvTopBar extends StatelessWidget {
           ShaderMask(
             blendMode: BlendMode.srcIn,
             shaderCallback: (bounds) =>
-                LinearGradient(colors: [scheme.primary, scheme.secondary]).createShader(bounds),
+                LinearGradient(colors: [palette.primary, palette.secondary]).createShader(bounds),
             child: const Text(
               AppConstants.appName,
               // Was bumped to 64 thinking this was the launcher banner text
