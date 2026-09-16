@@ -49,6 +49,31 @@ class AppUpdateService {
       headers: {'Accept': 'application/vnd.github+json'},
     ).timeout(const Duration(seconds: 15));
     if (response.statusCode != 200) {
+      // A bare "HTTP 403" reads as a permissions problem, but the actual
+      // cause here is almost always GitHub's unauthenticated API rate
+      // limit (60 requests/hour, shared by *every* device on the same
+      // home network's public IP) — easy to hit when there's more than
+      // one box/phone on the same network each tapping this button.
+      // `X-RateLimit-Remaining: 0` distinguishes that specifically so the
+      // message actually says what's wrong instead of leaving it a
+      // mystery, e.g. "check again in the browser and it just works" the
+      // next hour once the window resets.
+      if (response.statusCode == 403 &&
+          response.headers['x-ratelimit-remaining'] == '0') {
+        final resetHeader = response.headers['x-ratelimit-reset'];
+        final resetSeconds = int.tryParse(resetHeader ?? '');
+        final waitMinutes = resetSeconds == null
+            ? null
+            : ((DateTime.fromMillisecondsSinceEpoch(resetSeconds * 1000)
+                        .difference(DateTime.now())
+                        .inSeconds) /
+                    60)
+                .ceil();
+        throw Exception(
+          'GitHub is temporarily rate-limiting update checks from this '
+          'network${waitMinutes != null && waitMinutes > 0 ? ' — try again in about $waitMinutes minute${waitMinutes == 1 ? '' : 's'}' : ' — try again shortly'}.',
+        );
+      }
       throw Exception('GitHub returned HTTP ${response.statusCode}');
     }
 
@@ -99,8 +124,7 @@ class AppUpdateService {
   /// newer. Confirmed as a real, user-visible bug: a release tagged
   /// "v3.31.0" reported "up to date" to a phone still on 3.29.0.
   List<int> _versionParts(String version) {
-    final stripped =
-        version.startsWith('v') ? version.substring(1) : version;
+    final stripped = version.startsWith('v') ? version.substring(1) : version;
     return stripped.split('.').map((s) => int.tryParse(s) ?? 0).toList();
   }
 
