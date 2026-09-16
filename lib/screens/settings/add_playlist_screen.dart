@@ -631,9 +631,21 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                             border: OutlineInputBorder(),
                           ),
                           textInputAction: TextInputAction.next,
+                          // Was jumping straight to the M3U/Server field,
+                          // skipping the "Playlist source" row entirely —
+                          // reported directly on a Fire Stick specifically,
+                          // where the remote's physical Back button doesn't
+                          // close the on-screen keyboard the way it does on
+                          // a Formuler box (so a user there is more likely
+                          // to reach for the keyboard's own submit key next,
+                          // making this the actual path they hit, not a
+                          // rare one). [_handleFieldEscapeKey]'s Up-arrow
+                          // handling right below already treats the mode
+                          // row as this field's one real neighbor — this
+                          // just matches that via the keyboard's submit
+                          // action too, instead of skipping past it.
                           onSubmitted: (_) =>
-                              (_mode == 'm3u' ? _m3uFocus : _serverFocus)
-                                  .requestFocus(),
+                              _currentModeButtonFocus.requestFocus(),
                         ),
                         const SizedBox(height: 16),
                         const SectionLabel('Playlist source'),
