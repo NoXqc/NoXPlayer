@@ -592,7 +592,29 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       // group should land back on that same group, not jump away to
       // whatever's live.
       if (context.read<PlaybackService>().isFullscreenActive) {
-        setState(() => _selectedGroup = null);
+        // Reported directly: picking a channel from the pinned
+        // "Favourites" entry (_favoritesGroupSentinel — a real channel's
+        // *own* group is never this value, it's synthetic), going
+        // fullscreen, then leaving fullscreen again landed back on that
+        // channel's real category instead of staying on Favourites. The
+        // blanket reset above is otherwise harmless for a real group (see
+        // _effectiveLiveGroup's own fallback to the playing channel's
+        // group — resetting to null and leaving a real group selected
+        // that already matches the playing channel resolve to the exact
+        // same displayed group either way), but Favourites is never one
+        // of the real groups that fallback searches, so resetting it
+        // always loses the selection outright. Keep it selected here
+        // specifically when it's still true to what's actually playing.
+        final playing = context.read<PlaybackService>().currentChannel;
+        final stayOnFavorites = _selectedGroup == _favoritesGroupSentinel &&
+            playing != null &&
+            context
+                .read<PlaylistManager>()
+                .favoriteLiveChannels
+                .any((c) => c.id == playing.id);
+        if (!stayOnFavorites) {
+          setState(() => _selectedGroup = null);
+        }
       }
       _restoreLiveFocus();
       return;
