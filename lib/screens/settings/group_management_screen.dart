@@ -7,6 +7,7 @@ import '../../services/playlist_manager.dart';
 import '../../utils/tv_theme.dart';
 import '../../widgets/mode_button.dart';
 import '../../widgets/settings_scaffold.dart';
+import '../../widgets/tv_app_bar_button.dart';
 
 /// Lists every group/category (live, movies, TV shows) — including hidden
 /// ones, which is the whole point of this screen — with per-group and
@@ -212,14 +213,13 @@ class _GroupManagementScreenState extends State<GroupManagementScreen>
               // matters here specifically: it decides whether to start
               // downloading everything not yet hidden.
               actions: [
-                TextButton(
+                TvAppBarButton.label(
+                  label: 'Done',
                   focusNode: _doneButtonFocusNode,
-                  onPressed: () {
+                  onTap: () {
                     setState(() => _allowPop = true);
                     Navigator.of(context).pop(true);
                   },
-                  child:
-                      const Text('Done', style: TextStyle(color: Colors.white)),
                 ),
               ],
               bottom: TabBar(

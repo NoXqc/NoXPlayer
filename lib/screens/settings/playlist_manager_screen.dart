@@ -11,6 +11,7 @@ import '../../widgets/mode_button.dart';
 import '../../widgets/section_label.dart';
 import '../../widgets/settings_panel.dart';
 import '../../widgets/settings_scaffold.dart';
+import '../../widgets/tv_app_bar_button.dart';
 import '../../widgets/tv_switch_list_tile.dart';
 import 'add_playlist_screen.dart';
 import 'group_management_screen.dart';
@@ -175,19 +176,19 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
         (context) => SettingsScaffold(
               title: profile.name,
               actions: [
-                IconButton(
+                TvAppBarButton.icon(
+                  icon: Icons.edit_outlined,
                   tooltip: 'Edit login',
-                  icon: const Icon(Icons.edit_outlined),
-                  onPressed: () => Navigator.of(context).push(
+                  onTap: () => Navigator.of(context).push(
                     MaterialPageRoute(
                         builder: (_) =>
                             AddPlaylistScreen(editPlaylistId: profile.id)),
                   ),
                 ),
-                IconButton(
+                TvAppBarButton.icon(
+                  icon: Icons.delete_outline,
                   tooltip: 'Delete playlist',
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () => _confirmDelete(playlist, profile),
+                  onTap: () => _confirmDelete(playlist, profile),
                 ),
               ],
               // Quadrant layout (Login Details | Content Overview side by
@@ -284,6 +285,26 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
                                         Theme.of(context).textTheme.bodySmall,
                                   ),
                                 ),
+                              // Persisted, unlike "Last updated" above
+                              // (only ever set in-memory during a live
+                              // add/edit — resets to nothing on every
+                              // cold restart regardless of which playlist
+                              // it is). Reported directly as needed after
+                              // several failed add attempts against the
+                              // same login silently left duplicate
+                              // profiles behind (fixed separately) — with
+                              // several identically-named entries and no
+                              // "Last updated" to go by post-restart,
+                              // there was no way to tell which one was
+                              // the original, deliberately-configured
+                              // playlist apart from the orphaned retries.
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'Added: ${DateFormat('yyyy-MM-dd HH:mm').format(profile.createdAt)}',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ),
                               const SizedBox(height: 16),
                               OutlinedButton.icon(
                                 icon: const Icon(Icons.visibility_outlined),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../services/app_preferences.dart';
+import 'tv_app_bar_button.dart';
 
 /// Every Settings-family screen's background used to be whatever flat,
 /// near-black surface `ThemeData.scaffoldBackgroundColor` happened to
@@ -46,6 +47,24 @@ class SettingsScaffold extends StatelessWidget {
           appBar: AppBar(
             backgroundColor: Colors.transparent,
             elevation: 0,
+            // Replaces the implicit default back button — reported
+            // directly: "the back arrow, edit and delete is barely
+            // visible... that's the case for every page." Flutter's own
+            // default focus indicator for an AppBar's back button is a
+            // faint ripple/overlay, not the solid-fill-on-real-focus this
+            // app established everywhere else via ModeButton.
+            // TvAppBarButton is that same fix, sized for the app bar.
+            leading: Builder(
+              builder: (context) => ModalRoute.of(context)?.canPop ?? false
+                  ? Center(
+                      child: TvAppBarButton.icon(
+                        icon: Icons.arrow_back,
+                        tooltip: 'Back',
+                        onTap: () => Navigator.of(context).pop(),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
+            ),
             title: Text(title),
             actions: actions,
             bottom: bottom,
