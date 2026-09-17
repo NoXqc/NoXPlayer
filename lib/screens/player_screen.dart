@@ -437,6 +437,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                           ? () => playback
                                               .play(playback.nextUpChannel!)
                                           : null,
+                                      onActivity: _resetHideTimer,
                                     ),
                                   ),
                                 ),

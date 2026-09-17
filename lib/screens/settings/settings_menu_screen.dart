@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/app_preferences.dart';
@@ -71,8 +72,31 @@ class SettingsMenuScreen extends StatelessWidget {
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const CheckUpdatesScreen())),
                   ),
+                  // Reads whatever code is actually running via
+                  // PackageInfo (same source CheckUpdatesScreen's
+                  // "Current version" line uses) rather than a hand-typed
+                  // constant — requested directly, after the previous
+                  // buildMarker string (a version number plus a long
+                  // hand-maintained per-release changelog) was replaced
+                  // with just the line below: "so I can confirm easily
+                  // the current version inside the app" needed *some*
+                  // version stamp back, just not the changelog text.
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: FutureBuilder<PackageInfo>(
+                      future: PackageInfo.fromPlatform(),
+                      builder: (context, snapshot) {
+                        final version = snapshot.data?.version;
+                        return Text(
+                          version == null ? 'Version —' : 'Version $version',
+                          style:
+                              const TextStyle(fontSize: 11, color: Colors.grey),
+                        );
+                      },
+                    ),
+                  ),
                   const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 16, 16, 16),
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
                     child: Text(
                       'Report any bugs or glitches to noxqcx@gmail.com',
                       style: TextStyle(fontSize: 11, color: Colors.grey),

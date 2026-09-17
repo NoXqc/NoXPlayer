@@ -178,6 +178,7 @@ class PlayerControls extends StatelessWidget {
     this.onToggleFavorite,
     this.onPrevious,
     this.onNext,
+    this.onActivity,
   });
 
   final VideoPlayerHdrController controller;
@@ -217,6 +218,17 @@ class PlayerControls extends StatelessWidget {
   /// these at all, same as [onToggleFavorite] above.
   final VoidCallback? onPrevious;
   final VoidCallback? onNext;
+
+  /// Called on every skip-button seek tick (a tap, or each tick of a
+  /// held fast-seek) — reported directly: this bar's own auto-hide timer
+  /// keeps counting down completely untouched by an in-progress fast-
+  /// seek, since nothing about pressing Select on the skip button was
+  /// ever wired to reset it. A hold long enough to be worth doing at all
+  /// (several seconds, easily past the 6s auto-hide) could have the bar
+  /// disappear mid-seek, leaving the user to bring it back and start
+  /// over. [PlayerScreen] wires this to the same reset its own Up/Down
+  /// handling already calls.
+  final VoidCallback? onActivity;
 
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -314,6 +326,7 @@ class PlayerControls extends StatelessWidget {
                     _SkipButton(
                       icon: Icons.replay_10,
                       onSeek: (amount) {
+                        onActivity?.call();
                         final target = position - amount;
                         controller.seekTo(
                             target < Duration.zero ? Duration.zero : target);
@@ -330,6 +343,7 @@ class PlayerControls extends StatelessWidget {
                     _SkipButton(
                       icon: Icons.forward_10,
                       onSeek: (amount) {
+                        onActivity?.call();
                         final target = position + amount;
                         controller
                             .seekTo(target > duration ? duration : target);
