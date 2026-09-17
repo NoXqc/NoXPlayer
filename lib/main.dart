@@ -391,45 +391,26 @@ class _NoxIptvAppState extends State<NoxIptvApp>
       );
     }
 
-    // The three branches below (and the real app further down) all run
-    // only once `_bootstrap()` has progressed far enough to assign every
-    // `late final` service field, unlike the `_bootstrapError` case above
-    // (which can fire mid-assignment) — so wrapping them in the same
-    // `MultiProvider` the real app uses is safe here. Reported directly,
-    // live: `CatalogSyncPromptScreen`'s two `ModeButton`s render as blank,
-    // completely unresponsive boxes ("no way to get out of it," "also
-    // can not skip") — `ModeButton` reads `AppPreferences` via
-    // `context.watch`, and this screen used to be returned *before* this
-    // method's `MultiProvider` further down, with no ancestor Provider of
-    // any kind. Flutter's release-mode fallback for a widget that throws
-    // during build is exactly what was on screen: a plain, non-
-    // interactive placeholder box with no text and no working `onTap`.
-    return MultiProvider(
-      providers: [
-        Provider<StorageService>.value(value: _storage),
-        Provider<CatalogDatabase>.value(value: _catalogDb),
-        ChangeNotifierProvider<AppPreferences>.value(value: _preferences),
-        ChangeNotifierProvider<PlaylistManager>.value(value: _playlistManager),
-        ChangeNotifierProvider<EpgService>.value(value: _epgService),
-        ChangeNotifierProvider<PlaybackService>.value(value: _playbackService),
-      ],
-      child: _buildReadyContent(context),
-    );
-  }
-
-  Widget _buildReadyContent(BuildContext context) {
-    if (_syncPromptPending) {
-      return CatalogSyncPromptScreen(
-        lastSyncedAt: _oldestLastFullSyncAt(),
-        onRespond: _respondToSyncPrompt,
-      );
-    }
-
-    if (_syncing) {
-      return CatalogSyncScreen(playlist: _playlistManager);
-    }
-
-    if (!_ready) {
+    // Reported directly, live, on *two* devices after the fix below was
+    // first written: a solid white screen for several real seconds on
+    // every cold launch — this fix's own regression, not the native-
+    // launch-screen bug fixed separately (drawable/launch_background.xml).
+    // `_ready`/`_syncPromptPending`/`_syncing` all start false, which is
+    // exactly the state this method is in for Flutter's very *first*
+    // build — called synchronously as part of the same initState() call
+    // stack, before `_bootstrap()` (started, not awaited, from initState)
+    // has run past its own first `await` and actually assigned
+    // `_preferences`/`_catalogDb`/`_playlistManager`/`_epgService`/
+    // `_playbackService`. The previous version of this method wrapped
+    // *every* non-error branch in the MultiProvider below unconditionally
+    // — including this exact "nothing has happened yet" initial state —
+    // so that very first build referenced five still-uninitialized `late
+    // final` fields and threw, repeatedly, on every rebuild attempt until
+    // `_bootstrap()` finally caught up. This splash branch never actually
+    // needed Provider access at all (pure local widget state throughout)
+    // — kept outside the wrap below, same as the original structure
+    // before that fix, for exactly the reason that structure had it there.
+    if (!_ready && !_syncPromptPending && !_syncing) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         home: Scaffold(
@@ -494,6 +475,38 @@ class _NoxIptvAppState extends State<NoxIptvApp>
           ),
         ),
       );
+    }
+
+    // Everything below only ever becomes reachable after
+    // `_playlistManager.init()` (which itself runs after every `late
+    // final` service field above is assigned) has already completed —
+    // `_syncPromptPending`/`_syncing` are only ever set true later in
+    // `_bootstrap()`, well past that point — so referencing all of them
+    // in this MultiProvider is genuinely safe here, unlike in the splash
+    // branch above.
+    return MultiProvider(
+      providers: [
+        Provider<StorageService>.value(value: _storage),
+        Provider<CatalogDatabase>.value(value: _catalogDb),
+        ChangeNotifierProvider<AppPreferences>.value(value: _preferences),
+        ChangeNotifierProvider<PlaylistManager>.value(value: _playlistManager),
+        ChangeNotifierProvider<EpgService>.value(value: _epgService),
+        ChangeNotifierProvider<PlaybackService>.value(value: _playbackService),
+      ],
+      child: _buildReadyContent(context),
+    );
+  }
+
+  Widget _buildReadyContent(BuildContext context) {
+    if (_syncPromptPending) {
+      return CatalogSyncPromptScreen(
+        lastSyncedAt: _oldestLastFullSyncAt(),
+        onRespond: _respondToSyncPrompt,
+      );
+    }
+
+    if (_syncing) {
+      return CatalogSyncScreen(playlist: _playlistManager);
     }
 
     return Consumer<AppPreferences>(
