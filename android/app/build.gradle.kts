@@ -56,6 +56,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            // A distinct package id (+ label override in
+            // src/debug/AndroidManifest.xml) so this installs side-by-side
+            // with the real release build instead of replacing it — lets a
+            // debug build (real Dart stack traces, none of release's
+            // stripped assertions) be used to chase a hard-to-diagnose
+            // crash on a real device without disturbing the stable app or
+            // its data.
+            applicationIdSuffix = ".debug"
+        }
         release {
             // Real key when key.properties is present (see above); falls
             // back to the debug keystore otherwise so this still builds

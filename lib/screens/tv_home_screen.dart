@@ -137,9 +137,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   final ScrollController _browseScrollController = ScrollController();
 
   /// Whether Movies/TV Shows is currently showing the "What's New"
-  /// carousel instead of the normal poster catalog. True on every entry
-  /// into either tab (see [_onTabChanged]) — it's the default view —
-  /// until "All" or a real category is picked from the groups column.
+  /// carousel instead of the normal poster catalog. Opt-in, not the
+  /// default — always false on entering either tab (see [_onTabChanged]),
+  /// set true only by tapping the pinned "What's New" row in the groups
+  /// column, and cleared again by picking "All" or a real category.
   bool _showWhatsNew = false;
 
   /// The carousel's Play button, owned here (like
@@ -355,7 +356,12 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       _focusedTitle = null;
       _focusedImageUrl = null;
       _focusDepth = 0;
-      _showWhatsNew = tab == 'Movies' || tab == 'TV Shows';
+      // Opt-in only, not the default view — groups + Continue Watching
+      // come up first on entering either tab, same as before this
+      // feature existed. The pinned "What's New" row in the groups
+      // column (see _buildBrowseGroupsColumn) is still there for anyone
+      // who wants to switch into the carousel deliberately.
+      _showWhatsNew = false;
     });
     // Switching back to the TV tab clears the explicit group selection —
     // _effectiveLiveGroup falls back to the playing channel's own group
@@ -2788,7 +2794,9 @@ class _BrowseHero extends StatelessWidget {
   }
 }
 
-/// The Movies/TV Shows tabs' default view: the handful of titles the
+/// An opt-in view for the Movies/TV Shows tabs, reached via the pinned
+/// "What's New" row in the groups column (not shown by default — see
+/// [_TvHomeScreenState._showWhatsNew]): the handful of titles the
 /// provider added most recently, as an auto-advancing slideshow that fills
 /// the content area, in [_BrowseHero]'s visual language scaled up from a
 /// header strip to a full page.
