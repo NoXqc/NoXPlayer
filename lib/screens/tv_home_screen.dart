@@ -278,6 +278,23 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // comment describes — end the cold-start suppression window early so
     // this tab immediately shows what's actually playing.
     if (tab == 'TV') context.read<PlaybackService>().clearSilentResume();
+    // _col1Scope/_col2Scope are shared across every tab (see the widget
+    // tree below — Live TV and Movies/TV Shows both build their groups/
+    // main-area columns inside the *same* FocusScopeNode instances, not
+    // one each). Flutter's own FocusScopeNode automatically remembers
+    // whichever descendant last had focus and restores it the next time
+    // that scope regains focus — reported directly: scroll down to the
+    // 15th group in Movies, drill into its catalog, back out to the tab
+    // bar, switch to TV Shows, and the selector lands on TV Shows' 15th
+    // group instead of the top, purely because that's positionally where
+    // Movies' focus was left, with nothing about it aware the actual
+    // content is now a completely different list. `unfocus()`'s default
+    // `UnfocusDisposition.scope` clears that remembered-child state (as
+    // opposed to `.previouslyFocusedChild`, which would keep it) — next
+    // time either scope is focused, it starts from its own first
+    // focusable descendant instead of restoring a stale position.
+    _col1Scope.unfocus();
+    _col2Scope.unfocus();
     setState(() {
       _tab = tab;
       _selectedGroup = null;
