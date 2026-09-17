@@ -2904,7 +2904,8 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
                 controller: _pageController,
                 itemCount: items.length,
                 onPageChanged: (i) => setState(() => _index = i),
-                itemBuilder: (context, i) => _buildPage(context, items[i]),
+                itemBuilder: (context, i) =>
+                    _buildPage(context, items[i], blurred: i == _index),
               ),
             ),
             _buildDots(context, items.length),
@@ -2915,7 +2916,7 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
     );
   }
 
-  Widget _buildPage(BuildContext context, T item) {
+  Widget _buildPage(BuildContext context, T item, {required bool blurred}) {
     final scheme = Theme.of(context).colorScheme;
     final imageUrl = widget.imageUrlOf(item);
     return Padding(
@@ -2938,16 +2939,25 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
             // stretched or cropped; this just gives the empty letterboxed
             // space either side of a portrait poster something to look at
             // instead of flat grey, same idea as a Plex/Netflix hero panel.
-            if (imageUrl != null && imageUrl.isNotEmpty)
-              ImageFiltered(
-                imageFilter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-                child: CachedNetworkImage(
-                  imageUrl: imageUrl,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
+            //
+            // Only ever applied to the currently-focused page, never the
+            // one or two neighbors PageView.builder keeps built for a
+            // smooth swipe — a GPU blur over a full-bleed image is
+            // expensive, and having 2-3 of them compositing at once
+            // (every 4s, on every auto-advance) is a real crash risk on
+            // weaker TV-box/Fire-Stick GPUs, not just a jank concern.
+            if (blurred && imageUrl != null && imageUrl.isNotEmpty)
+              RepaintBoundary(
+                child: ImageFiltered(
+                  imageFilter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                  child: CachedNetworkImage(
+                    imageUrl: imageUrl,
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                  ),
                 ),
               ),
-            if (imageUrl != null && imageUrl.isNotEmpty)
+            if (blurred && imageUrl != null && imageUrl.isNotEmpty)
               DecoratedBox(
                 decoration:
                     BoxDecoration(color: Colors.black.withValues(alpha: 0.35)),
