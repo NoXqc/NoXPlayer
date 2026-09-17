@@ -116,6 +116,17 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   bool _leftEdgeArmed = false;
   Timer? _leftEdgeArmTimer;
 
+  /// The "double ← for groups" hint's floating overlay — anchored to
+  /// whichever poster is actually focused at the moment [_handleBrowseLeft]
+  /// arms (via its `RenderBox`, captured once right then, not
+  /// continuously tracked — the grid isn't scrolling during this exact
+  /// interaction, so a live-tracking `CompositedTransformFollower` would
+  /// be solving a problem that doesn't occur here). Requested directly,
+  /// twice: first tried next to `_BrowseHero`'s title, corrected to "the
+  /// actual poster title" instead — the focused poster's own on-screen
+  /// position, not the hero banner's.
+  OverlayEntry? _leftEdgeHintOverlay;
+
   /// Per-category-title [GlobalKey]s attached to each browse row (see
   /// [_buildMoviesBrowse]/[_buildShowsBrowse]) so the Movies/TV Shows
   /// groups column can jump straight to a category instead of filtering
@@ -357,6 +368,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       _moveColumnFocus(-1, 2);
     } else {
       _leftEdgeArmed = true;
+      _showLeftEdgeHint();
       _leftEdgeArmTimer?.cancel();
       _leftEdgeArmTimer = Timer(_leftEdgeArmWindow, _disarmLeftEdge);
     }
@@ -366,6 +378,61 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     _leftEdgeArmTimer?.cancel();
     _leftEdgeArmTimer = null;
     _leftEdgeArmed = false;
+    _leftEdgeHintOverlay?.remove();
+    _leftEdgeHintOverlay = null;
+  }
+
+  // Requested directly: a visible cue for exactly this window, since
+  // nothing on screen previously indicated that a second Left press
+  // (within _leftEdgeArmWindow) was even a thing — the first press just
+  // silently did nothing, with no way to tell "that didn't work" apart
+  // from "press it again and it will." An OverlayEntry (not a Positioned
+  // inside this screen's own widget tree) specifically so it can be
+  // placed using the focused poster's *global* screen position — no
+  // ancestor-Stack coordinate-space conversion needed, the same reason
+  // Tooltip/dropdown menus use this mechanism.
+  void _showLeftEdgeHint() {
+    final renderObject =
+        FocusManager.instance.primaryFocus?.context?.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.attached) return;
+    final topLeft = renderObject.localToGlobal(Offset.zero);
+    final size = renderObject.size;
+    final overlay = Overlay.of(context, rootOverlay: true);
+    _leftEdgeHintOverlay = OverlayEntry(
+      builder: (context) => Positioned(
+        left: topLeft.dx,
+        top: topLeft.dy + size.height + 6,
+        width: size.width,
+        child: IgnorePointer(
+          child: Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                    color: Theme.of(context).colorScheme.primary, width: 1.5),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Double',
+                      style: TextStyle(color: Colors.white, fontSize: 12)),
+                  const Icon(Icons.keyboard_arrow_left,
+                      color: Colors.white, size: 16),
+                  const Icon(Icons.keyboard_arrow_left,
+                      color: Colors.white, size: 16),
+                  const SizedBox(width: 4),
+                  const Text('for groups',
+                      style: TextStyle(color: Colors.white, fontSize: 12)),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(_leftEdgeHintOverlay!);
   }
 
   /// Not a real category — a pinned entry at the top of the TV tab's
@@ -586,6 +653,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   void dispose() {
     appRouteObserver.unsubscribe(this);
     _leftEdgeArmTimer?.cancel();
+    _leftEdgeHintOverlay?.remove();
     _browseScrollController.dispose();
     _liveListController.dispose();
     _currentChannelFocusNode.dispose();
