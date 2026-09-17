@@ -461,6 +461,24 @@ class PlaylistSession {
           playlistId: profile.id);
       await api.authenticate();
       xtreamApi = api;
+      // Refreshed on every successful connect, not just once at add time —
+      // a provider extending/changing an account's expiry should show
+      // the current value on the next connect, not whatever it was when
+      // this playlist was first added. See PlaylistProfile.expiresAt's
+      // doc comment for why this can legitimately stay null.
+      if (api.expiryDate != profile.expiresAt) {
+        // Direct field assignment, not copyWith — expiresAt is mutable
+        // for exactly this (like enabled/sortOrder elsewhere on this
+        // class), and copyWith's `expiresAt ?? this.expiresAt` can't
+        // distinguish "not specified" from "a provider stopped
+        // reporting one," so it could never actually clear a stale value.
+        profile.expiresAt = api.expiryDate;
+        final updated = storage
+            .getPlaylists()
+            .map((p) => p.id == profile.id ? profile : p)
+            .toList();
+        await storage.setPlaylists(updated);
+      }
 
       liveCategories = await api.getLiveCategories();
       final liveCategoryNames = {for (final c in liveCategories) c.id: c.name};

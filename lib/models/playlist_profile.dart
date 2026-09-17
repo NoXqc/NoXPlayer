@@ -19,6 +19,7 @@ class PlaylistProfile {
     required this.sortOrder,
     this.syncFrequencyDays = AppConstants.defaultSyncFrequencyDays,
     required this.createdAt,
+    this.expiresAt,
   });
 
   /// Stable identifier, generated once and never reused — every
@@ -56,6 +57,17 @@ class PlaylistProfile {
 
   final DateTime createdAt;
 
+  /// From the Xtream account's own `user_info.exp_date` (an epoch-seconds
+  /// string) — null for M3U playlists (no such concept), and also null
+  /// for an Xtream account that hasn't reported one yet, or reports "0"/
+  /// no expiry at all (some panels use that for a lifetime/reseller-
+  /// unlimited account) — never a fabricated placeholder date either way.
+  /// Refreshed every time `PlaylistSession.loadFromXtream` successfully
+  /// re-authenticates, not just once at add time, so a provider that
+  /// extends/changes an account's expiry shows the current value on the
+  /// next connect rather than whatever it was when first added.
+  DateTime? expiresAt;
+
   PlaylistProfile copyWith({
     String? name,
     String? mode,
@@ -67,6 +79,7 @@ class PlaylistProfile {
     bool? enabled,
     int? sortOrder,
     int? syncFrequencyDays,
+    DateTime? expiresAt,
   }) =>
       PlaylistProfile(
         id: id,
@@ -81,6 +94,7 @@ class PlaylistProfile {
         sortOrder: sortOrder ?? this.sortOrder,
         syncFrequencyDays: syncFrequencyDays ?? this.syncFrequencyDays,
         createdAt: createdAt,
+        expiresAt: expiresAt ?? this.expiresAt,
       );
 
   Map<String, dynamic> toJson() => {
@@ -96,6 +110,7 @@ class PlaylistProfile {
         'sortOrder': sortOrder,
         'syncFrequencyDays': syncFrequencyDays,
         'createdAt': createdAt.toIso8601String(),
+        'expiresAt': expiresAt?.toIso8601String(),
       };
 
   factory PlaylistProfile.fromJson(Map<String, dynamic> json) =>
@@ -114,6 +129,9 @@ class PlaylistProfile {
             AppConstants.defaultSyncFrequencyDays,
         createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
             DateTime.now(),
+        expiresAt: json['expiresAt'] == null
+            ? null
+            : DateTime.tryParse(json['expiresAt'] as String),
       );
 
   bool get isXtream => mode == 'xtream';

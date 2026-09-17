@@ -247,6 +247,24 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
                                     label: 'Password',
                                     value: '•' *
                                         (profile.xtreamPassword?.length ?? 0)),
+                                // Only ever shown once a connect has
+                                // actually reported one (see
+                                // PlaylistProfile.expiresAt's doc
+                                // comment) — an M3U playlist, or an
+                                // Xtream account that hasn't connected
+                                // yet or genuinely has no expiry to
+                                // report, shows nothing here rather than
+                                // a fabricated placeholder.
+                                if (profile.expiresAt != null)
+                                  _DetailRow(
+                                    label: 'Expires',
+                                    value: DateFormat('yyyy-MM-dd')
+                                        .format(profile.expiresAt!),
+                                    valueColor: profile.expiresAt!
+                                            .isBefore(DateTime.now())
+                                        ? Colors.redAccent
+                                        : null,
+                                  ),
                               ] else
                                 _DetailRow(
                                     label: 'M3U URL',
@@ -373,10 +391,11 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({required this.label, required this.value});
+  const _DetailRow({required this.label, required this.value, this.valueColor});
 
   final String label;
   final String value;
+  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) {
@@ -390,8 +409,9 @@ class _DetailRow extends StatelessWidget {
             child: Text(label, style: Theme.of(context).textTheme.bodySmall),
           ),
           Expanded(
-              child:
-                  Text(value, style: const TextStyle(fontFamily: 'monospace'))),
+              child: Text(value,
+                  style:
+                      TextStyle(fontFamily: 'monospace', color: valueColor))),
         ],
       ),
     );

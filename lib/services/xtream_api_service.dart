@@ -44,6 +44,12 @@ class XtreamApiService {
   /// rejected requests forever for the rest of the session.
   int? maxConnections;
 
+  /// From the account's own `user_info.exp_date` (an epoch-seconds
+  /// string) — null until [authenticate] runs, and also left null if the
+  /// field is missing, unparseable, or "0" (some panels use that for a
+  /// lifetime/reseller-unlimited account with no real expiry to report).
+  DateTime? expiryDate;
+
   static String _normalizeServer(String server) {
     var s = server.trim();
     while (s.endsWith('/')) {
@@ -109,6 +115,10 @@ class XtreamApiService {
     // default cap rather than reading 0 as "allow zero connections".
     maxConnections = (rawMaxConnections != null && rawMaxConnections > 0)
         ? rawMaxConnections
+        : null;
+    final rawExpDate = int.tryParse(userInfo['exp_date']?.toString() ?? '');
+    expiryDate = (rawExpDate != null && rawExpDate > 0)
+        ? DateTime.fromMillisecondsSinceEpoch(rawExpDate * 1000)
         : null;
   }
 
