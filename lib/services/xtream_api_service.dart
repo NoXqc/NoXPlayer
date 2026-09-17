@@ -337,6 +337,7 @@ List<Channel> _buildVodChannels(_VodStreamsArgs args) {
     final streamId = item['stream_id'];
     final ext = item['container_extension']?.toString() ?? 'mp4';
     final rating = item['rating']?.toString();
+    final added = int.tryParse(item['added']?.toString() ?? '');
     final rawId = 'xt_vod_$streamId';
     return Channel(
       id: '${args.playlistId}::$rawId',
@@ -349,6 +350,9 @@ List<Channel> _buildVodChannels(_VodStreamsArgs args) {
       logoUrl: item['stream_icon']?.toString(),
       rating: (rating != null && rating.isNotEmpty && rating != '0')
           ? rating
+          : null,
+      addedAt: (added != null && added > 0)
+          ? DateTime.fromMillisecondsSinceEpoch(added * 1000)
           : null,
     );
   }).toList();
@@ -365,6 +369,8 @@ class _SeriesArgs {
 List<XtreamSeries> _buildSeriesItems(_SeriesArgs args) {
   return args.raw.map((item) {
     final rating = item['rating']?.toString();
+    // `last_modified`, not `added` — see XtreamSeries.addedAt's doc comment.
+    final lastModified = int.tryParse(item['last_modified']?.toString() ?? '');
     return XtreamSeries(
       seriesId: int.parse(item['series_id'].toString()),
       playlistId: args.playlistId,
@@ -373,6 +379,9 @@ List<XtreamSeries> _buildSeriesItems(_SeriesArgs args) {
       coverUrl: item['cover']?.toString(),
       rating: (rating != null && rating.isNotEmpty && rating != '0')
           ? rating
+          : null,
+      addedAt: (lastModified != null && lastModified > 0)
+          ? DateTime.fromMillisecondsSinceEpoch(lastModified * 1000)
           : null,
     );
   }).toList();

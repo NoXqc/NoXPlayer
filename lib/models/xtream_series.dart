@@ -10,6 +10,7 @@ class XtreamSeries {
     this.coverUrl,
     this.isFavorite = false,
     this.rating,
+    this.addedAt,
   }) : id = '$playlistId::series_$seriesId';
 
   /// The raw per-provider integer Xtream itself uses — kept because
@@ -38,6 +39,12 @@ class XtreamSeries {
   /// poster badge movies do even though the provider sends the data.
   final String? rating;
 
+  /// When this show showed up in the provider's catalog — `get_series`
+  /// reports it as `last_modified` (epoch seconds), not the `added` field
+  /// `get_vod_streams` uses for movies (see `Channel.addedAt`); same
+  /// meaning, different key per content type. Null when not reported.
+  final DateTime? addedAt;
+
   /// Mutable, flipped in place by `PlaylistManager.toggleSeriesFavorite` —
   /// same pattern as `Channel.isFavorite`.
   bool isFavorite;
@@ -50,6 +57,7 @@ class XtreamSeries {
         'coverUrl': coverUrl,
         'isFavorite': isFavorite,
         'rating': rating,
+        'addedAt': addedAt?.millisecondsSinceEpoch,
       };
 
   /// `playlistId` defaults to `'migrated_default'` for the same reason as
@@ -62,5 +70,8 @@ class XtreamSeries {
         coverUrl: json['coverUrl'] as String?,
         isFavorite: json['isFavorite'] as bool? ?? false,
         rating: json['rating'] as String?,
+        addedAt: json['addedAt'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(json['addedAt'] as int)
+            : null,
       );
 }

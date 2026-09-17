@@ -12,6 +12,7 @@ class Channel {
     this.subtitleUrl,
     this.isFavorite = false,
     this.rating,
+    this.addedAt,
     this.seriesId,
     this.seriesName,
     this.seriesCoverUrl,
@@ -54,6 +55,13 @@ class Channel {
   /// Meaningless for live channels — null there.
   final String? rating;
 
+  /// When the provider says this title showed up in its catalog (Xtream's
+  /// `added` field on VOD items, epoch seconds). Null for live channels,
+  /// for M3U playlists (no such concept exists there at all), and whenever
+  /// the provider didn't report it — the "What's New" carousel simply has
+  /// nothing to show in those cases rather than guessing an order.
+  final DateTime? addedAt;
+
   /// Set on episode channels only (see PlaylistManager.loadSeriesEpisodes)
   /// — the series this episode belongs to, so "Continue Watching" can show
   /// and reopen the actual show instead of just this one episode. Mutable
@@ -74,6 +82,7 @@ class Channel {
         subtitleUrl: subtitleUrl,
         isFavorite: isFavorite ?? this.isFavorite,
         rating: rating,
+        addedAt: addedAt,
         seriesId: seriesId,
         seriesName: seriesName,
         seriesCoverUrl: seriesCoverUrl,
@@ -90,6 +99,7 @@ class Channel {
         'subtitleUrl': subtitleUrl,
         'isFavorite': isFavorite,
         'rating': rating,
+        'addedAt': addedAt?.millisecondsSinceEpoch,
         'seriesId': seriesId,
         'seriesName': seriesName,
         'seriesCoverUrl': seriesCoverUrl,
@@ -113,6 +123,9 @@ class Channel {
         subtitleUrl: json['subtitleUrl'] as String?,
         isFavorite: json['isFavorite'] as bool? ?? false,
         rating: json['rating'] as String?,
+        addedAt: json['addedAt'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(json['addedAt'] as int)
+            : null,
         seriesId: json['seriesId'] as int?,
         seriesName: json['seriesName'] as String?,
         seriesCoverUrl: json['seriesCoverUrl'] as String?,

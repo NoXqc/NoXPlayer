@@ -136,6 +136,22 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   final GlobalKey _continueWatchingRowKey = GlobalKey();
   final ScrollController _browseScrollController = ScrollController();
 
+  /// Whether Movies/TV Shows is currently showing the "What's New"
+  /// carousel instead of the normal poster catalog. True on every entry
+  /// into either tab (see [_onTabChanged]) — it's the default view —
+  /// until "All" or a real category is picked from the groups column.
+  bool _showWhatsNew = false;
+
+  /// The carousel's Play button, owned here (like
+  /// [_groupFirstPosterFocusNodes]/[_continueWatchingFirstFocusNode]) so
+  /// [_enterBrowseColumn] can hand D-pad focus straight to it. Deliberately
+  /// not `autofocus` inside the carousel itself: that fires as soon as the
+  /// widget is built — i.e. the instant the tab is switched, while focus is
+  /// still meant to be on the tabs rail — and would drag the cursor into
+  /// the content column unasked.
+  final FocusNode _whatsNewPlayFocusNode =
+      FocusNode(debugLabel: 'whats-new-play');
+
   /// Groups mid-way through the "grey out for 30s, then actually hide"
   /// flow — long-pressing one of these again cancels the hide instead of
   /// (necessarily) hiding it, since it hasn't actually disappeared yet.
@@ -328,6 +344,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       _focusedTitle = null;
       _focusedImageUrl = null;
       _focusDepth = 0;
+      _showWhatsNew = tab == 'Movies' || tab == 'TV Shows';
     });
     // Switching back to the TV tab clears the explicit group selection —
     // _effectiveLiveGroup falls back to the playing channel's own group
@@ -570,6 +587,19 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// [_scrollToBrowseGroup], so this only needs to cover the plain "just
   /// move right" case.
   void _enterBrowseColumn() {
+    // The carousel replaces the poster rows entirely while it's up, so
+    // none of the per-group first-poster nodes below exist to focus — its
+    // Play button is the deliberate landing spot instead (see
+    // [_whatsNewPlayFocusNode]). Falls back to the column's own scope if
+    // the carousel is still loading/empty and has no Play button mounted.
+    if (_showWhatsNew) {
+      if (_whatsNewPlayFocusNode.context != null) {
+        _whatsNewPlayFocusNode.requestFocus();
+      } else {
+        _col2Scope.requestFocus();
+      }
+      return;
+    }
     final playlist = context.read<PlaylistManager>();
     final isMovies = _tab == 'Movies';
     final groups = isMovies
@@ -607,6 +637,24 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     if (_browseScrollController.hasClients) {
       _browseScrollController.jumpTo(0);
     }
+  }
+
+  /// Leaves the "What's New" carousel (if it's showing) and then runs the
+  /// normal catalog jump. Deferred a frame in that case: the poster list
+  /// isn't mounted while the carousel is up, so
+  /// [_browseScrollController] has no clients yet and both
+  /// [_scrollBrowseToTop] and [_scrollToBrowseGroup] would silently
+  /// no-op — and the list, once it does remount, restores its previous
+  /// offset from `PageStorage` rather than starting at the top.
+  void _leaveWhatsNewThen(VoidCallback jump) {
+    if (!_showWhatsNew) {
+      jump();
+      return;
+    }
+    setState(() => _showWhatsNew = false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) jump();
+    });
   }
 
   String _categoryForTab(String tab) => switch (tab) {
@@ -664,6 +712,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       node.dispose();
     }
     _continueWatchingFirstFocusNode.dispose();
+    _whatsNewPlayFocusNode.dispose();
     for (final timer in _pendingHideTimers.values) {
       timer.cancel();
     }
@@ -1419,13 +1468,23 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     return ListView(
       key: ValueKey(_tab),
       children: [
+        // Pinned above the real categories, same shape as the Live TV
+        // column's own "Favourites" entry — not a category, a view.
+        _SelectableRow(
+          icon: Icons.new_releases,
+          label: "What's New",
+          selected: _showWhatsNew,
+          collapsed: collapsed,
+          fontSize: _groupFontSize,
+          onTap: () => setState(() => _showWhatsNew = true),
+        ),
         _SelectableRow(
           icon: Icons.apps,
           label: 'All',
           selected: false,
           collapsed: collapsed,
           fontSize: _groupFontSize,
-          onTap: _scrollBrowseToTop,
+          onTap: () => _leaveWhatsNewThen(_scrollBrowseToTop),
         ),
         ..._groupRowsWithPlaylistDividers(
           groups,
@@ -1441,7 +1500,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 playlist.isGroupFavorited(group.playlistId, group.title),
             isPendingHide: _pendingHideGroups
                 .contains(_groupKey(group.playlistId, group.title)),
-            onTap: () => _scrollToBrowseGroup(group.playlistId, group.title),
+            onTap: () => _leaveWhatsNewThen(
+                () => _scrollToBrowseGroup(group.playlistId, group.title)),
             onLongPress: () => _showGroupOptions(group.playlistId, group.title),
           ),
         ),
@@ -2002,6 +2062,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       unawaited(playlist.ensureCategoriesLoaded(
           entry.playlistId, entry.groups.map((g) => g.title), 'vod'));
     }
+    if (_showWhatsNew) {
+      return _WhatsNewCarousel<Channel>(
+        loadItems: playlist.whatsNewVod,
+        titleOf: (c) => c.name,
+        imageUrlOf: (c) => c.logoUrl,
+        onOpen: _openMovie,
+        playFocusNode: _whatsNewPlayFocusNode,
+        emptyText: 'No recently added movies yet',
+      );
+    }
     final groupsWithItems =
         visibleGroups.where((g) => g.channels.isNotEmpty).toList();
     final continueRow =
@@ -2081,6 +2151,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     for (final entry in _groupByPlaylist(emptyGroups)) {
       unawaited(playlist.ensureCategoriesLoaded(
           entry.playlistId, entry.groups.map((g) => g.title), 'series'));
+    }
+    if (_showWhatsNew) {
+      return _WhatsNewCarousel<XtreamSeries>(
+        loadItems: playlist.whatsNewSeries,
+        titleOf: (s) => s.name,
+        imageUrlOf: (s) => s.coverUrl,
+        onOpen: _openSeries,
+        playFocusNode: _whatsNewPlayFocusNode,
+        emptyText: 'No recently added shows yet',
+      );
     }
     for (final group in groups) {
       final items = playlist.visibleSeries(
@@ -2684,6 +2764,288 @@ class _BrowseHero extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The Movies/TV Shows tabs' default view: the handful of titles the
+/// provider added most recently, as an auto-advancing slideshow that fills
+/// the content area, in [_BrowseHero]'s visual language scaled up from a
+/// header strip to a full page.
+///
+/// Generic over the item type for the same reason [_CategoryRow] is — the
+/// movies and TV shows variants differ only in which field holds the title
+/// and the artwork, not in any of the paging/focus behavior below.
+class _WhatsNewCarousel<T> extends StatefulWidget {
+  const _WhatsNewCarousel({
+    required this.loadItems,
+    required this.titleOf,
+    required this.imageUrlOf,
+    required this.onOpen,
+    required this.playFocusNode,
+    required this.emptyText,
+  });
+
+  /// A loader, deliberately not an already-created `Future`: this widget's
+  /// parent rebuilds on every `PlaylistManager` notification, and taking a
+  /// future directly would hand the `FutureBuilder` below a brand-new one
+  /// each time — flashing back to the loading state over and over while
+  /// the catalog is busy.
+  final Future<List<T>> Function() loadItems;
+
+  final String Function(T item) titleOf;
+  final String? Function(T item) imageUrlOf;
+  final void Function(T item) onOpen;
+
+  /// Owned by `_TvHomeScreenState` — see its own doc comment on why the
+  /// Play button's focus is requested from out there rather than
+  /// autofocused from in here.
+  final FocusNode playFocusNode;
+
+  final String emptyText;
+
+  @override
+  State<_WhatsNewCarousel<T>> createState() => _WhatsNewCarouselState<T>();
+}
+
+class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
+    with RouteAware {
+  static const _advanceInterval = Duration(seconds: 4);
+
+  final PageController _pageController = PageController();
+  late final Future<List<T>> _itemsFuture;
+  Timer? _timer;
+  int _index = 0;
+  int _itemCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _itemsFuture = widget.loadItems().then((items) {
+      if (mounted) {
+        _itemCount = items.length;
+        _startTimer();
+      }
+      return items;
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<void>) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    _timer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  /// Something now covers this screen (a movie/series detail screen, the
+  /// fullscreen player). An auto-advance that keeps firing `setState` on a
+  /// covered-but-still-mounted carousel is pure waste for as long as that
+  /// route is up — the same "timer outlives what it's actually for" bug
+  /// class already fixed for the player's seek buttons, avoided here by
+  /// design rather than patched afterwards.
+  @override
+  void didPushNext() => _timer?.cancel();
+
+  @override
+  void didPopNext() => _startTimer();
+
+  void _startTimer() {
+    _timer?.cancel();
+    if (_itemCount < 2) return;
+    _timer = Timer.periodic(_advanceInterval, (_) => _goTo(_index + 1));
+  }
+
+  /// Modulo, not `nextPage`/`previousPage`: those stop dead at either end,
+  /// and a slideshow that quietly stops advancing after the 5th title
+  /// reads as broken.
+  void _goTo(int target) {
+    if (_itemCount == 0 || !_pageController.hasClients) return;
+    _pageController.animateToPage(
+      target % _itemCount,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _step(int delta) {
+    _goTo(_index + delta);
+    // Restarted, not left running: a deliberate press shouldn't be
+    // overridden a fraction of a second later by the next auto-tick.
+    _startTimer();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<T>>(
+      future: _itemsFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Center(child: Text('Loading...'));
+        }
+        final items = snapshot.data ?? <T>[];
+        if (items.isEmpty) return Center(child: Text(widget.emptyText));
+        return Column(
+          children: [
+            Expanded(
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: items.length,
+                onPageChanged: (i) => setState(() => _index = i),
+                itemBuilder: (context, i) => _buildPage(context, items[i]),
+              ),
+            ),
+            _buildDots(context, items.length),
+            _buildNavRow(context, items),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPage(BuildContext context, T item) {
+    final scheme = Theme.of(context).colorScheme;
+    final imageUrl = widget.imageUrlOf(item);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.grey.shade900,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: Color.lerp(scheme.primary, scheme.secondary, 0.5)!,
+              width: 2),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (imageUrl != null && imageUrl.isNotEmpty)
+              CachedNetworkImage(
+                imageUrl: imageUrl,
+                key: ValueKey(imageUrl),
+                // contain, not _BrowseHero's cover: filling an area this
+                // large with a portrait poster would crop it down to a
+                // thin band through the middle.
+                fit: BoxFit.contain,
+                errorWidget: (_, __, ___) => const SizedBox.shrink(),
+              ),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Color.alphaBlend(scheme.primary.withValues(alpha: 0.35),
+                        Colors.black.withValues(alpha: 0.85)),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 16,
+              child: Row(
+                children: [
+                  Container(width: 4, height: 26, color: scheme.secondary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      widget.titleOf(item),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 26,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDots(BuildContext context, int count) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (var i = 0; i < count; i++)
+            Container(
+              width: 8,
+              height: 8,
+              margin: const EdgeInsets.symmetric(horizontal: 4),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: i == _index ? scheme.primary : Colors.white24,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Three real focusable stops in a row, so moving between titles and
+  /// actually starting one is a single continuous D-pad motion: arrow over
+  /// to the title you want, a Right press or two lands on Play, Select.
+  /// Deliberately not "press Select on the artwork itself" — the artwork
+  /// isn't focusable at all here. Left/Right *between* these three is
+  /// ordinary directional traversal (they're laid out horizontally), same
+  /// as every other button row in this app.
+  Widget _buildNavRow(BuildContext context, List<T> items) {
+    final current = items[_index.clamp(0, items.length - 1)];
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 130,
+            child: ModeButton(
+              icon: Icons.chevron_left,
+              label: 'Previous',
+              selected: false,
+              onTap: () => _step(-1),
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 160,
+            child: ModeButton(
+              icon: Icons.play_arrow,
+              label: 'Play',
+              selected: false,
+              focusNode: widget.playFocusNode,
+              onTap: () => widget.onOpen(current),
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 130,
+            child: ModeButton(
+              icon: Icons.chevron_right,
+              label: 'Next',
+              selected: false,
+              onTap: () => _step(1),
             ),
           ),
         ],

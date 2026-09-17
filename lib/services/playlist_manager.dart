@@ -292,6 +292,27 @@ class PlaylistManager extends ChangeNotifier {
   int? seriesCategoryTotalCount(String playlistId, String categoryName) =>
       _sessionFor(playlistId)?.seriesCategoryTotalCountFor(categoryName);
 
+  /// The most recently-added movies across every enabled playlist — the TV
+  /// layout's "What's New" carousel. Xtream-only by nature: an M3U playlist
+  /// carries no "when did this show up" data at all (see `Channel.addedAt`),
+  /// so its rows have nothing to sort by and are left out entirely rather
+  /// than appearing in an arbitrary order.
+  ///
+  /// Reads whatever the catalog database already holds — the existing full
+  /// sync/on-demand category loads are what put it there. Before any of
+  /// that has run, this is simply empty (an empty carousel, never an error).
+  Future<List<Channel>> whatsNewVod({int limit = 5}) =>
+      _catalogDb.getRecentlyAddedVod(_enabledXtreamPlaylistIds, limit: limit);
+
+  Future<List<XtreamSeries>> whatsNewSeries({int limit = 5}) =>
+      _catalogDb.getRecentlyAddedSeries(_enabledXtreamPlaylistIds,
+          limit: limit);
+
+  List<String> get _enabledXtreamPlaylistIds => _enabledSessionsSorted
+      .where((s) => s.isXtream)
+      .map((s) => s.profile.id)
+      .toList();
+
   Map<String, int>? summaryFor(String playlistId) =>
       _sessionFor(playlistId)?.lastLoadSummary;
   DateTime? lastLoadedFor(String playlistId) =>

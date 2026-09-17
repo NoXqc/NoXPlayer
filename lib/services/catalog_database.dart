@@ -36,7 +36,7 @@ class CatalogDatabase {
     final path = p.join(dir.path, 'nox_catalog.db');
     final db = await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE vod_channels (
@@ -49,6 +49,7 @@ class CatalogDatabase {
             subtitle_url TEXT,
             is_favorite INTEGER NOT NULL DEFAULT 0,
             rating TEXT,
+            added_at INTEGER,
             series_id INTEGER,
             series_name TEXT,
             series_cover_url TEXT
@@ -68,7 +69,8 @@ class CatalogDatabase {
             name TEXT NOT NULL,
             cover_url TEXT,
             is_favorite INTEGER NOT NULL DEFAULT 0,
-            rating TEXT
+            rating TEXT,
+            added_at INTEGER
           )
         ''');
         await db.execute(
@@ -84,6 +86,10 @@ class CatalogDatabase {
       // backfill, matching this database's own v1->v2 precedent — this is
       // a fully re-derivable local cache (re-synced from the network the
       // next time each category/playlist loads), not user data.
+      // v3 -> v4: added_at on both tables (the "What's New" carousel's sort
+      // key). Destructive for the same reason as v2 -> v3 — an ALTER +
+      // backfill could only ever produce nulls anyway, since the value it
+      // needs comes from the provider, not from anything already stored.
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE series_items ADD COLUMN rating TEXT');
@@ -128,6 +134,48 @@ class CatalogDatabase {
           await db.execute(
               'CREATE INDEX idx_series_playlist ON series_items(playlist_id)');
         }
+        if (oldVersion < 4) {
+          await db.execute('DROP TABLE IF EXISTS vod_channels');
+          await db.execute('DROP TABLE IF EXISTS series_items');
+          await db.execute('''
+            CREATE TABLE vod_channels (
+              id TEXT PRIMARY KEY,
+              playlist_id TEXT NOT NULL,
+              category_name TEXT NOT NULL,
+              name TEXT NOT NULL,
+              url TEXT NOT NULL,
+              logo_url TEXT,
+              subtitle_url TEXT,
+              is_favorite INTEGER NOT NULL DEFAULT 0,
+              rating TEXT,
+              added_at INTEGER,
+              series_id INTEGER,
+              series_name TEXT,
+              series_cover_url TEXT
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX idx_vod_category ON vod_channels(category_name)');
+          await db.execute(
+              'CREATE INDEX idx_vod_playlist ON vod_channels(playlist_id)');
+          await db.execute('''
+            CREATE TABLE series_items (
+              id TEXT PRIMARY KEY,
+              series_id INTEGER NOT NULL,
+              playlist_id TEXT NOT NULL,
+              category_name TEXT NOT NULL,
+              name TEXT NOT NULL,
+              cover_url TEXT,
+              is_favorite INTEGER NOT NULL DEFAULT 0,
+              rating TEXT,
+              added_at INTEGER
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX idx_series_category ON series_items(category_name)');
+          await db.execute(
+              'CREATE INDEX idx_series_playlist ON series_items(playlist_id)');
+        }
       },
     );
     _db = db;
@@ -144,6 +192,7 @@ class CatalogDatabase {
         'subtitle_url': c.subtitleUrl,
         'is_favorite': c.isFavorite ? 1 : 0,
         'rating': c.rating,
+        'added_at': c.addedAt?.millisecondsSinceEpoch,
         'series_id': c.seriesId,
         'series_name': c.seriesName,
         'series_cover_url': c.seriesCoverUrl,
@@ -158,6 +207,7 @@ class CatalogDatabase {
     // the delimiter themselves.
     final prefix = '$playlistId::';
     final rawId = id.startsWith(prefix) ? id.substring(prefix.length) : id;
+    final addedAt = row['added_at'] as int?;
     return Channel(
       id: id,
       rawId: rawId,
@@ -169,6 +219,8 @@ class CatalogDatabase {
       subtitleUrl: row['subtitle_url'] as String?,
       isFavorite: (row['is_favorite'] as int) == 1,
       rating: row['rating'] as String?,
+      addedAt:
+          addedAt != null ? DateTime.fromMillisecondsSinceEpoch(addedAt) : null,
       seriesId: row['series_id'] as int?,
       seriesName: row['series_name'] as String?,
       seriesCoverUrl: row['series_cover_url'] as String?,
@@ -184,17 +236,23 @@ class CatalogDatabase {
         'cover_url': s.coverUrl,
         'is_favorite': s.isFavorite ? 1 : 0,
         'rating': s.rating,
+        'added_at': s.addedAt?.millisecondsSinceEpoch,
       };
 
-  XtreamSeries _rowToSeries(Map<String, Object?> row) => XtreamSeries(
-        seriesId: row['series_id'] as int,
-        playlistId: row['playlist_id'] as String,
-        name: row['name'] as String,
-        categoryId: row['category_name'] as String,
-        coverUrl: row['cover_url'] as String?,
-        isFavorite: (row['is_favorite'] as int) == 1,
-        rating: row['rating'] as String?,
-      );
+  XtreamSeries _rowToSeries(Map<String, Object?> row) {
+    final addedAt = row['added_at'] as int?;
+    return XtreamSeries(
+      seriesId: row['series_id'] as int,
+      playlistId: row['playlist_id'] as String,
+      name: row['name'] as String,
+      categoryId: row['category_name'] as String,
+      coverUrl: row['cover_url'] as String?,
+      isFavorite: (row['is_favorite'] as int) == 1,
+      rating: row['rating'] as String?,
+      addedAt:
+          addedAt != null ? DateTime.fromMillisecondsSinceEpoch(addedAt) : null,
+    );
+  }
 
   /// Replaces (not merges) a category's rows — a re-fetch (e.g. "Update
   /// Content") should fully reflect the provider's current item list, not
@@ -278,6 +336,27 @@ class CatalogDatabase {
     return rows.map(_rowToChannel).toList();
   }
 
+  /// The newest movies the provider has, newest first — what the TV
+  /// layout's "What's New" carousel shows. Scoped to [playlistIds] (the
+  /// currently-enabled ones) exactly like [searchVod]; rows with no
+  /// `added_at` are skipped outright rather than sorted as if they were
+  /// ancient, so a provider that doesn't report the field contributes
+  /// nothing here instead of filling the carousel with arbitrary titles.
+  Future<List<Channel>> getRecentlyAddedVod(List<String> playlistIds,
+      {int limit = 5}) async {
+    if (playlistIds.isEmpty) return [];
+    final db = await _database;
+    final placeholders = List.filled(playlistIds.length, '?').join(', ');
+    final rows = await db.query(
+      'vod_channels',
+      where: 'playlist_id IN ($placeholders) AND added_at IS NOT NULL',
+      whereArgs: playlistIds,
+      orderBy: 'added_at DESC',
+      limit: limit,
+    );
+    return rows.map(_rowToChannel).toList();
+  }
+
   Future<void> upsertSeriesCategory(
       String playlistId, String categoryName, List<XtreamSeries> items) async {
     final db = await _database;
@@ -314,6 +393,22 @@ class CatalogDatabase {
       'series_items',
       where: 'name LIKE ? AND playlist_id IN ($placeholders)',
       whereArgs: ['%$query%', ...playlistIds],
+      limit: limit,
+    );
+    return rows.map(_rowToSeries).toList();
+  }
+
+  /// See [getRecentlyAddedVod]'s doc comment — same idea for series.
+  Future<List<XtreamSeries>> getRecentlyAddedSeries(List<String> playlistIds,
+      {int limit = 5}) async {
+    if (playlistIds.isEmpty) return [];
+    final db = await _database;
+    final placeholders = List.filled(playlistIds.length, '?').join(', ');
+    final rows = await db.query(
+      'series_items',
+      where: 'playlist_id IN ($placeholders) AND added_at IS NOT NULL',
+      whereArgs: playlistIds,
+      orderBy: 'added_at DESC',
       limit: limit,
     );
     return rows.map(_rowToSeries).toList();
