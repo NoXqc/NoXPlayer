@@ -217,8 +217,28 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // down this route, not a safe time for another widget's `setState`
     // to land. `_playback` is a long-lived singleton, safe to touch
     // after this widget's own disposal.
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _playback.setFullscreenActive(false));
+    //
+    //
+    // Live TV deliberately keeps playing in the background (see
+    // LiveResumeHint) — channel-surfing while keeping a live stream "on
+    // standby" is a real pattern a live stream's own lack of a fixed
+    // endpoint supports. A movie/episode has a clear stop, and backing
+    // out was reported directly as leaving it audibly still playing with
+    // no way back short of manually finding and reselecting it — no
+    // resume prompt exists for VOD at all, unlike live. Stopping it here
+    // instead, with the exact position saved (see
+    // PlaybackService._teardown), means Continue Watching is the one,
+    // deliberate way back in, instead of a confusing background audio
+    // leak with no discoverable resume path. Bundled into the same
+    // deferred callback as setFullscreenActive below — stop() also calls
+    // notifyListeners(), the exact same "not safe mid-teardown" case that
+    // callback already exists for.
+    final ch = _playback.currentChannel;
+    final shouldStopVod = ch != null && !Channel.isLiveId(ch.rawId);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (shouldStopVod) unawaited(_playback.stop());
+      _playback.setFullscreenActive(false);
+    });
     _hideTimer?.cancel();
     _topScope.removeListener(_onBarFocusChange);
     _bottomScope.removeListener(_onBarFocusChange);

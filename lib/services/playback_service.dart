@@ -332,7 +332,24 @@ class PlaybackService extends ChangeNotifier {
   Future<void> _teardown() async {
     _positionSaveTimer?.cancel();
     _positionSaveTimer = null;
+    // A final exact-position save before disposing — the periodic timer
+    // above only runs every 5 seconds, so without this, stopping shortly
+    // after the last tick could leave Continue Watching up to 5 seconds
+    // stale instead of reflecting exactly where playback actually left
+    // off. Same isLive guard as the periodic save: never persist a
+    // "resume point" for a live channel in the first place.
+    final ch = currentChannel;
     final old = controller;
+    if (ch != null &&
+        old != null &&
+        old.value.isInitialized &&
+        !Channel.isLiveId(ch.rawId)) {
+      await _storage.setLastPosition(ch.id, old.value.position.inMilliseconds);
+      final duration = old.value.duration;
+      if (duration > Duration.zero) {
+        await _storage.setLastDuration(ch.id, duration.inMilliseconds);
+      }
+    }
     controller = null;
     initFuture = null;
     unawaited(WakelockPlus.disable());
