@@ -391,6 +391,33 @@ class _NoxIptvAppState extends State<NoxIptvApp>
       );
     }
 
+    // The three branches below (and the real app further down) all run
+    // only once `_bootstrap()` has progressed far enough to assign every
+    // `late final` service field, unlike the `_bootstrapError` case above
+    // (which can fire mid-assignment) — so wrapping them in the same
+    // `MultiProvider` the real app uses is safe here. Reported directly,
+    // live: `CatalogSyncPromptScreen`'s two `ModeButton`s render as blank,
+    // completely unresponsive boxes ("no way to get out of it," "also
+    // can not skip") — `ModeButton` reads `AppPreferences` via
+    // `context.watch`, and this screen used to be returned *before* this
+    // method's `MultiProvider` further down, with no ancestor Provider of
+    // any kind. Flutter's release-mode fallback for a widget that throws
+    // during build is exactly what was on screen: a plain, non-
+    // interactive placeholder box with no text and no working `onTap`.
+    return MultiProvider(
+      providers: [
+        Provider<StorageService>.value(value: _storage),
+        Provider<CatalogDatabase>.value(value: _catalogDb),
+        ChangeNotifierProvider<AppPreferences>.value(value: _preferences),
+        ChangeNotifierProvider<PlaylistManager>.value(value: _playlistManager),
+        ChangeNotifierProvider<EpgService>.value(value: _epgService),
+        ChangeNotifierProvider<PlaybackService>.value(value: _playbackService),
+      ],
+      child: _buildReadyContent(context),
+    );
+  }
+
+  Widget _buildReadyContent(BuildContext context) {
     if (_syncPromptPending) {
       return CatalogSyncPromptScreen(
         lastSyncedAt: _oldestLastFullSyncAt(),
@@ -469,59 +496,49 @@ class _NoxIptvAppState extends State<NoxIptvApp>
       );
     }
 
-    return MultiProvider(
-      providers: [
-        Provider<StorageService>.value(value: _storage),
-        Provider<CatalogDatabase>.value(value: _catalogDb),
-        ChangeNotifierProvider<AppPreferences>.value(value: _preferences),
-        ChangeNotifierProvider<PlaylistManager>.value(value: _playlistManager),
-        ChangeNotifierProvider<EpgService>.value(value: _epgService),
-        ChangeNotifierProvider<PlaybackService>.value(value: _playbackService),
-      ],
-      child: Consumer<AppPreferences>(
-        builder: (context, prefs, _) {
-          return MaterialApp(
-            title: AppConstants.appName,
-            debugShowCheckedModeBanner: false,
-            scaffoldMessengerKey: _scaffoldMessengerKey,
-            navigatorKey: _navigatorKey,
-            navigatorObservers: [appRouteObserver],
-            // Renders above the Navigator's own output rather than inside
-            // it, so the hold-Right-to-resume gesture and reminder text
-            // work from any screen instead of only the one route they
-            // happened to be built into (see LiveResumeHint's doc
-            // comment).
-            builder: (context, child) => Stack(
-              children: [
-                if (child != null) child,
-                LiveResumeHint(navigatorKey: _navigatorKey),
-              ],
-            ),
-            themeMode: prefs.themeMode,
-            theme: ThemeData(
-              brightness: Brightness.light,
-              colorScheme:
-                  buildPaletteColorScheme(prefs.palette, Brightness.light),
-              useMaterial3: true,
-            ),
-            darkTheme: ThemeData(
-              brightness: Brightness.dark,
-              colorScheme:
-                  buildPaletteColorScheme(prefs.palette, Brightness.dark),
-              useMaterial3: true,
-            ),
-            home: Builder(
-              builder: (context) {
-                final useTv = prefs.layoutMode == 'tv' ||
-                    (prefs.layoutMode == 'auto' &&
-                        MediaQuery.of(context).size.width >=
-                            AppConstants.tvLayoutWidthThreshold);
-                return useTv ? const TvHomeScreen() : const HomeScreen();
-              },
-            ),
-          );
-        },
-      ),
+    return Consumer<AppPreferences>(
+      builder: (context, prefs, _) {
+        return MaterialApp(
+          title: AppConstants.appName,
+          debugShowCheckedModeBanner: false,
+          scaffoldMessengerKey: _scaffoldMessengerKey,
+          navigatorKey: _navigatorKey,
+          navigatorObservers: [appRouteObserver],
+          // Renders above the Navigator's own output rather than inside
+          // it, so the hold-Right-to-resume gesture and reminder text
+          // work from any screen instead of only the one route they
+          // happened to be built into (see LiveResumeHint's doc
+          // comment).
+          builder: (context, child) => Stack(
+            children: [
+              if (child != null) child,
+              LiveResumeHint(navigatorKey: _navigatorKey),
+            ],
+          ),
+          themeMode: prefs.themeMode,
+          theme: ThemeData(
+            brightness: Brightness.light,
+            colorScheme:
+                buildPaletteColorScheme(prefs.palette, Brightness.light),
+            useMaterial3: true,
+          ),
+          darkTheme: ThemeData(
+            brightness: Brightness.dark,
+            colorScheme:
+                buildPaletteColorScheme(prefs.palette, Brightness.dark),
+            useMaterial3: true,
+          ),
+          home: Builder(
+            builder: (context) {
+              final useTv = prefs.layoutMode == 'tv' ||
+                  (prefs.layoutMode == 'auto' &&
+                      MediaQuery.of(context).size.width >=
+                          AppConstants.tvLayoutWidthThreshold);
+              return useTv ? const TvHomeScreen() : const HomeScreen();
+            },
+          ),
+        );
+      },
     );
   }
 }
