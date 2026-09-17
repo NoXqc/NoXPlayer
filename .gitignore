@@ -52,3 +52,11 @@ app.*.map.json
 
 # Ad-hoc debug screenshots pulled from devices during development
 /nox_*.png
+
+# Release signing secrets — never committed. Losing this keystore means
+# every existing install can never seamlessly update again (a new key
+# forces the same one-time uninstall/reinstall this file exists to avoid
+# repeating). Back it up somewhere outside this repo.
+/android/key.properties
+*.jks
+*.keystore
