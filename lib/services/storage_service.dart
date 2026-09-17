@@ -121,7 +121,7 @@ class StorageService {
   Future<void> setShowClock(bool value) =>
       _prefs.setBool(AppConstants.keyShowClock, value);
 
-  /// Falls back to the first entry (Purple/Magenta) when unset or when the
+  /// Falls back to the first entry (Minimalist) when unset or when the
   /// stored id doesn't match a known palette — no migration attempted from
   /// the old single-seed-color storage, a fresh sensible default is simpler
   /// than trying to map an arbitrary old color onto the closest palette.

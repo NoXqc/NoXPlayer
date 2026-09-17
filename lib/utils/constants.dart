@@ -26,58 +26,6 @@ class AppConstants {
   static const String defaultLayoutMode =
       String.fromEnvironment('DEFAULT_LAYOUT_MODE', defaultValue: 'auto');
 
-  /// Shown in Settings > Advanced — a human-readable stamp of which build
-  /// is actually running, bumped by hand on every build. Exists because
-  /// Android's own versionCode/install flow isn't always a reliable signal
-  /// on non-Google package installers (some skip reinstalling an APK with
-  /// an unchanged versionCode, silently keeping the old binary even though
-  /// the user just "installed" the new file) — this reads whatever code
-  /// is actually running, independent of any of that.
-  static const String buildMarker =
-      '3.31.0 — Real multi-playlist support: add unlimited playlists in '
-      'the new Playlist Manager (Settings), each with its own login, '
-      'enable/disable, delete, and full-catalog-sync schedule. Enabled '
-      'playlists\' Live TV/Movies/TV Shows merge together in the main '
-      'browse screens, with a highlighted divider row marking where one '
-      'playlist\'s groups end and the next begin. Group Management now '
-      'runs per playlist, so you can e.g. keep one provider\'s Live TV '
-      'and hide its VOD, while doing the opposite for a second provider. '
-      'Favorites stay a single shared list across every playlist. Also '
-      'fixes: the "hold to resume" bubble on a backgrounded live channel '
-      'now shows the channel name with a clearer "Hold ▶ to resume" '
-      'hint underneath instead of one easily-truncated line; four '
-      'confirmation dialogs (leaving Group Management, deleting a '
-      'playlist, the update-install permission prompt) where the D-pad '
-      'selection on the darker button was nearly invisible; and the '
-      'Minimalist theme\'s color swatch in Settings > Theme, which used '
-      'to render identically to the real Purple/Magenta swatch. '
-      'Also includes everything from 3.30.0 — New "Minimalist" theme '
-      '(Settings > Theme): flat black '
-      'background, white lettering, and a real frosted-glass blur on the '
-      'D-pad focus highlight, while the NoXPlayer wordmark stays purple/'
-      'magenta. Also fixes Add Playlist\'s Smart Add screen not scrolling '
-      'a newly-focused button into view once the review step got taller '
-      'than the screen. Also includes everything from 3.29.0 — Fixed a '
-      'real crash on "Update EPG" for large multi-'
-      'provider EPG sources: programme data was being retained for every '
-      'channel the EPG source covers, not just the ones in your actual '
-      'playlist, which on a big shared EPG feed could be a multi-million-'
-      'object unbounded allocation and a native out-of-memory kill. Now '
-      'filtered down to just the playlist\'s own channels while parsing. '
-      'Also fixed Add Playlist\'s "Smart Add" paste box getting the '
-      'remote\'s Select button stuck reopening the on-screen keyboard '
-      'instead of moving on to Parse. Also includes everything from '
-      '3.28.0: the real fix for the Group Management checkbox freeze on '
-      'a fresh Xtream login (the earlier Icon-swap fix only masked a '
-      'different, older issue) — root cause was PlaylistManager firing '
-      'notifyListeners() synchronously *during* TvHomeScreen\'s own '
-      'build, "allowed" by Flutter but fragile, confirmed fixed end-to-'
-      'end on a real Fire Stick. And from 3.27.0: explicit Previous/Next '
-      'episode buttons in the player; hardware Play/Pause key support; '
-      'the Settings redesign; persistent poster-image caching; and the '
-      'main Live TV/Movies/TV Shows screen\'s bright gradient background '
-      'and rounded, bordered live-preview pane.';
-
   // SharedPreferences keys.
   //
   // keyM3uUrl/keyEpgUrl/keyXtreamServer.../keyPlaylistMode/
@@ -167,6 +115,18 @@ class AppConstants {
     // First entry is the fresh-install default — see
     // StorageService.getPaletteId's fallback and AppPreferences._paletteById's
     // orElse, both of which fall back to cyberpunkPalettes.first.
+    //
+    // primary/secondary here are the same purple/magenta as the
+    // Purple/Magenta entry below — not shown as a colored gradient/fill
+    // anywhere (see CyberpunkPalette.isMinimal), just kept as the
+    // wordmark's own accent so it isn't plain white too.
+    CyberpunkPalette(
+      id: 'minimal',
+      label: 'Minimalist',
+      primary: Color(0xFF7C3AED),
+      secondary: Color(0xFFE91E8C),
+      isMinimal: true,
+    ),
     CyberpunkPalette(
       id: 'red_blue',
       label: 'Red / Blue',
@@ -190,16 +150,6 @@ class AppConstants {
       label: 'Dark / Gold',
       primary: Color(0xFFD4AF37),
       secondary: Color(0xFF8C6D1F),
-    ),
-    // Same purple/magenta as the palette above — not shown as a colored
-    // gradient/fill anywhere (see CyberpunkPalette.isMinimal), just kept
-    // as the wordmark's own accent so it isn't plain white too.
-    CyberpunkPalette(
-      id: 'minimal',
-      label: 'Minimalist',
-      primary: Color(0xFF7C3AED),
-      secondary: Color(0xFFE91E8C),
-      isMinimal: true,
     ),
   ];
 

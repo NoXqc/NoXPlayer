@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/app_preferences.dart';
-import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
 import '../../widgets/settings_scaffold.dart';
 import 'add_playlist_screen.dart';
@@ -73,16 +72,9 @@ class SettingsMenuScreen extends StatelessWidget {
                         builder: (_) => const CheckUpdatesScreen())),
                   ),
                   const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    padding: EdgeInsets.fromLTRB(16, 16, 16, 16),
                     child: Text(
-                      'Build: ${AppConstants.buildMarker}',
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: Text(
-                      'Report bugs to: noxqcx@gmail.com',
+                      'Report any bugs or glitches to noxqcx@gmail.com',
                       style: TextStyle(fontSize: 11, color: Colors.grey),
                     ),
                   ),
