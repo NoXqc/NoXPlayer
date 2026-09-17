@@ -1,7 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/white" />
+    <!-- Was @android:color/white, the untouched Flutter template default
+         — reported directly on a Formuler box: a solid white screen for
+         3-5 real seconds on every cold launch, before Flutter's own
+         black splash (main.dart) ever gets a chance to paint over it.
+         This drawable is the *native* Android window background shown
+         from the moment the process starts until Flutter's first frame
+         — entirely outside Dart's control, so main.dart's own splash
+         screen was never the fix for this. Matches that splash's actual
+         background (Colors.black) so there's no visible flash between
+         the two at all, not just a faster/different-colored one. -->
+    <item android:drawable="@android:color/black" />
 
     <!-- You can insert your own image assets here -->
     <!-- <item>

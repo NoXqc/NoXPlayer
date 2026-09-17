@@ -98,8 +98,15 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// nothing was) — the same fix pattern as [DpadVerticalNav] elsewhere in
   /// this app.
   final FocusScopeNode _col0Scope = FocusScopeNode(debugLabel: 'tv-tabs');
-  final FocusScopeNode _col1Scope = FocusScopeNode(debugLabel: 'tv-col1');
-  final FocusScopeNode _col2Scope = FocusScopeNode(debugLabel: 'tv-col2');
+  // Not final — see _onTabChanged, which replaces these with fresh
+  // instances on every tab switch specifically (not just cleared) to
+  // guarantee no stale focus memory survives, while every other use of
+  // these two (_moveColumnFocus, column-to-column movement within the
+  // *same* tab) keeps relying on FocusScopeNode's own restore-last-
+  // focused-child behavior exactly as the doc comment above describes —
+  // that's genuinely desirable there, just not across a tab switch.
+  FocusScopeNode _col1Scope = FocusScopeNode(debugLabel: 'tv-col1');
+  FocusScopeNode _col2Scope = FocusScopeNode(debugLabel: 'tv-col2');
 
   /// True once a Left press at the leftmost poster in the browse grid has
   /// found nowhere further left to go, but hasn't yet been confirmed by a
@@ -288,13 +295,22 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // bar, switch to TV Shows, and the selector lands on TV Shows' 15th
     // group instead of the top, purely because that's positionally where
     // Movies' focus was left, with nothing about it aware the actual
-    // content is now a completely different list. `unfocus()`'s default
-    // `UnfocusDisposition.scope` clears that remembered-child state (as
-    // opposed to `.previouslyFocusedChild`, which would keep it) — next
-    // time either scope is focused, it starts from its own first
-    // focusable descendant instead of restoring a stale position.
-    _col1Scope.unfocus();
-    _col2Scope.unfocus();
+    // content is now a completely different list.
+    //
+    // `.unfocus()` alone (tried first) turned out not to fix this: it's
+    // a no-op unless the node being called already has focus (an early
+    // `if (!hasFocus) return;` guard in Flutter's own implementation) —
+    // and at the exact moment a tab is switched, focus is on _col0Scope
+    // (the tabs column being tapped/selected), not _col1Scope/_col2Scope
+    // at all, so that guard always bailed out before clearing anything.
+    // Replacing both with genuinely fresh FocusScopeNode instances instead
+    // guarantees no memory survives, by construction — a new node simply
+    // has none to begin with. The old instances are disposed immediately
+    // after; nothing else holds a reference to them past this point.
+    _col1Scope.dispose();
+    _col2Scope.dispose();
+    _col1Scope = FocusScopeNode(debugLabel: 'tv-col1');
+    _col2Scope = FocusScopeNode(debugLabel: 'tv-col2');
     setState(() {
       _tab = tab;
       _selectedGroup = null;

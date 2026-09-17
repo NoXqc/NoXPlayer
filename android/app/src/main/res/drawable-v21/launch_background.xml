@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Modify this file to customize your launch splash screen -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
+    <!-- Was ?android:colorBackground (whatever the system theme resolves
+         it to — white on a Formuler's default theme) — see drawable/
+         launch_background.xml's doc comment for the actual reported bug
+         this fixes. Explicit black, not theme-dependent, for the same
+         reason: guaranteed to match main.dart's own splash regardless of
+         what a given box's system theme happens to be. -->
+    <item android:drawable="@android:color/black" />
 
     <!-- You can insert your own image assets here -->
     <!-- <item>
