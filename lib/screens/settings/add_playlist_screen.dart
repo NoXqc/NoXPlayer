@@ -464,7 +464,27 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
       // confirmed directly against a backup server that was actually
       // rejecting the credentials.
       if (!mounted) return;
-      if (playlist.error != null) return;
+      if (playlist.error != null) {
+        // A failed *new* add previously still left `addPlaylist`'s
+        // just-created profile permanently saved — reported directly:
+        // several genuinely-failed attempts (a provider's server being
+        // down/blocking requests at the time) silently persisted anyway,
+        // each as its own empty, unloaded playlist with no content and
+        // no visible sign anything was added — "Failed to add playlist"
+        // said nothing was added, but something was. Once the provider's
+        // server came back, *all* of them finally connected on their own
+        // and populated for real, producing several duplicate copies of
+        // the same login with no way to tell which one had actually been
+        // configured (hidden groups, etc.) and which were the orphaned
+        // failures. Roll the profile back out here so a failed add
+        // genuinely adds nothing, matching what the error message says.
+        // Editing an *existing* playlist's login is deliberately left
+        // alone on failure — that profile (and its real cached catalog,
+        // hidden groups, favorites) predates this attempt and shouldn't
+        // be destroyed just because a credential change didn't verify.
+        if (!isEditing) await playlist.removePlaylist(playlistId);
+        return;
+      }
 
       if (!isEditing && mode == 'xtream') {
         await _promptDownloadScope(playlist, playlistId);
