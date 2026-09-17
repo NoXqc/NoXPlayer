@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -150,8 +149,19 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// widget is built — i.e. the instant the tab is switched, while focus is
   /// still meant to be on the tabs rail — and would drag the cursor into
   /// the content column unasked.
-  final FocusNode _whatsNewPlayFocusNode =
-      FocusNode(debugLabel: 'whats-new-play');
+  ///
+  /// One node per content type, not shared — Movies' and TV Shows'
+  /// carousels are two separate `_WhatsNewCarousel` widget instances (only
+  /// one ever actually mounted at a time, but still two distinct Elements
+  /// over the app's lifetime), and a single `FocusNode` is only ever meant
+  /// to be attached to one `Focus`/`InkWell` Element at a time. Release
+  /// builds strip the assertion that would catch a bad attach/detach
+  /// ordering here, so this was a real, silent crash risk, not just a
+  /// style nit.
+  final FocusNode _moviesWhatsNewPlayFocusNode =
+      FocusNode(debugLabel: 'whats-new-play-movies');
+  final FocusNode _showsWhatsNewPlayFocusNode =
+      FocusNode(debugLabel: 'whats-new-play-shows');
 
   /// Groups mid-way through the "grey out for 30s, then actually hide"
   /// flow — long-pressing one of these again cancels the hide instead of
@@ -591,11 +601,15 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // The carousel replaces the poster rows entirely while it's up, so
     // none of the per-group first-poster nodes below exist to focus — its
     // Play button is the deliberate landing spot instead (see
-    // [_whatsNewPlayFocusNode]). Falls back to the column's own scope if
-    // the carousel is still loading/empty and has no Play button mounted.
+    // [_moviesWhatsNewPlayFocusNode]/[_showsWhatsNewPlayFocusNode]).
+    // Falls back to the column's own scope if the carousel is still
+    // loading/empty and has no Play button mounted.
     if (_showWhatsNew) {
-      if (_whatsNewPlayFocusNode.context != null) {
-        _whatsNewPlayFocusNode.requestFocus();
+      final playNode = _tab == 'Movies'
+          ? _moviesWhatsNewPlayFocusNode
+          : _showsWhatsNewPlayFocusNode;
+      if (playNode.context != null) {
+        playNode.requestFocus();
       } else {
         _col2Scope.requestFocus();
       }
@@ -713,7 +727,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       node.dispose();
     }
     _continueWatchingFirstFocusNode.dispose();
-    _whatsNewPlayFocusNode.dispose();
+    _moviesWhatsNewPlayFocusNode.dispose();
+    _showsWhatsNewPlayFocusNode.dispose();
     for (final timer in _pendingHideTimers.values) {
       timer.cancel();
     }
@@ -2069,7 +2084,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         titleOf: (c) => c.name,
         imageUrlOf: (c) => c.logoUrl,
         onOpen: _openMovie,
-        playFocusNode: _whatsNewPlayFocusNode,
+        playFocusNode: _moviesWhatsNewPlayFocusNode,
         emptyText: 'No recently added movies yet',
       );
     }
@@ -2159,7 +2174,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         titleOf: (s) => s.name,
         imageUrlOf: (s) => s.coverUrl,
         onOpen: _openSeries,
-        playFocusNode: _whatsNewPlayFocusNode,
+        playFocusNode: _showsWhatsNewPlayFocusNode,
         emptyText: 'No recently added shows yet',
       );
     }
@@ -2905,7 +2920,7 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
                 itemCount: items.length,
                 onPageChanged: (i) => setState(() => _index = i),
                 itemBuilder: (context, i) =>
-                    _buildPage(context, items[i], blurred: i == _index),
+                    _buildPage(context, items[i]),
               ),
             ),
             _buildDots(context, items.length),
@@ -2916,14 +2931,32 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
     );
   }
 
-  Widget _buildPage(BuildContext context, T item, {required bool blurred}) {
+  Widget _buildPage(BuildContext context, T item) {
     final scheme = Theme.of(context).colorScheme;
     final imageUrl = widget.imageUrlOf(item);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.grey.shade900,
+          // A static gradient instead of a blurred copy of the poster —
+          // a GPU blur over a full-bleed image crashed real Fire Stick
+          // hardware twice (native-level: logcat's crash buffer showed
+          // "crash_dump helper failed to exec" both times, consistent
+          // with a GPU-driver failure rather than a Dart exception),
+          // even after restricting it to only the active PageView page.
+          // This still fills the letterboxed space either side of a
+          // portrait poster with something intentional instead of flat
+          // grey, at effectively zero rendering cost.
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color.alphaBlend(
+                  scheme.primary.withValues(alpha: 0.25), Colors.grey.shade900),
+              Color.alphaBlend(scheme.secondary.withValues(alpha: 0.25),
+                  Colors.grey.shade900),
+            ],
+          ),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
               color: Color.lerp(scheme.primary, scheme.secondary, 0.5)!,
@@ -2933,35 +2966,6 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // A blurred, cover-fit copy of the same poster fills the wide
-            // backdrop behind it — the crisp copy in front (below) stays
-            // BoxFit.contain and untouched, so the actual poster is never
-            // stretched or cropped; this just gives the empty letterboxed
-            // space either side of a portrait poster something to look at
-            // instead of flat grey, same idea as a Plex/Netflix hero panel.
-            //
-            // Only ever applied to the currently-focused page, never the
-            // one or two neighbors PageView.builder keeps built for a
-            // smooth swipe — a GPU blur over a full-bleed image is
-            // expensive, and having 2-3 of them compositing at once
-            // (every 4s, on every auto-advance) is a real crash risk on
-            // weaker TV-box/Fire-Stick GPUs, not just a jank concern.
-            if (blurred && imageUrl != null && imageUrl.isNotEmpty)
-              RepaintBoundary(
-                child: ImageFiltered(
-                  imageFilter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                  child: CachedNetworkImage(
-                    imageUrl: imageUrl,
-                    fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => const SizedBox.shrink(),
-                  ),
-                ),
-              ),
-            if (blurred && imageUrl != null && imageUrl.isNotEmpty)
-              DecoratedBox(
-                decoration:
-                    BoxDecoration(color: Colors.black.withValues(alpha: 0.35)),
-              ),
             if (imageUrl != null && imageUrl.isNotEmpty)
               CachedNetworkImage(
                 imageUrl: imageUrl,
