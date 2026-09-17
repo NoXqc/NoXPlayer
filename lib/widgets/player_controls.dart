@@ -519,13 +519,38 @@ class _SkipButtonState extends State<_SkipButton> {
   static const _tapAmount = Duration(seconds: 10);
   static const _holdInterval = Duration(milliseconds: 400);
 
+  // Reported directly, and confirmed by exactly how it was reproduced —
+  // "even if you'd stop hold, hit stop or hit -10, it would never stop
+  // the ticks": pressing *any other button* moves D-pad focus away from
+  // this one, so the KeyUpEvent this relied on to call _endHold() lands
+  // on whatever's focused now instead — never here. Nothing ever told
+  // this widget's own Timer.periodic to stop, so it kept firing forever,
+  // independent of anything the user did afterward. `_holdTimer` isn't
+  // tied to the widget's own lifecycle either — it survives a rebuild,
+  // and only Flutter calling dispose() (this widget actually being torn
+  // down) would stop it on its own.
+  //
+  // Two backstops, not just one, since the trigger for the stuck state
+  // wasn't really "no way to detect key-up" (that part already worked
+  // for a clean single press) — it was "no *other* signal ever stops an
+  // in-progress hold once focus moves." onFocusChange below closes the
+  // actual gap (losing focus always means losing control over whether
+  // this is still being held, regardless of why); _maxHoldTicks is a
+  // hard ceiling regardless of cause, so a hold can never run away
+  // indefinitely even if some other, not-yet-seen path has the same gap.
+  static const _maxHoldTicks = 50; // 50 * 400ms = 20s of continuous hold
+
   void _startHold() {
     _tick = 0;
     _heldPastTap = false;
     _holdTimer?.cancel();
-    _holdTimer = Timer.periodic(_holdInterval, (_) {
+    _holdTimer = Timer.periodic(_holdInterval, (timer) {
       _heldPastTap = true;
       _tick++;
+      if (_tick >= _maxHoldTicks) {
+        timer.cancel();
+        _holdTimer = null;
+      }
       // Accelerates the longer it's held: 10s, 10s, 10s, then 20s a tick,
       // then 30s a tick, and so on — not just a constant fast-seek speed.
       widget.onSeek(Duration(seconds: 10 * (1 + _tick ~/ 3)));
@@ -536,6 +561,15 @@ class _SkipButtonState extends State<_SkipButton> {
     _holdTimer?.cancel();
     _holdTimer = null;
     if (!_heldPastTap) widget.onSeek(_tapAmount);
+  }
+
+  /// Same cleanup as [_endHold], minus the tap-fallback seek — losing
+  /// focus mid-hold isn't a clean release to treat as "was actually just
+  /// a tap," it's an interruption; the only thing that matters here is
+  /// making sure nothing keeps running.
+  void _stopHoldOnFocusLoss() {
+    _holdTimer?.cancel();
+    _holdTimer = null;
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -569,7 +603,10 @@ class _SkipButtonState extends State<_SkipButton> {
         isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
     return Focus(
       onKeyEvent: _handleKeyEvent,
-      onFocusChange: (f) => setState(() => _focused = f),
+      onFocusChange: (f) {
+        setState(() => _focused = f);
+        if (!f) _stopHoldOnFocusLoss();
+      },
       child: GestureDetector(
         onTapDown: (_) => _startHold(),
         onTapUp: (_) => _endHold(),
