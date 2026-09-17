@@ -1235,7 +1235,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       // instead of everything landing in one flat list.
       final favoritedGroupTitles = playlist.allFavoritedGroupTitles.toList()
         ..sort();
+      // Keyed by tab — same fix, and same reason, as
+      // _buildBrowseGroupsColumn's own ListView key.
       return ListView(
+        key: const ValueKey('Favorites'),
         children: [
           _SelectableRow(
             icon: Icons.apps,
@@ -1272,7 +1275,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // unfiltered dumping-ground was actively confusing to land back in.
     final effectiveGroup = _effectiveLiveGroup(playlist);
 
+    // Keyed by tab — same fix, and same reason, as
+    // _buildBrowseGroupsColumn's own ListView key.
     return ListView(
+      key: const ValueKey('TV'),
       children: [
         _SelectableRow(
           icon: Icons.star,
@@ -1326,7 +1332,24 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                     .isNotEmpty))
         .toList();
 
+    // Keyed by tab — reported directly, live: simply *scrolling* down the
+    // groups column (never tapping/selecting a group at all) in Movies,
+    // then switching to TV Shows, still landed the D-pad focus partway
+    // down TV Shows' own list instead of at the top. Replacing the
+    // ancestor FocusScopeNode on tab change (see _onTabChanged) wasn't
+    // enough on its own: with no key distinguishing "row 15 in Movies"
+    // from "row 15 in TV Shows", Flutter's own element reconciliation
+    // treats them as the *same* conceptual widget at the same position
+    // and reuses its Element (and the FocusNode that Element's Focus/
+    // InkWell owns internally) rather than disposing and recreating it —
+    // and FocusManager's primary-focus pointer follows that FocusNode
+    // object itself, not any particular ancestor scope, so reparenting it
+    // under a brand-new scope doesn't un-focus it either. A key tied to
+    // the tab forces Flutter to genuinely discard and rebuild this whole
+    // subtree — every row's Element and FocusNode included — instead of
+    // patching it in place, whenever the tab actually changes.
     return ListView(
+      key: ValueKey(_tab),
       children: [
         _SelectableRow(
           icon: Icons.apps,
