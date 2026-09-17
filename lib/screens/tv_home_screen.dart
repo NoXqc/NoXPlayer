@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
@@ -2931,6 +2932,26 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
         child: Stack(
           fit: StackFit.expand,
           children: [
+            // A blurred, cover-fit copy of the same poster fills the wide
+            // backdrop behind it — the crisp copy in front (below) stays
+            // BoxFit.contain and untouched, so the actual poster is never
+            // stretched or cropped; this just gives the empty letterboxed
+            // space either side of a portrait poster something to look at
+            // instead of flat grey, same idea as a Plex/Netflix hero panel.
+            if (imageUrl != null && imageUrl.isNotEmpty)
+              ImageFiltered(
+                imageFilter: ImageFilter.blur(sigmaX: 30, sigmaY: 30),
+                child: CachedNetworkImage(
+                  imageUrl: imageUrl,
+                  fit: BoxFit.cover,
+                  errorWidget: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+            if (imageUrl != null && imageUrl.isNotEmpty)
+              DecoratedBox(
+                decoration:
+                    BoxDecoration(color: Colors.black.withValues(alpha: 0.35)),
+              ),
             if (imageUrl != null && imageUrl.isNotEmpty)
               CachedNetworkImage(
                 imageUrl: imageUrl,
@@ -3014,7 +3035,12 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
   Widget _buildNavRow(BuildContext context, List<T> items) {
     final current = items[_index.clamp(0, items.length - 1)];
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      // Extra bottom clearance: LiveResumeHint (the "Hold -> to resume"
+      // pill for a live channel paused in the background) is a global
+      // overlay fixed at 24px from the very bottom of the screen,
+      // regardless of which tab is showing — this row would otherwise
+      // sit directly under it.
+      padding: const EdgeInsets.only(top: 12, bottom: 64),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [

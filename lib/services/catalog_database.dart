@@ -83,13 +83,25 @@ class CatalogDatabase {
       // tables, series_items' primary key changed from the bare
       // (not-safely-unique-across-providers) series_id to a real composite
       // string id. Destructive: drop + recreate rather than an ALTER +
-      // backfill, matching this database's own v1->v2 precedent — this is
-      // a fully re-derivable local cache (re-synced from the network the
-      // next time each category/playlist loads), not user data.
+      // backfill — this genuinely needed a schema *restructure* (the PK
+      // itself changed shape), not just a new column, and this is a fully
+      // re-derivable local cache (re-synced from the network the next time
+      // each category/playlist loads), not user data.
       // v3 -> v4: added_at on both tables (the "What's New" carousel's sort
-      // key). Destructive for the same reason as v2 -> v3 — an ALTER +
-      // backfill could only ever produce nulls anyway, since the value it
-      // needs comes from the provider, not from anything already stored.
+      // key). Plain ALTER TABLE ADD COLUMN, NOT drop + recreate — unlike
+      // v2 -> v3 there's no structural change here, just one new nullable
+      // column, and SQLite defaults an added column to NULL on every
+      // existing row for free. A drop + recreate was tried here once and
+      // shipped (v3.33.0's initial build): it wiped the *entire* VOD/series
+      // cache on every device on first launch, which forced main.dart's
+      // bootstrap to block the splash on a full from-scratch network
+      // re-fetch of every category, on every platform (phone and TV alike,
+      // since CatalogDatabase is shared) — observed directly as a
+      // multi-minute stuck splash on real hardware. Existing rows simply
+      // get added_at = NULL, which getRecentlyAddedVod/getRecentlyAddedSeries
+      // already treat as "nothing to show for this one yet" — exactly the
+      // fully-re-derivable-cache reasoning above, just without paying for
+      // it by force on every device the moment this ships.
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE series_items ADD COLUMN rating TEXT');
@@ -135,46 +147,10 @@ class CatalogDatabase {
               'CREATE INDEX idx_series_playlist ON series_items(playlist_id)');
         }
         if (oldVersion < 4) {
-          await db.execute('DROP TABLE IF EXISTS vod_channels');
-          await db.execute('DROP TABLE IF EXISTS series_items');
-          await db.execute('''
-            CREATE TABLE vod_channels (
-              id TEXT PRIMARY KEY,
-              playlist_id TEXT NOT NULL,
-              category_name TEXT NOT NULL,
-              name TEXT NOT NULL,
-              url TEXT NOT NULL,
-              logo_url TEXT,
-              subtitle_url TEXT,
-              is_favorite INTEGER NOT NULL DEFAULT 0,
-              rating TEXT,
-              added_at INTEGER,
-              series_id INTEGER,
-              series_name TEXT,
-              series_cover_url TEXT
-            )
-          ''');
           await db.execute(
-              'CREATE INDEX idx_vod_category ON vod_channels(category_name)');
+              'ALTER TABLE vod_channels ADD COLUMN added_at INTEGER');
           await db.execute(
-              'CREATE INDEX idx_vod_playlist ON vod_channels(playlist_id)');
-          await db.execute('''
-            CREATE TABLE series_items (
-              id TEXT PRIMARY KEY,
-              series_id INTEGER NOT NULL,
-              playlist_id TEXT NOT NULL,
-              category_name TEXT NOT NULL,
-              name TEXT NOT NULL,
-              cover_url TEXT,
-              is_favorite INTEGER NOT NULL DEFAULT 0,
-              rating TEXT,
-              added_at INTEGER
-            )
-          ''');
-          await db.execute(
-              'CREATE INDEX idx_series_category ON series_items(category_name)');
-          await db.execute(
-              'CREATE INDEX idx_series_playlist ON series_items(playlist_id)');
+              'ALTER TABLE series_items ADD COLUMN added_at INTEGER');
         }
       },
     );
@@ -336,6 +312,22 @@ class CatalogDatabase {
     return rows.map(_rowToChannel).toList();
   }
 
+  /// Category-name substrings the "What's New" carousel refuses to
+  /// surface, however recently something in them was added — an
+  /// auto-playing slideshow the user didn't ask to browse into is a
+  /// different thing from the category existing at all, so this doesn't
+  /// hide the category itself (see `PlaylistSession.hiddenGroups` for
+  /// that, a separate, deliberate per-category opt-out) — it just keeps
+  /// this one uninvited surface from dipping into it. SQLite's `LIKE` is
+  /// already case-insensitive for plain ASCII text like these.
+  static const _adultCategoryKeywords = ['XXX', 'ADULT', 'PORN', '18+'];
+
+  static String _excludeAdultCategoriesClause() =>
+      _adultCategoryKeywords.map((_) => 'category_name NOT LIKE ?').join(' AND ');
+
+  static List<String> _excludeAdultCategoriesArgs() =>
+      _adultCategoryKeywords.map((k) => '%$k%').toList();
+
   /// The newest movies the provider has, newest first — what the TV
   /// layout's "What's New" carousel shows. Scoped to [playlistIds] (the
   /// currently-enabled ones) exactly like [searchVod]; rows with no
@@ -349,8 +341,9 @@ class CatalogDatabase {
     final placeholders = List.filled(playlistIds.length, '?').join(', ');
     final rows = await db.query(
       'vod_channels',
-      where: 'playlist_id IN ($placeholders) AND added_at IS NOT NULL',
-      whereArgs: playlistIds,
+      where: 'playlist_id IN ($placeholders) AND added_at IS NOT NULL'
+          ' AND ${_excludeAdultCategoriesClause()}',
+      whereArgs: [...playlistIds, ..._excludeAdultCategoriesArgs()],
       orderBy: 'added_at DESC',
       limit: limit,
     );
@@ -406,8 +399,9 @@ class CatalogDatabase {
     final placeholders = List.filled(playlistIds.length, '?').join(', ');
     final rows = await db.query(
       'series_items',
-      where: 'playlist_id IN ($placeholders) AND added_at IS NOT NULL',
-      whereArgs: playlistIds,
+      where: 'playlist_id IN ($placeholders) AND added_at IS NOT NULL'
+          ' AND ${_excludeAdultCategoriesClause()}',
+      whereArgs: [...playlistIds, ..._excludeAdultCategoriesArgs()],
       orderBy: 'added_at DESC',
       limit: limit,
     );
