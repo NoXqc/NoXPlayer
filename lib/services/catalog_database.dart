@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -34,6 +35,22 @@ class CatalogDatabase {
     if (existing != null) return existing;
     final dir = await getApplicationDocumentsDirectory();
     final path = p.join(dir.path, 'nox_catalog.db');
+    try {
+      _db = await _open(path);
+    } catch (e) {
+      // Everything in here is re-derivable from the provider, so a
+      // database that won't open is worth strictly less than the cost of
+      // not opening it: every catalog read for every playlist fails, and
+      // it surfaces as categories that load forever rather than as
+      // anything that looks like a storage problem. Start over instead.
+      debugPrint('CatalogDatabase: reopening from scratch after $e');
+      await deleteDatabase(path);
+      _db = await _open(path);
+    }
+    return _db!;
+  }
+
+  Future<Database> _open(String path) async {
     final db = await openDatabase(
       path,
       version: 4,
@@ -147,15 +164,32 @@ class CatalogDatabase {
               'CREATE INDEX idx_series_playlist ON series_items(playlist_id)');
         }
         if (oldVersion < 4) {
-          await db.execute(
-              'ALTER TABLE vod_channels ADD COLUMN added_at INTEGER');
-          await db.execute(
-              'ALTER TABLE series_items ADD COLUMN added_at INTEGER');
+          // Re-runnable on purpose. A migration that throws takes the
+          // whole database open down with it, and every catalog read for
+          // every playlist with it — which presents as categories that
+          // never finish loading rather than as anything database-shaped.
+          // This one can genuinely find the column already there: an
+          // earlier build of this same version did a drop + recreate that
+          // created the tables *with* `added_at`, and a process killed
+          // between that statement and sqflite committing the new version
+          // number leaves exactly that state behind.
+          await _addColumnIfMissing(db, 'vod_channels', 'added_at', 'INTEGER');
+          await _addColumnIfMissing(db, 'series_items', 'added_at', 'INTEGER');
         }
       },
     );
-    _db = db;
     return db;
+  }
+
+  /// `ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS` in SQLite, and
+  /// adding one that's already there throws. Asking the table what it has
+  /// first is the only way to make the step idempotent.
+  static Future<void> _addColumnIfMissing(
+      Database db, String table, String column, String type) async {
+    final columns = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = columns.any((c) => c['name'] == column);
+    if (exists) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $column $type');
   }
 
   Map<String, Object?> _channelToRow(String categoryName, Channel c) => {

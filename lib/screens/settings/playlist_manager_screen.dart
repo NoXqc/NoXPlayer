@@ -190,6 +190,12 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
     controller.dispose();
     if (entered == null || entered.trim().isEmpty) return;
     await playlist.addBackupServer(widget.playlistId, entered);
+    // Reported directly: the new entry only appeared after backing out of
+    // this screen and re-entering. The write itself is fine (it *was*
+    // persisted) — this is purely about this screen repainting, so don't
+    // rely solely on the PlaylistManager notification arriving while a
+    // dialog route is unwinding on top of it.
+    if (mounted) setState(() {});
   }
 
   @override
@@ -341,9 +347,13 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
                                       server: backup,
                                       isLastWorking:
                                           profile.lastWorkingServer == backup,
-                                      onRemove: () => playlist
-                                          .removeBackupServer(
-                                              profile.id, backup),
+                                      onRemove: () async {
+                                        await playlist.removeBackupServer(
+                                            profile.id, backup);
+                                        // Same repaint reasoning as
+                                        // _promptForBackupServer.
+                                        if (mounted) setState(() {});
+                                      },
                                     ),
                                 const SizedBox(height: 16),
                                 OutlinedButton.icon(
