@@ -73,7 +73,7 @@ class XtreamApiService {
         .timeout(const Duration(seconds: 30));
     if (response.statusCode != 200) {
       throw Exception(
-          'Xtream request failed: $action (HTTP ${response.statusCode})');
+          'Xtream request to $server failed: $action (HTTP ${response.statusCode})');
     }
     // Off the UI thread — this is the shared decode path for every single
     // API call, including the per-category VOD/series fetches that fire

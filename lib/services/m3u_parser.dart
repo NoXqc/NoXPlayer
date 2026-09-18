@@ -27,7 +27,8 @@ class M3uParser {
 
       if (streamedResponse.statusCode != 200) {
         throw Exception(
-            'Failed to load playlist (HTTP ${streamedResponse.statusCode})');
+            'Failed to load playlist from ${Uri.parse(url).host} '
+            '(HTTP ${streamedResponse.statusCode})');
       }
 
       final state = _ParseState(playlistId: playlistId);

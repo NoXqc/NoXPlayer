@@ -44,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _sidebarCollapsed = false;
   String _tab = 'TV';
   M3uGroup? _selectedGroup;
+  bool _retrying = false;
 
   bool _isWide(BuildContext context) =>
       MediaQuery.of(context).size.width >= _wideBreakpoint;
@@ -314,7 +315,7 @@ class _HomeScreenState extends State<HomeScreen> {
       body: (playlist.isLoading && playlist.lastLoadSummary == null)
           ? _buildLoadingState(playlist)
           : (playlist.error != null && playlist.lastLoadSummary == null)
-              ? _buildEmptyState()
+              ? _buildEmptyState(playlist)
               : Column(
                   children: [
                     const CatalogWarmupBanner(),
@@ -492,7 +493,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(PlaylistManager playlist) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -502,9 +503,40 @@ class _HomeScreenState extends State<HomeScreen> {
             const Icon(Icons.live_tv, size: 64),
             const SizedBox(height: 16),
             const Text('Failed to load playlist.', textAlign: TextAlign.center),
+            if (playlist.error != null) ...[
+              const SizedBox(height: 8),
+              Text(playlist.error!,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: Theme.of(context).colorScheme.error)),
+            ],
             const SizedBox(height: 16),
-            FilledButton(
-                onPressed: _openSettings, child: const Text('Open Settings')),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                OutlinedButton(
+                  onPressed: _retrying
+                      ? null
+                      : () async {
+                          setState(() => _retrying = true);
+                          await playlist.retryFailedConnections();
+                          if (mounted) setState(() => _retrying = false);
+                        },
+                  child: _retrying
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('Retry'),
+                ),
+                const SizedBox(width: 12),
+                FilledButton(
+                    onPressed: _openSettings,
+                    child: const Text('Open Settings')),
+              ],
+            ),
           ],
         ),
       ),

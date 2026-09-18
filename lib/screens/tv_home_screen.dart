@@ -68,6 +68,7 @@ class TvHomeScreen extends StatefulWidget {
 
 class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   String _tab = 'TV';
+  bool _retrying = false;
 
   /// Group identity is `(playlistId, title)` now that more than one
   /// playlist can exist (two providers can share a category name), but
@@ -1114,9 +1115,56 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                   Expanded(
                     child: (playlist.error != null && playlist.channels.isEmpty)
                         ? Center(
-                            child: FilledButton(
-                                onPressed: _openSettings,
-                                child: const Text('Open Settings')),
+                            child: Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (playlist.error != null)
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 16),
+                                      child: Text(playlist.error!,
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .error)),
+                                    ),
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      OutlinedButton(
+                                        onPressed: _retrying
+                                            ? null
+                                            : () async {
+                                                setState(
+                                                    () => _retrying = true);
+                                                await playlist
+                                                    .retryFailedConnections();
+                                                if (mounted) {
+                                                  setState(
+                                                      () => _retrying = false);
+                                                }
+                                              },
+                                        child: _retrying
+                                            ? const SizedBox(
+                                                width: 16,
+                                                height: 16,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                        strokeWidth: 2))
+                                            : const Text('Retry'),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      FilledButton(
+                                          onPressed: _openSettings,
+                                          child: const Text('Open Settings')),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
                           )
                         : CallbackShortcuts(
                             // The 4-column Live TV/Favorites layout gets full

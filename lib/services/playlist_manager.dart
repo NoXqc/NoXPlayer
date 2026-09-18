@@ -135,6 +135,17 @@ class PlaylistManager extends ChangeNotifier {
     }
   }
 
+  /// Manual "Retry" action for the connection-failed empty state (Live TV,
+  /// Movies/TV Shows). Only re-runs sessions that are actually in an error
+  /// state — not every enabled playlist — so this can't turn into the same
+  /// "hammer the server with more requests than it wants" problem
+  /// `XtreamApiService.maxConnections` was added to prevent for the
+  /// concurrent-category-fetch path; a manual, user-initiated single retry
+  /// is a different, much smaller thing than that was.
+  Future<void> retryFailedConnections() => Future.wait(_enabledSessionsSorted
+      .where((s) => s.error != null)
+      .map((s) => s.restoreOrLoad()));
+
   /// Upgrading from the pre-multi-playlist version: the old single set of
   /// global scalar prefs (server/username/password, hidden/favorited
   /// groups, sync frequency) becomes one `PlaylistProfile` under a fixed,
