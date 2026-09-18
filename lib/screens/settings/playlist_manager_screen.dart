@@ -144,6 +144,54 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  Future<void> _promptForBackupServer(
+      BuildContext context, PlaylistManager playlist) async {
+    final controller = TextEditingController();
+    final entered = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add backup server'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'The full address, exactly like the main one — for example '
+              'http://backup.example.com:8080',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'Server address',
+                hintText: 'http://',
+              ),
+              onSubmitted: (value) => Navigator.of(context).pop(value),
+            ),
+          ],
+        ),
+        // Same ModeButton reasoning as _confirmDelete above.
+        actions: [
+          ModeButton(
+            label: 'Cancel',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(),
+          ),
+          ModeButton(
+            label: 'Add',
+            selected: false,
+            onTap: () => Navigator.of(context).pop(controller.text),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (entered == null || entered.trim().isEmpty) return;
+    await playlist.addBackupServer(widget.playlistId, entered);
+  }
+
   @override
   Widget build(BuildContext context) {
     final playlist = context.watch<PlaylistManager>();
@@ -271,6 +319,53 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
                                     value: profile.m3uUrl ?? ''),
                             ],
                           ),
+                          if (profile.isXtream) ...[
+                            const SizedBox(height: 20),
+                            const SectionLabel('Backup Servers'),
+                            const SizedBox(height: 8),
+                            SettingsPanel(
+                              children: [
+                                if (profile.backupServers.isEmpty)
+                                  Text(
+                                    'None yet. If your provider gave you more '
+                                    'than one server address for this same '
+                                    'account, add them here and this playlist '
+                                    'will try them in order whenever the main '
+                                    'one can\'t be reached.',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  )
+                                else
+                                  for (final backup in profile.backupServers)
+                                    _BackupServerRow(
+                                      server: backup,
+                                      isLastWorking:
+                                          profile.lastWorkingServer == backup,
+                                      onRemove: () => playlist
+                                          .removeBackupServer(
+                                              profile.id, backup),
+                                    ),
+                                const SizedBox(height: 16),
+                                OutlinedButton.icon(
+                                  icon: const Icon(Icons.dns_outlined),
+                                  label: const Text('Add backup server'),
+                                  onPressed: () =>
+                                      _promptForBackupServer(context, playlist),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    'Same username and password as above — only '
+                                    'the address differs. Tried in order, a few '
+                                    'seconds apart, and whichever answers is '
+                                    'used first next time.',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -387,6 +482,57 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
                 ),
               ),
             ));
+  }
+}
+
+/// One configured backup server, with its own remove action. Marks the
+/// one this playlist actually connected through last, so a list of
+/// near-identical hostnames still tells you which is currently carrying
+/// the account.
+class _BackupServerRow extends StatelessWidget {
+  const _BackupServerRow({
+    required this.server,
+    required this.isLastWorking,
+    required this.onRemove,
+  });
+
+  final String server;
+  final bool isLastWorking;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(server,
+                      style: const TextStyle(fontFamily: 'monospace')),
+                ),
+                if (isLastWorking) ...[
+                  const SizedBox(width: 8),
+                  Icon(Icons.check_circle,
+                      size: 16, color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 4),
+                  Text('in use',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary)),
+                ],
+              ],
+            ),
+          ),
+          TvAppBarButton.icon(
+            icon: Icons.close,
+            tooltip: 'Remove $server',
+            onTap: onRemove,
+          ),
+        ],
+      ),
+    );
   }
 }
 

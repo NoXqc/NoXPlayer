@@ -259,6 +259,53 @@ class PlaylistManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Adds an alternate server URL for this playlist to fall back to when
+  /// its primary can't be reached (see
+  /// `PlaylistSession._connectWithFallback`). No connection is attempted
+  /// here — an unreachable backup is exactly what this list is *for*, so
+  /// refusing to save one that happens to be down right now would be
+  /// backwards. Ignores blanks and anything already in the list
+  /// (including the primary itself, which is always tried anyway).
+  Future<void> addBackupServer(String playlistId, String server) async {
+    final session = _sessionFor(playlistId);
+    if (session == null) return;
+    final normalized = server.trim();
+    if (normalized.isEmpty) return;
+    final profile = session.profile;
+    if (normalized == profile.xtreamServer ||
+        profile.backupServers.contains(normalized)) {
+      return;
+    }
+    profile.backupServers = [...profile.backupServers, normalized];
+    await updatePlaylist(profile);
+  }
+
+  /// Records which server actually answered, so the next connect starts
+  /// there. Called from the playback side too — a live stream that had to
+  /// fall back to a backup mid-watch has just proven which server is
+  /// carrying this account right now, and the catalog side should start
+  /// from that one rather than rediscovering it on the next launch.
+  Future<void> rememberWorkingServer(String playlistId, String server) async {
+    final session = _sessionFor(playlistId);
+    if (session == null) return;
+    if (session.profile.lastWorkingServer == server) return;
+    session.profile.lastWorkingServer = server;
+    await updatePlaylist(session.profile);
+  }
+
+  Future<void> removeBackupServer(String playlistId, String server) async {
+    final session = _sessionFor(playlistId);
+    if (session == null) return;
+    final profile = session.profile;
+    profile.backupServers =
+        profile.backupServers.where((s) => s != server).toList();
+    // Whatever this playlist last connected through has to go too if it
+    // was the server just removed, or the next connect would keep
+    // preferring a hostname the user deliberately deleted.
+    if (profile.lastWorkingServer == server) profile.lastWorkingServer = null;
+    await updatePlaylist(profile);
+  }
+
   /// Runs this playlist's fresh network load (Xtream login or M3U fetch),
   /// showing the blocking "Updating Content" screen the whole time — used
   /// by both a brand-new playlist's first add and re-saving an existing

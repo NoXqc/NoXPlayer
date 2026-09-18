@@ -38,6 +38,29 @@ class VideoPlayerPane extends StatelessWidget {
       return const Center(child: Text('Select a channel to start watching'));
     }
 
+    // Takes precedence over [PlaybackService.error]: while a failed live
+    // stream is being retried against this playlist's backup servers,
+    // what's on screen should say so rather than showing the failure
+    // that's actively being worked around.
+    if (playback.reconnectStatus != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(height: 16),
+              Text(playback.reconnectStatus!, textAlign: TextAlign.center),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (playback.error != null) {
       return Center(
         child: Padding(
@@ -151,9 +174,7 @@ class VideoPlayerPane extends StatelessWidget {
 /// code makes an incapable decoder chip decode 10-bit HDR. This just
 /// stops surfacing that as a raw stack-trace-shaped string.
 String _friendlyPlaybackError(String raw) {
-  final lower = raw.toLowerCase();
-  if (lower.contains('mediacodecvideorenderer') ||
-      (lower.contains('hevc') && lower.contains('10bit'))) {
+  if (isDecoderPlaybackError(raw)) {
     return 'This device\'s hardware video decoder can\'t play this stream — '
         'likely a 4K HDR (HEVC 10-bit) format it doesn\'t support, even '
         'though it claims to. This is a hardware limitation, not something '

@@ -175,9 +175,13 @@ class PlaylistSession {
     favoritedGroups = storage.getFavoritedGroups(profile.id);
 
     if (isXtream) {
-      final server = profile.xtreamServer;
       final username = profile.xtreamUsername;
       final password = profile.xtreamPassword;
+      // Whatever answered last time, not necessarily the configured
+      // primary — a cache hit skips the authenticating connect below
+      // entirely, so this is the server every on-demand category fetch
+      // for the rest of the session would otherwise be pointed at.
+      final server = profile.serverCandidates.firstOrNull;
       if (server == null ||
           server.isEmpty ||
           username == null ||
@@ -443,6 +447,79 @@ class PlaylistSession {
     }
   }
 
+  /// How long to wait before trying the next server in the list. Only
+  /// ever waited *between* attempts, never before the first or after the
+  /// last — the point is to not machine-gun a provider's whole set of
+  /// hostnames in the same instant, not to add latency for its own sake.
+  static const _backupServerDelay = Duration(seconds: 3);
+
+  /// Authenticates against [PlaylistProfile.serverCandidates] in order,
+  /// returning the first one that answers. With no backups configured
+  /// this is exactly the old single-server behaviour, message for
+  /// message; the per-attempt reporting only appears once there's
+  /// actually more than one server to talk about.
+  ///
+  /// A server that answers and *rejects* the account (bad credentials,
+  /// expired/disabled subscription) stops the walk immediately instead of
+  /// cycling through every backup — that server was reachable, so the
+  /// problem follows the account to every other hostname too, and
+  /// burying "your subscription expired" under a minute of fallback
+  /// attempts helps nobody.
+  Future<XtreamApiService> _connectWithFallback() async {
+    final candidates = profile.serverCandidates;
+    final username = profile.xtreamUsername!;
+    final password = profile.xtreamPassword!;
+    Object? lastError;
+
+    for (var i = 0; i < candidates.length; i++) {
+      final server = candidates[i];
+      final label = _hostLabel(server);
+      if (candidates.length > 1) {
+        loadingPhase = 'Connecting to $label (${i + 1}/${candidates.length})...';
+        onNotify();
+      }
+      final api = XtreamApiService(
+          server: server,
+          username: username,
+          password: password,
+          playlistId: profile.id);
+      try {
+        await api.authenticate();
+        if (candidates.length > 1) {
+          loadingPhase = 'Connected to $label';
+          onNotify();
+        }
+        await _rememberWorkingServer(server);
+        return api;
+      } catch (e) {
+        lastError = e;
+        if (_isAccountRejection(e)) rethrow;
+        if (candidates.length > 1) {
+          loadingPhase = 'Connecting to $label (${i + 1}/'
+              '${candidates.length})... failed';
+          onNotify();
+        }
+        final hasMore = i < candidates.length - 1;
+        if (hasMore) await Future<void>.delayed(_backupServerDelay);
+      }
+    }
+    throw lastError ?? Exception('No server configured for this playlist');
+  }
+
+  /// Persisted so the next launch starts from whatever actually answered
+  /// rather than re-walking a primary that's been down for days. Direct
+  /// field assignment for the same reason [PlaylistProfile.expiresAt] uses
+  /// one — see that field's doc comment.
+  Future<void> _rememberWorkingServer(String server) async {
+    if (profile.lastWorkingServer == server) return;
+    profile.lastWorkingServer = server;
+    final updated = storage
+        .getPlaylists()
+        .map((p) => p.id == profile.id ? profile : p)
+        .toList();
+    await storage.setPlaylists(updated);
+  }
+
   Future<void> loadFromXtream() async {
     isLoading = true;
     error = null;
@@ -451,15 +528,7 @@ class PlaylistSession {
     onNotify();
 
     try {
-      final server = profile.xtreamServer!;
-      final username = profile.xtreamUsername!;
-      final password = profile.xtreamPassword!;
-      final api = XtreamApiService(
-          server: server,
-          username: username,
-          password: password,
-          playlistId: profile.id);
-      await api.authenticate();
+      final api = await _connectWithFallback();
       xtreamApi = api;
       // Refreshed on every successful connect, not just once at add time —
       // a provider extending/changing an account's expiry should show
@@ -1084,3 +1153,22 @@ List<Channel> _decodeLiveChannelsBatch(String raw) => (jsonDecode(raw) as List)
 /// synchronously serializing the whole list on the UI isolate before the
 /// file write itself could even start.
 String _encodeJsonList(List<Map<String, dynamic>> maps) => jsonEncode(maps);
+
+/// Just the hostname for status messages — a full `http://host:8080` in
+/// "Connecting to ..." reads as noise on a TV across the room.
+String _hostLabel(String server) {
+  final host = Uri.tryParse(server)?.host ?? '';
+  return host.isEmpty ? server : host;
+}
+
+/// True when a server answered and turned the *account* away, as opposed
+/// to not answering at all. See `PlaylistSession._connectWithFallback`
+/// for why those two cases can't be treated the same way: matched on
+/// `XtreamApiService.authenticate`'s own thrown messages, which are the
+/// only place these two states are distinguishable by the time they
+/// reach here.
+bool _isAccountRejection(Object error) {
+  final text = error.toString().toLowerCase();
+  return text.contains('invalid xtream username') ||
+      text.contains('account is not active');
+}

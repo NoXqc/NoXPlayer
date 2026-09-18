@@ -20,7 +20,9 @@ class PlaylistProfile {
     this.syncFrequencyDays = AppConstants.defaultSyncFrequencyDays,
     required this.createdAt,
     this.expiresAt,
-  });
+    List<String>? backupServers,
+    this.lastWorkingServer,
+  }) : backupServers = backupServers ?? <String>[];
 
   /// Stable identifier, generated once and never reused — every
   /// per-playlist prefs key, cache-file name, and catalog-database row
@@ -68,6 +70,47 @@ class PlaylistProfile {
   /// next connect rather than whatever it was when first added.
   DateTime? expiresAt;
 
+  /// Alternate server URLs for this same account, tried in order when
+  /// [xtreamServer] itself can't be reached (see
+  /// `PlaylistSession.connectWithFallback`). Same username/password —
+  /// providers that hand out more than one server hand out extra
+  /// hostnames for one subscription, not extra subscriptions.
+  ///
+  /// Deliberately only editable from the playlist's own manager screen
+  /// after it exists, never from the initial add form: a first-time add
+  /// is already the step most likely to be fumbled, and nobody knows
+  /// their backup hostnames before they've got the playlist working.
+  List<String> backupServers;
+
+  /// Whichever of [xtreamServer]/[backupServers] actually answered last
+  /// time, re-tried first on the next connect. Without this, a primary
+  /// that's been down for a week costs every single launch the full
+  /// failed-attempt-plus-delay cycle before falling back to the server
+  /// that's been doing the work all along.
+  ///
+  /// Not a reordering of the user's own list — the primary they
+  /// configured stays the primary they see. This is runtime memory of
+  /// what worked, nothing more, and is simply ignored if it no longer
+  /// appears in either field (e.g. they edited the server since).
+  String? lastWorkingServer;
+
+  /// Every server worth trying for this playlist, in the order to try
+  /// them: last-known-good first (if it's still one of the configured
+  /// ones), then the primary, then the backups. Duplicates removed —
+  /// the last-known-good server is normally also the primary or one of
+  /// the backups, and trying it twice would just double the wait.
+  List<String> get serverCandidates {
+    final configured = <String>[
+      if (xtreamServer != null && xtreamServer!.isNotEmpty) xtreamServer!,
+      ...backupServers.where((s) => s.isNotEmpty),
+    ];
+    final last = lastWorkingServer;
+    return <String>{
+      if (last != null && configured.contains(last)) last,
+      ...configured,
+    }.toList();
+  }
+
   PlaylistProfile copyWith({
     String? name,
     String? mode,
@@ -80,6 +123,8 @@ class PlaylistProfile {
     int? sortOrder,
     int? syncFrequencyDays,
     DateTime? expiresAt,
+    List<String>? backupServers,
+    String? lastWorkingServer,
   }) =>
       PlaylistProfile(
         id: id,
@@ -95,6 +140,8 @@ class PlaylistProfile {
         syncFrequencyDays: syncFrequencyDays ?? this.syncFrequencyDays,
         createdAt: createdAt,
         expiresAt: expiresAt ?? this.expiresAt,
+        backupServers: backupServers ?? List<String>.from(this.backupServers),
+        lastWorkingServer: lastWorkingServer ?? this.lastWorkingServer,
       );
 
   Map<String, dynamic> toJson() => {
@@ -111,6 +158,8 @@ class PlaylistProfile {
         'syncFrequencyDays': syncFrequencyDays,
         'createdAt': createdAt.toIso8601String(),
         'expiresAt': expiresAt?.toIso8601String(),
+        'backupServers': backupServers,
+        'lastWorkingServer': lastWorkingServer,
       };
 
   factory PlaylistProfile.fromJson(Map<String, dynamic> json) =>
@@ -132,6 +181,12 @@ class PlaylistProfile {
         expiresAt: json['expiresAt'] == null
             ? null
             : DateTime.tryParse(json['expiresAt'] as String),
+        backupServers: (json['backupServers'] as List?)
+                ?.map((e) => e.toString())
+                .where((s) => s.isNotEmpty)
+                .toList() ??
+            <String>[],
+        lastWorkingServer: json['lastWorkingServer'] as String?,
       );
 
   bool get isXtream => mode == 'xtream';

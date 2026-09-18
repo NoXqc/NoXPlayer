@@ -7,6 +7,7 @@ import 'package:video_player_hdr/video_player_hdr.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/channel.dart';
+import '../models/playlist_profile.dart';
 import 'playlist_manager.dart';
 import 'storage_service.dart';
 
@@ -51,6 +52,13 @@ class PlaybackService extends ChangeNotifier {
   VideoPlayerHdrController? controller;
   Future<void>? initFuture;
   String? error;
+
+  /// Set while a failed live stream is being retried against this
+  /// playlist's backup servers (see [PlaylistProfile.backupServers]) —
+  /// shown by `PlayerControls` in place of the dead-end playback error it
+  /// would otherwise land on immediately. Null whenever no such retry is
+  /// in progress, which is the overwhelmingly common case.
+  String? reconnectStatus;
 
   /// True while `PlayerScreen` is actually mounted and showing this
   /// channel fullscreen — set/cleared by that screen's own
@@ -218,6 +226,7 @@ class PlaybackService extends ChangeNotifier {
     await _teardown();
     currentChannel = channel;
     error = null;
+    reconnectStatus = null;
     _autoAdvanceDismissed = false;
     // Always assigned (not just set true when silent) — a non-silent
     // play() must always win, even if a previous silent resume's window
@@ -278,7 +287,8 @@ class PlaybackService extends ChangeNotifier {
         await _storage.setLastDuration(channel.id, duration.inMilliseconds);
       }
       notifyListeners();
-    }).catchError((e) {
+    }).catchError((e) async {
+      if (await _retryOnBackupServers(channel, e)) return;
       error = e.toString();
       notifyListeners();
     });
@@ -311,9 +321,126 @@ class PlaybackService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Same spacing as `PlaylistSession`'s catalog-side fallback, for the
+  /// same reason — don't fire every one of a provider's hostnames at once.
+  static const _backupServerDelay = Duration(seconds: 3);
+
+  /// A live stream that failed to open gets retried against this
+  /// playlist's configured backup servers before the viewer is shown a
+  /// dead end. Returns true if one of them took over, in which case the
+  /// caller leaves [error] alone.
+  ///
+  /// Deliberately narrow about when it even tries:
+  /// * live only — a VOD/episode URL is a specific file on a specific
+  ///   server, not a channel every mirror of an account carries.
+  /// * connection-shaped failures only — see [isDecoderPlaybackError]. No
+  ///   number of alternate hostnames makes a decoder that can't handle
+  ///   4K HDR HEVC suddenly handle it, and cycling servers for half a
+  ///   minute before admitting that is strictly worse than saying so.
+  Future<bool> _retryOnBackupServers(Channel channel, Object failure) async {
+    if (!Channel.isLiveId(channel.rawId)) return false;
+    if (isDecoderPlaybackError(failure.toString())) return false;
+
+    PlaylistProfile? profile;
+    for (final p in _playlistManager.profiles) {
+      if (p.id == channel.playlistId) {
+        profile = p;
+        break;
+      }
+    }
+    if (profile == null || !profile.isXtream) return false;
+
+    final currentOrigin = _originOf(channel.url);
+    final candidates = profile.serverCandidates
+        .where((s) => _originOf(s) != currentOrigin)
+        .toList();
+    if (candidates.isEmpty) return false;
+
+    for (var i = 0; i < candidates.length; i++) {
+      // Still the current channel? A viewer who changed channel (or
+      // backed out entirely) while this was retrying has already said
+      // what they want, and hijacking that with a late reconnect would
+      // be worse than the failure being retried. [reconnectStatus] is
+      // deliberately left alone on these bail-outs — whoever took over
+      // (`play`/`stop`) has already cleared it, and clearing it here
+      // could stomp a status that now belongs to *their* attempt.
+      if (currentChannel?.id != channel.id) return false;
+
+      final server = candidates[i];
+      reconnectStatus = 'Trying to reconnect on backup servers '
+          '(${i + 1}/${candidates.length})...';
+      error = null;
+      notifyListeners();
+      await Future<void>.delayed(_backupServerDelay);
+      if (currentChannel?.id != channel.id) return false;
+
+      final retryUrl = _swapOrigin(channel.url, server);
+      final retryController =
+          VideoPlayerHdrController.networkUrl(Uri.parse(retryUrl));
+      try {
+        final future =
+            retryController.initialize(viewType: VideoViewType.platformView);
+        initFuture = future;
+        await future;
+        // Initialising took real time, and the viewer may have moved on
+        // during it — handing them a channel they've already left would
+        // be worse than the failure this is recovering from. Dispose the
+        // one nobody asked for rather than installing it.
+        if (currentChannel?.id != channel.id) {
+          unawaited(retryController.dispose());
+          return false;
+        }
+        // Only now is the old one safe to drop — disposing before the
+        // replacement is proven just guarantees a black screen if this
+        // candidate turns out to be down too.
+        final previous = controller;
+        controller = retryController;
+        await retryController.play();
+        unawaited(previous?.dispose());
+        reconnectStatus = null;
+        error = null;
+        unawaited(_playlistManager.rememberWorkingServer(profile.id, server));
+        notifyListeners();
+        return true;
+      } catch (_) {
+        unawaited(retryController.dispose());
+      }
+    }
+
+    reconnectStatus = null;
+    notifyListeners();
+    return false;
+  }
+
+  /// The `scheme://host:port` of a URL, with nothing after it — what has
+  /// to change to point the same stream at a different server.
+  static String _originOf(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || uri.host.isEmpty) return url;
+    return uri.hasPort
+        ? '${uri.scheme}://${uri.host}:${uri.port}'
+        : '${uri.scheme}://${uri.host}';
+  }
+
+  /// Rebuilds a stream URL against [server], keeping the whole path
+  /// (`/live/user/pass/12345.ts`) as-is — a backup server for the same
+  /// account serves the same stream ids under the same credentials, so
+  /// only the origin ever differs.
+  static String _swapOrigin(String url, String server) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return url;
+    var base = server.trim();
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    final query = uri.hasQuery ? '?${uri.query}' : '';
+    return '$base${uri.path}$query';
+  }
+
   Future<void> stop() async {
     await _teardown();
     currentChannel = null;
+    reconnectStatus = null;
     _silentResumeTimer?.cancel();
     _silentResumeTimer = null;
     isSilentlyResuming = false;
@@ -362,4 +489,18 @@ class PlaybackService extends ChangeNotifier {
     _teardown();
     super.dispose();
   }
+}
+
+/// True for the one failure class that's about this device rather than
+/// the stream's source: a `MediaCodecVideoRenderer` giving up on a format
+/// (in practice 4K HDR HEVC 10-bit on a box whose decoder claims support
+/// it doesn't actually have). Shared deliberately rather than pattern-
+/// matched separately in each place that cares — `PlayerControls` uses it
+/// to explain the limitation, `PlaybackService` uses it to *not* waste
+/// the viewer's time cycling backup servers over something no server
+/// change can fix, and those two must agree on what counts.
+bool isDecoderPlaybackError(String raw) {
+  final lower = raw.toLowerCase();
+  return lower.contains('mediacodecvideorenderer') ||
+      (lower.contains('hevc') && lower.contains('10bit'));
 }
