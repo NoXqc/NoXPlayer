@@ -584,6 +584,13 @@ class PlaylistManager extends ChangeNotifier {
   Future<void> warmAllCategories(String playlistId) =>
       _sessionFor(playlistId)?.warmAllCategories() ?? Future.value();
 
+  /// Whether any playlist currently has category fetches in flight —
+  /// used by startup to hold the heaviest work (opening a video decoder,
+  /// parsing EPG) until the catalog has gone quiet, rather than running
+  /// both at once. See `main.dart`'s `_bootstrap`.
+  bool get isLoadingCategories =>
+      _sessions.any((s) => s.loadingCategoryNames.isNotEmpty);
+
   // --- Series / VOD detail --------------------------------------------------
 
   Future<({Map<int, List<Channel>> episodes, String? plot})> loadSeriesEpisodes(

@@ -267,6 +267,17 @@ class _NoxIptvAppState extends State<NoxIptvApp>
         await Future.wait(futures);
       }
 
+      // Anything the pre-load above kicked off but didn't itself await
+      // (a warm-up someone else started, a category still in flight)
+      // finishes behind the splash rather than behind the real UI.
+      // Reported directly, and the reason this is worth waiting for: the
+      // app's crashes clustered in the first ~20 seconds of a cold start,
+      // which is exactly when the catalog fetches, a video decoder
+      // opening for the resumed channel, and the EPG parse all used to
+      // run at once. The splash is time the user already expects to
+      // spend; a half-populated UI that then falls over is not.
+      await _waitForCategoriesToSettle();
+
       // A fixed floor on top of the real work above — on a very small
       // catalog (or M3U mode, which skips the pre-load entirely) that
       // work alone might finish in well under a second, too fast for the
@@ -282,16 +293,39 @@ class _NoxIptvAppState extends State<NoxIptvApp>
         WidgetsBinding.instance
             .addPostFrameCallback((_) => _showToast('Content updated'));
       }
-      unawaited(_autoResumeLastChannel());
-
-      unawaited(_epgService.init());
-      unawaited(_playbackService.init());
-
-      _epgService.startAutoRefresh(_storage.getRefreshInterval(), _epgSources);
+      // One after another, not all at once. Each of these is heavy on
+      // its own — a decoder opening, an EPG XML parse — and firing them
+      // together while the catalog is still settling is what made the
+      // first ~20 seconds of a cold start the app's least stable moment.
+      // Also fixes a real (if quiet) ordering bug that the old
+      // three-way `unawaited` race allowed: `PlaybackService.init` reads
+      // the recently-played list from disk, so letting a resumed channel
+      // start first meant that read could land afterwards and discard
+      // the entry the resume had just added.
+      unawaited(() async {
+        await _playbackService.init();
+        await _autoResumeLastChannel();
+        await _epgService.init();
+        _epgService.startAutoRefresh(_storage.getRefreshInterval(), _epgSources);
+      }());
     } catch (e) {
       // Surfaces any unexpected startup failure as a retryable screen
       // instead of leaving the app stuck on the splash spinner forever.
       if (mounted) setState(() => _bootstrapError = e.toString());
+    }
+  }
+
+  /// Upper bound on how long the splash will hold for the catalog. A
+  /// provider slow or broken enough to still be fetching after this has
+  /// to be allowed to finish behind the UI instead — a splash that never
+  /// ends is worse than a catalog that fills in late.
+  static const _categorySettleTimeout = Duration(seconds: 30);
+
+  Future<void> _waitForCategoriesToSettle() async {
+    final deadline = DateTime.now().add(_categorySettleTimeout);
+    while (_playlistManager.isLoadingCategories &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
     }
   }
 
