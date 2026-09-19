@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -19,6 +20,11 @@ typedef EpgSource = ({String url, Set<String> knownChannelIds});
 /// UI isolate was blocking every single app start (cold launch, and any
 /// resume after Android killed the backgrounded process) for a
 /// noticeable, janky stretch.
+/// Isolate entry point: reads the EPG cache straight from disk so the file
+/// read and UTF-8 decode happen off the main thread too.
+Map<String, List<EpgProgram>> _readEpgCacheFile(String path) =>
+    _decodeEpgCache(File(path).readAsStringSync());
+
 Map<String, List<EpgProgram>> _decodeEpgCache(String json) {
   final decoded = jsonDecode(json) as Map<String, dynamic>;
   final result = <String, List<EpgProgram>>{};
@@ -64,11 +70,14 @@ class EpgService extends ChangeNotifier {
 
   Future<void> init() async {
     lastUpdated = _storage.getEpgLastUpdated();
-    final cached =
-        await _storage.readCacheFile(AppConstants.cacheFileEpgPrograms);
-    if (cached != null) {
+    // Path, not contents — see StorageService.cacheFilePath. The EPG
+    // cache (every programme for every channel) is one of the two largest
+    // files this app reads at startup.
+    final cachedPath =
+        await _storage.cacheFilePath(AppConstants.cacheFileEpgPrograms);
+    if (cachedPath != null) {
       try {
-        final decoded = await compute(_decodeEpgCache, cached);
+        final decoded = await compute(_readEpgCacheFile, cachedPath);
         _programs
           ..clear()
           ..addAll(decoded);

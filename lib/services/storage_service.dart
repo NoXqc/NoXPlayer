@@ -39,6 +39,24 @@ class StorageService {
     await File('${dir.path}/$name.json').writeAsString(content);
   }
 
+  /// Path of a cache file if it exists, for callers that read *and*
+  /// decode it on a background isolate. [readCacheFile] reads on the
+  /// calling isolate, and `File.readAsString` does its whole UTF-8 decode
+  /// there as one uninterrupted task — measured on real hardware as ~43%
+  /// of the main thread's time across a cold start, because the big cache
+  /// files (live channels, EPG) are tens of MB and channel names full of
+  /// non-ASCII (superscript "ᴴᴰ", "ᴿᴬᵂ"...) force the slow two-byte decode
+  /// path. With Dart now sharing Android's main thread, a remote key press
+  /// that lands during one of those decodes can wait past Android's 5s
+  /// input timeout and get the app killed as not responding. Handing the
+  /// isolate a path instead also avoids copying the whole decoded string
+  /// into it, which `compute(decode, rawString)` did on the main thread too.
+  Future<String?> cacheFilePath(String name) async {
+    final dir = await _ensureCacheDir();
+    final file = File('${dir.path}/$name.json');
+    return await file.exists() ? file.path : null;
+  }
+
   Future<String?> readCacheFile(String name) async {
     final dir = await _ensureCacheDir();
     final file = File('${dir.path}/$name.json');

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
@@ -205,13 +206,14 @@ class PlaylistSession {
   // --- M3U mode -----------------------------------------------------------
 
   Future<bool> _restoreM3uCache() async {
-    final raw = await storage
-        .readCacheFile(_cacheName(AppConstants.cacheFileM3uChannels));
-    if (raw == null) return false;
+    // Read, decode and parse all on a background isolate — this used to do
+    // the lot on the main thread, for a list that can run to tens of
+    // thousands of channels. See StorageService.cacheFilePath.
+    final path = await storage
+        .cacheFilePath(_cacheName(AppConstants.cacheFileM3uChannels));
+    if (path == null) return false;
     try {
-      final loaded = (jsonDecode(raw) as List)
-          .map((e) => Channel.fromJson(e as Map<String, dynamic>))
-          .toList();
+      final loaded = await compute(_readChannelsFile, path);
       for (final channel in loaded) {
         channel.isFavorite = favoriteIds().contains(channel.id);
       }
@@ -418,10 +420,11 @@ class PlaylistSession {
     onNotify();
     try {
       List<Channel> loaded;
-      final raw = await storage
-          .readCacheFile(_cacheName(AppConstants.cacheFileLiveChannels));
-      if (raw != null) {
-        loaded = await compute(_decodeLiveChannelsBatch, raw);
+      // Path, not contents — see StorageService.cacheFilePath.
+      final path = await storage
+          .cacheFilePath(_cacheName(AppConstants.cacheFileLiveChannels));
+      if (path != null) {
+        loaded = await compute(_readChannelsFile, path);
       } else {
         final api = xtreamApi;
         if (api == null) return;
@@ -1136,6 +1139,12 @@ _XtreamCategoriesDecoded _decodeXtreamCategoriesBatch(
     seriesCategories: seriesCategories,
   );
 }
+
+/// Isolate entry point: reads a cached channel list straight from disk, so
+/// the file read and its UTF-8 decode happen off the main thread as well as
+/// the JSON parse. See StorageService.cacheFilePath for why that matters.
+List<Channel> _readChannelsFile(String path) =>
+    _decodeLiveChannelsBatch(File(path).readAsStringSync());
 
 List<Channel> _decodeLiveChannelsBatch(String raw) => (jsonDecode(raw) as List)
     .map((e) => Channel.fromJson(e as Map<String, dynamic>))
