@@ -359,12 +359,41 @@ class PlaylistManager extends ChangeNotifier {
   /// Reads whatever the catalog database already holds — the existing full
   /// sync/on-demand category loads are what put it there. Before any of
   /// that has run, this is simply empty (an empty carousel, never an error).
-  Future<List<Channel>> whatsNewVod({int limit = 5}) =>
-      _catalogDb.getRecentlyAddedVod(_enabledXtreamPlaylistIds, limit: limit);
+  /// Recently *added* is not the same as recently *released* — a provider
+  /// adding a 1996 film today would otherwise headline "What's New" with
+  /// it. Candidates stay ordered newest-added-first (so the last month's
+  /// additions lead), but anything whose title carries a release year
+  /// older than the current one is dropped. A wider pool than [limit] is
+  /// fetched because most of it gets filtered out.
+  Future<List<Channel>> whatsNewVod({int limit = 5}) async {
+    final rows = await _catalogDb.getRecentlyAddedVod(_enabledXtreamPlaylistIds,
+        limit: limit * 40);
+    return _thisYearOnly(rows, (c) => c.name).take(limit).toList();
+  }
 
-  Future<List<XtreamSeries>> whatsNewSeries({int limit = 5}) =>
-      _catalogDb.getRecentlyAddedSeries(_enabledXtreamPlaylistIds,
-          limit: limit);
+  Future<List<XtreamSeries>> whatsNewSeries({int limit = 5}) async {
+    final rows = await _catalogDb
+        .getRecentlyAddedSeries(_enabledXtreamPlaylistIds, limit: limit * 40);
+    return _thisYearOnly(rows, (s) => s.name).take(limit).toList();
+  }
+
+  /// Keeps entries whose title states the current year, plus entries that
+  /// state no year at all — providers label films consistently but often
+  /// not series, and dropping every untitled-year entry would leave TV
+  /// Shows permanently empty rather than merely selective.
+  static final RegExp _titleYear = RegExp(r'(?:19|20)\d{2}');
+  static Iterable<T> _thisYearOnly<T>(
+      List<T> rows, String Function(T) nameOf) {
+    final currentYear = DateTime.now().year;
+    return rows.where((row) {
+      final matches = _titleYear.allMatches(nameOf(row));
+      if (matches.isEmpty) return true;
+      // The last year-looking number wins — titles like "4K-FR-HDR -
+      // Blade Runner 2049 (2017)" carry one in the name itself.
+      final year = int.parse(matches.last.group(0)!);
+      return year >= currentYear;
+    });
+  }
 
   List<String> get _enabledXtreamPlaylistIds => _enabledSessionsSorted
       .where((s) => s.isXtream)
