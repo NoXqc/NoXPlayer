@@ -248,6 +248,26 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
   bool _handleFieldEscapeKey(KeyEvent event) {
     if (event is! KeyDownEvent) return false;
     if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+
+    // OK/Select on a field that already has focus. Flutter only raises the
+    // on-screen keyboard when a field *gains* focus, so once the keyboard
+    // has been dismissed there is otherwise no way back into the field
+    // you're standing on — pressing OK does nothing, while arrowing to the
+    // next field works, because that's a focus change. Reported from a
+    // real remote: stuck unable to type a username, while password (one
+    // press further down) accepted input fine.
+    if (event.logicalKey == LogicalKeyboardKey.select ||
+        event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter ||
+        event.logicalKey == LogicalKeyboardKey.gameButtonA) {
+      final focused = FocusManager.instance.primaryFocus;
+      if (_allTrackedFields.any((n) => n == focused)) {
+        SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+        return true;
+      }
+      return false;
+    }
+
     if (event.logicalKey != LogicalKeyboardKey.arrowDown &&
         event.logicalKey != LogicalKeyboardKey.arrowUp) {
       return false;
