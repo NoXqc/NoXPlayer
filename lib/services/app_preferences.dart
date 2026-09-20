@@ -22,6 +22,12 @@ class AppPreferences extends ChangeNotifier {
   late CyberpunkPalette palette;
   late String layoutMode; // 'auto', 'phone', 'tv'
 
+  /// Set once at startup from Android's own UI mode (see
+  /// DeviceTypeService) — what 'auto' actually keys off now. Not
+  /// persisted: it's a property of the device, re-detected every launch,
+  /// and a stale stored value would be worse than asking again.
+  bool isTelevision = false;
+
   Future<void> init() async {
     themeMode =
         _storage.getThemeMode() == 'light' ? ThemeMode.light : ThemeMode.dark;

@@ -266,8 +266,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final channel = playback.currentChannel ?? widget.channel;
     _isTvLayout = prefs.layoutMode == 'tv' ||
         (prefs.layoutMode == 'auto' &&
-            MediaQuery.of(context).size.width >=
-                AppConstants.tvLayoutWidthThreshold);
+            (prefs.isTelevision ||
+                MediaQuery.of(context).size.width >=
+                    AppConstants.tvLayoutWidthThreshold));
 
     return withTvThemeIfNeeded(
         context,

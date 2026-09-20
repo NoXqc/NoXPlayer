@@ -1,7 +1,10 @@
 package com.nox.nox_iptv
 
 import android.app.ActivityManager
+import android.app.UiModeManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -30,6 +33,7 @@ import java.io.File
 class MainActivity : FlutterActivity() {
     private val MEMORY_CHANNEL = "com.nox.nox_iptv/device_memory"
     private val UPDATE_CHANNEL = "com.nox.nox_iptv/app_update"
+    private val DEVICE_CHANNEL = "com.nox.nox_iptv/device_type"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -45,6 +49,29 @@ class MainActivity : FlutterActivity() {
                         "isLowRamDevice" to activityManager.isLowRamDevice
                     )
                 )
+            } else {
+                result.notImplemented()
+            }
+        }
+
+        // Is this actually a television? Asked because the previous
+        // "auto" layout heuristic compared MediaQuery width against a
+        // fixed logical-pixel threshold, and a 1080p TV running at 2x
+        // density reports 960dp — under the threshold — so every Android
+        // TV box and Fire Stick silently got the phone layout on first
+        // launch. Screen size cannot distinguish a TV from a tablet;
+        // Android's own UI mode can.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, DEVICE_CHANNEL).setMethodCallHandler { call, result ->
+            if (call.method == "isTelevision") {
+                val uiModeManager = getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+                val isTvUiMode = uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+                // Leanback is what a TV launcher requires of an app, and is
+                // present on Fire TV even where the UI mode is reported
+                // inconsistently, so either signal is enough.
+                val hasLeanback =
+                    packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+                        packageManager.hasSystemFeature(PackageManager.FEATURE_TELEVISION)
+                result.success(isTvUiMode || hasLeanback)
             } else {
                 result.notImplemented()
             }

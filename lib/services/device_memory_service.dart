@@ -38,3 +38,23 @@ class DeviceMemoryService {
     }
   }
 }
+
+/// Whether this device is a television — asked natively because screen
+/// size can't answer it. See MainActivity.kt: the "auto" layout mode used
+/// to compare MediaQuery's width against a fixed logical-pixel threshold,
+/// and a 1080p TV at 2x density reports 960dp, so every TV box and Fire
+/// Stick fell under it and got the phone layout on first launch.
+class DeviceTypeService {
+  static const _channel = MethodChannel('com.nox.nox_iptv/device_type');
+
+  /// False on any failure, so a device that can't answer falls back to the
+  /// previous size-based behaviour rather than forcing a TV layout onto a
+  /// phone.
+  static Future<bool> isTelevision() async {
+    try {
+      return await _channel.invokeMethod<bool>('isTelevision') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+}

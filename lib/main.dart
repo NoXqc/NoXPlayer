@@ -183,6 +183,9 @@ class _NoxIptvAppState extends State<NoxIptvApp>
 
       _preferences = AppPreferences(_storage);
       await _preferences.init();
+      // Asked once per launch, before anything decides a layout — see
+      // DeviceTypeService for why screen width couldn't answer this.
+      _preferences.isTelevision = await DeviceTypeService.isTelevision();
 
       _catalogDb = CatalogDatabase();
 
@@ -579,8 +582,9 @@ class _NoxIptvAppState extends State<NoxIptvApp>
             builder: (context) {
               final useTv = prefs.layoutMode == 'tv' ||
                   (prefs.layoutMode == 'auto' &&
-                      MediaQuery.of(context).size.width >=
-                          AppConstants.tvLayoutWidthThreshold);
+                      (prefs.isTelevision ||
+                          MediaQuery.of(context).size.width >=
+                              AppConstants.tvLayoutWidthThreshold));
               return useTv ? const TvHomeScreen() : const HomeScreen();
             },
           ),
