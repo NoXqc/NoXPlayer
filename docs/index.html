@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NoXPlayer — Always free, Always open source IPTV player for Android TV</title>
+<meta name="description" content="NoXPlayer is a free, open-source IPTV player for Android TV boxes, Fire Sticks and phones. Bring your own Xtream Codes login or M3U playlist — get a real TV guide, favourites, resume and a remote-first interface. GPL-3.0, no ads, no tracking.">
+<meta name="theme-color" content="#09070E">
+<meta name="color-scheme" content="dark">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="NoXPlayer — Always free, Always open source">
+<meta property="og:description" content="A free, open-source IPTV player for Android TV boxes, Fire Sticks and phones. You bring the playlist; it brings the guide, the favourites and a remote-first interface.">
+<meta property="og:image" content="assets/shot-live.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%231A0B2E'/%3E%3Cstop offset='.45' stop-color='%237C3AED'/%3E%3Cstop offset='1' stop-color='%23E91E8C'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23g)'/%3E%3Cpath d='M14 40V16h5l9 14V16h5v24h-5l-9-14v14z' fill='%23F4F1F8'/%3E%3Ccircle cx='45' cy='45' r='11' fill='%23F0257F'/%3E%3Cpath d='M41 39l12 6-12 6z' fill='%23FFF'/%3E%3C/svg%3E">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+<style>
+/* ============================================================
+   NoXPlayer — "Broadcast Console"
+   Single-file landing page. No build step, no frameworks.
+   ============================================================ */
+
+@property --ang { syntax: '<angle>'; inherits: false; initial-value: 100deg; }
+
+:root{
+  /* Surfaces */
+  --bg:        #09070E;
+  --bg-lift:   #0E0A16;
+  --panel:     rgba(255,255,255,.035);
+  --panel-2:   rgba(255,255,255,.06);
+  --hair:      rgba(255,255,255,.10);
+  --hair-2:    rgba(255,255,255,.18);
+
+  /* Ink */
+  --ink:       #F4F1F8;
+  --ink-2:     #BDB4CC;
+  --ink-3:     #8C8399;
+
+  /* Brand — app tokens, lifted for contrast on near-black */
+  --violet:      #7C3AED;   /* app primary */
+  --magenta:     #E91E8C;   /* app secondary */
+  --violet-lift: #A78BFA;   /* text-safe violet */
+  --pink-lift:   #F472B6;   /* text-safe magenta */
+  --magenta-dp:  #C81E7A;   /* fill end: keeps white text >=4.5:1 */
+
+  --grad-text: linear-gradient(100deg, var(--violet-lift), var(--pink-lift));
+  --grad-fill: linear-gradient(var(--ang, 100deg), var(--violet), var(--magenta-dp));
+
+  --r-sm: 10px;
+  --r:    16px;
+  --r-lg: 24px;
+
+  --pad: clamp(20px, 5vw, 40px);
+  --maxw: 1180px;
+
+  --ease: cubic-bezier(.22,.7,.3,1);
+}
+
+*,*::before,*::after{ box-sizing:border-box; }
+
+html{
+  overflow-x:clip;
+  scroll-behavior:smooth;
+  scroll-padding-top:88px;
+  -webkit-text-size-adjust:100%;
+}
+@media (prefers-reduced-motion: reduce){ html{ scroll-behavior:auto; } }
+
+body{
+  margin:0;
+  overflow-x:clip;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:"Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size:1.0625rem;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+
+/* Film grain — cinematic, cheap, one inline data URI */
+body::after{
+  content:"";
+  position:fixed; inset:0;
+  z-index:9;
+  pointer-events:none;
+  opacity:.22;
+  mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+img{ max-width:100%; }
+
+h1,h2,h3,.display{
+  font-family:"Bricolage Grotesque","Inter",ui-sans-serif,system-ui,sans-serif;
+  font-weight:700;
+  line-height:1.03;
+  letter-spacing:-.022em;
+  font-stretch:88%;           /* broadcast-condensed */
+  margin:0;
+  text-wrap:balance;
+}
+
+p{ margin:0; }
+a{ color:var(--violet-lift); text-decoration-thickness:1px; text-underline-offset:3px; }
+a:hover{ color:var(--pink-lift); }
+
+code,kbd,.mono{
+  font-family:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size:.9em;
+}
+
+/* ---- Focus: the site's signature. Same language as the app's D-pad ring ---- */
+:focus-visible{
+  outline:3px solid var(--pink-lift);
+  outline-offset:3px;
+  border-radius:6px;
+}
+
+.skip{
+  position:absolute; left:-9999px; top:0;
+  z-index:100;
+  background:var(--violet); color:#fff;
+  padding:12px 18px; border-radius:0 0 var(--r-sm) 0;
+  font-weight:600;
+}
+.skip:focus{ left:0; }
+
+.wrap{ width:100%; max-width:var(--maxw); margin-inline:auto; padding-inline:var(--pad); }
+
+/* ============================ Header ============================ */
+.site-head{
+  position:sticky; top:0; z-index:20;
+  border-bottom:1px solid transparent;
+  background:color-mix(in srgb, var(--bg) 82%, transparent);
+  -webkit-backdrop-filter:blur(14px) saturate(140%);
+  backdrop-filter:blur(14px) saturate(140%);
+  transition:border-color .3s var(--ease);
+}
+.site-head.is-stuck{ border-bottom-color:var(--hair); }
+.head-in{
+  display:flex; align-items:center; gap:18px;
+  min-height:72px;
+}
+.brand{
+  display:inline-flex; align-items:center; gap:11px;
+  color:var(--ink); text-decoration:none; font-weight:600;
+  margin-right:auto;
+}
+.brand svg{ display:block; width:34px; height:34px; border-radius:9px; }
+.brand b{
+  font-family:"Bricolage Grotesque","Inter",sans-serif;
+  font-weight:700; font-size:1.2rem; font-stretch:88%; letter-spacing:-.02em;
+}
+.nav{ display:none; gap:6px; align-items:center; }
+.nav a{
+  color:var(--ink-2); text-decoration:none; font-size:.94rem; font-weight:500;
+  padding:9px 13px; border-radius:var(--r-sm);
+  transition:color .2s, background-color .2s;
+}
+.nav a:hover{ color:var(--ink); background:var(--panel-2); }
+@media (min-width:900px){ .nav{ display:flex; } }
+
+/* ============================ Buttons ============================ */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:10px;
+  font:inherit; font-weight:600; font-size:1rem;
+  padding:14px 24px;
+  min-height:52px;
+  border-radius:999px;
+  border:1px solid transparent;
+  text-decoration:none;
+  cursor:pointer;
+  transition:transform .22s var(--ease), box-shadow .22s var(--ease), background-color .2s, border-color .2s;
+}
+.btn svg{ flex:none; }
+.btn-primary{
+  --ang:100deg;
+  background:var(--grad-fill);
+  color:#fff;
+  box-shadow:0 1px 0 rgba(255,255,255,.22) inset, 0 12px 34px -12px rgba(233,30,140,.65);
+}
+.btn-primary:hover{ color:#fff; transform:translateY(-2px); box-shadow:0 1px 0 rgba(255,255,255,.28) inset, 0 20px 44px -14px rgba(233,30,140,.8); }
+.btn-ghost{
+  background:var(--panel);
+  border-color:var(--hair-2);
+  color:var(--ink);
+  -webkit-backdrop-filter:blur(8px);
+  backdrop-filter:blur(8px);
+}
+.btn-ghost:hover{ color:var(--ink); background:var(--panel-2); border-color:rgba(255,255,255,.3); transform:translateY(-2px); }
+.btn-sm{ padding:10px 18px; min-height:44px; font-size:.94rem; }
+
+@media (hover:hover) and (min-width:800px) and (prefers-reduced-motion: no-preference){
+  .btn-primary{ animation:hue 16s linear infinite; }
+  @keyframes hue{ to{ --ang:460deg; } }
+}
+
+/* ============================ Hero ============================ */
+.hero{ position:relative; isolation:isolate; overflow:hidden; padding:clamp(48px,9vw,104px) 0 0; }
+.hero::before{
+  content:"";
+  position:absolute; z-index:-1;
+  left:50%; top:-32vh;
+  width:min(1500px,190vw); aspect-ratio:1;
+  transform:translateX(-50%);
+  background:
+    radial-gradient(42% 42% at 38% 42%, rgba(124,58,237,.30), transparent 68%),
+    radial-gradient(38% 38% at 66% 56%, rgba(233,30,140,.24), transparent 70%);
+  pointer-events:none;
+}
+.hero::after{
+  content:"";
+  position:absolute; inset:auto 0 0 0; height:1px; z-index:-1;
+  background:linear-gradient(90deg,transparent,var(--hair-2),transparent);
+}
+
+.chips{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:26px; }
+.chip{
+  display:inline-flex; align-items:center; gap:7px;
+  font-size:.8rem; font-weight:500; letter-spacing:.02em;
+  color:var(--ink-2);
+  background:var(--panel);
+  border:1px solid var(--hair);
+  border-radius:999px;
+  padding:6px 13px;
+}
+.chip::before{
+  content:""; width:5px; height:5px; border-radius:50%;
+  background:var(--pink-lift);
+}
+
+.kicker{
+  font-size:.82rem; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--ink-3);
+  margin-bottom:18px;
+}
+
+h1{
+  font-size:clamp(2.45rem, 9.4vw, 6.1rem);
+  font-weight:800;
+  font-stretch:82%;
+  margin-bottom:26px;
+}
+/* Squeeze the condensed axis on small screens so "Always open source" holds one line */
+@media (max-width:430px){ h1{ font-stretch:76%; } }
+h1 .grad{
+  background:var(--grad-text);
+  -webkit-background-clip:text; background-clip:text;
+  color:transparent;
+  display:block;
+}
+@supports not ((-webkit-background-clip:text) or (background-clip:text)){
+  h1 .grad{ color:var(--pink-lift); }
+}
+
+.lede{
+  font-size:clamp(1.06rem,2.2vw,1.3rem);
+  color:var(--ink-2);
+  max-width:60ch;
+  margin-bottom:12px;
+}
+.lede strong{ color:var(--ink); font-weight:600; }
+
+.cta-row{ display:flex; flex-wrap:wrap; gap:14px; margin:32px 0 16px; }
+.cta-note{ font-size:.9rem; color:var(--ink-3); max-width:52ch; }
+
+/* Honesty callout — stated up front, not buried */
+.honest{
+  display:flex; gap:14px; align-items:flex-start;
+  margin-top:34px;
+  padding:18px 20px;
+  max-width:62ch;
+  background:var(--panel);
+  border:1px solid var(--hair);
+  border-left:3px solid var(--violet-lift);
+  border-radius:0 var(--r) var(--r) 0;
+}
+.honest svg{ flex:none; margin-top:2px; color:var(--violet-lift); }
+.honest p{ font-size:.95rem; color:var(--ink-2); }
+.honest b{ color:var(--ink); font-weight:600; }
+
+/* ---- EPG ruler: the app's own TV-guide grammar, as a divider ---- */
+.ruler{
+  position:relative;
+  height:30px;
+  margin:clamp(40px,7vw,66px) 0 clamp(22px,4vw,34px);
+  background:repeating-linear-gradient(90deg, var(--hair) 0 1px, transparent 1px 46px);
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+  mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);
+}
+.ruler::before{
+  content:""; position:absolute; left:0; right:0; bottom:0; height:1px;
+  background:var(--hair);
+}
+.ruler::after{
+  content:""; position:absolute; left:22%; top:-6px; bottom:0; width:2px;
+  border-radius:2px;
+  background:linear-gradient(180deg,var(--pink-lift),var(--violet));
+  box-shadow:0 0 14px 1px rgba(244,114,182,.55);
+}
+
+/* ============================ Screenshots ============================ */
+.shot{ margin:0; }
+.shot-frame{
+  position:relative;
+  border-radius:var(--r-lg);
+  padding:7px;
+  background:linear-gradient(160deg, rgba(167,139,250,.30), rgba(244,114,182,.16) 45%, rgba(255,255,255,.05));
+  box-shadow:0 40px 90px -40px rgba(124,58,237,.55), 0 2px 0 rgba(255,255,255,.05) inset;
+}
+.shot-frame img{
+  display:block; width:100%; height:auto;
+  aspect-ratio:16/9;
+  object-fit:cover;
+  border-radius:calc(var(--r-lg) - 8px);
+  background:
+    linear-gradient(115deg, #17102A 0%, #1E1233 48%, #2A1130 100%);
+  border:1px solid rgba(0,0,0,.5);
+}
+.shot figcaption{
+  display:flex; align-items:center; gap:9px;
+  margin-top:14px;
+  font-size:.86rem; color:var(--ink-3);
+}
+.shot figcaption::before{
+  content:""; width:16px; height:1px; background:var(--hair-2); flex:none;
+}
+.hero-shot{ padding-bottom:clamp(56px,9vw,96px); }
+
+/* ============================ Sections ============================ */
+section{ position:relative; }
+.sec{ padding:clamp(62px,10vw,112px) 0; }
+.sec-head{ max-width:56ch; margin-bottom:clamp(34px,5vw,54px); }
+.eyebrow{
+  display:block;
+  font-size:.78rem; font-weight:600; letter-spacing:.15em; text-transform:uppercase;
+  color:var(--pink-lift);
+  margin-bottom:16px;
+}
+h2{ font-size:clamp(2rem,4.6vw,3.1rem); margin-bottom:18px; }
+h3{ font-size:1.22rem; letter-spacing:-.015em; font-stretch:92%; margin-bottom:9px; }
+.sec-head p{ color:var(--ink-2); font-size:1.05rem; }
+
+.rule{ height:1px; background:linear-gradient(90deg,transparent,var(--hair),transparent); border:0; margin:0; }
+
+/* ---- Requirements ---- */
+.req-grid{ display:grid; gap:18px; grid-template-columns:1fr; }
+@media (min-width:760px){ .req-grid{ grid-template-columns:1fr 1fr; } }
+.req{
+  background:var(--panel);
+  border:1px solid var(--hair);
+  border-radius:var(--r);
+  padding:26px;
+}
+.req h3{ display:flex; align-items:center; gap:10px; }
+.req p{ color:var(--ink-2); font-size:.97rem; }
+.req .tag{
+  font-size:.7rem; font-weight:700; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--violet-lift);
+  border:1px solid var(--hair-2); border-radius:999px; padding:3px 9px;
+}
+
+/* ---- Feature clusters: a spec sheet, laid out like a guide grid ---- */
+.clusters{ display:grid; }
+.cluster{
+  display:grid;
+  gap:24px 48px;
+  grid-template-columns:1fr;
+  padding:clamp(34px,5vw,54px) 0;
+  border-top:1px solid var(--hair);
+}
+.cluster:first-child{ border-top:0; padding-top:0; }
+.cluster:last-child{ padding-bottom:0; }
+@media (min-width:980px){
+  .cluster{ grid-template-columns:clamp(210px,23vw,290px) 1fr; }
+  .cluster-head{ position:sticky; top:104px; align-self:start; }
+  .cluster .shot{ grid-column:2; }
+}
+.cluster-head h3{ font-size:clamp(1.38rem,2.6vw,1.8rem); margin-bottom:0; }
+.cluster-head p{ color:var(--ink-3); font-size:.92rem; margin-top:11px; }
+
+.feat-list{ list-style:none; margin:0; padding:0; display:grid; gap:22px 36px; }
+@media (min-width:640px){ .feat-list{ grid-template-columns:1fr 1fr; } }
+.feat-list li{ position:relative; padding-left:23px; }
+.feat-list li::before{
+  content:""; position:absolute; left:0; top:.6em;
+  width:12px; height:2px; border-radius:2px;
+  background:var(--grad-text);
+}
+.feat-list b{
+  display:block; color:var(--ink); font-weight:600;
+  font-size:1rem; letter-spacing:-.012em; margin-bottom:5px;
+}
+.feat-list span{ display:block; color:var(--ink-2); font-size:.94rem; line-height:1.55; }
+.cluster .shot{ margin-top:10px; }
+
+/* ---- 10-foot split ---- */
+.split{ display:grid; gap:clamp(30px,5vw,60px); align-items:center; grid-template-columns:1fr; }
+@media (min-width:980px){ .split{ grid-template-columns:.9fr 1.1fr; } }
+.ticks{ list-style:none; margin:26px 0 0; padding:0; display:grid; gap:14px; }
+.ticks li{ display:flex; gap:12px; align-items:flex-start; color:var(--ink-2); font-size:1rem; }
+.ticks svg{ flex:none; margin-top:4px; color:var(--pink-lift); }
+.ticks b{ color:var(--ink); font-weight:600; }
+
+/* ---- Install ---- */
+.install-grid{ display:grid; gap:18px; grid-template-columns:1fr; }
+@media (min-width:860px){ .install-grid{ grid-template-columns:repeat(3,1fr); } }
+.install{
+  display:flex; flex-direction:column;
+  background:var(--bg-lift);
+  border:1px solid var(--hair);
+  border-radius:var(--r-lg);
+  padding:28px;
+}
+.install.featured{
+  border-color:rgba(167,139,250,.45);
+  box-shadow:0 0 0 1px rgba(167,139,250,.12), 0 30px 70px -40px rgba(124,58,237,.7);
+}
+.step-no{
+  font-family:"JetBrains Mono",monospace; font-size:.76rem; font-weight:700;
+  letter-spacing:.1em; color:var(--ink-3); margin-bottom:14px;
+}
+.cluster-head .step-no{ color:var(--pink-lift); margin-bottom:12px; }
+.install ol{ margin:18px 0 0; padding-left:1.15em; color:var(--ink-2); font-size:.96rem; display:grid; gap:9px; }
+.install ol::marker{ color:var(--violet-lift); }
+.install li b{ color:var(--ink); font-weight:600; }
+.install .spacer{ flex:1; }
+
+.codebox{
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  margin-top:20px; padding:16px 18px;
+  border-radius:var(--r);
+  background:linear-gradient(120deg, rgba(124,58,237,.18), rgba(233,30,140,.14));
+  border:1px solid rgba(167,139,250,.35);
+}
+.codebox .lbl{ font-size:.72rem; letter-spacing:.13em; text-transform:uppercase; color:var(--ink-2); width:100%; }
+.codebox .val{
+  font-family:"JetBrains Mono",monospace; font-weight:700;
+  font-size:clamp(1.6rem,5vw,2rem); letter-spacing:.09em;
+  color:var(--ink);
+}
+.copy{
+  font:inherit; font-size:.84rem; font-weight:600;
+  color:var(--ink); background:var(--panel-2);
+  border:1px solid var(--hair-2); border-radius:999px;
+  padding:8px 15px; min-height:38px; cursor:pointer;
+  transition:background-color .2s, border-color .2s;
+}
+.copy:hover{ background:rgba(255,255,255,.12); }
+.copy-status{ font-size:.82rem; color:var(--pink-lift); }
+
+/* ---- Motto band ---- */
+.motto{
+  position:relative; overflow:hidden;
+  text-align:center;
+  padding:clamp(70px,11vw,124px) 0;
+  border-top:1px solid var(--hair);
+  border-bottom:1px solid var(--hair);
+  background:
+    radial-gradient(70% 130% at 50% 0%, rgba(124,58,237,.20), transparent 70%),
+    radial-gradient(60% 120% at 50% 100%, rgba(233,30,140,.16), transparent 70%);
+}
+.motto .display{
+  font-size:clamp(2.2rem,7vw,4.6rem);
+  font-weight:800; font-stretch:82%;
+  margin-bottom:22px;
+}
+.motto .display span{
+  background:var(--grad-text);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.motto p{ color:var(--ink-2); max-width:58ch; margin-inline:auto; font-size:1.05rem; }
+.motto .cta-row{ justify-content:center; }
+
+/* ---- FAQ ---- */
+.faq{ display:grid; gap:12px; max-width:880px; }
+details{
+  background:var(--panel);
+  border:1px solid var(--hair);
+  border-radius:var(--r);
+  transition:border-color .2s;
+}
+details[open]{ border-color:var(--hair-2); background:var(--panel-2); }
+summary{
+  cursor:pointer; list-style:none;
+  padding:20px 22px;
+  font-weight:600; font-size:1.02rem;
+  display:flex; align-items:center; justify-content:space-between; gap:16px;
+}
+summary::-webkit-details-marker{ display:none; }
+summary::after{
+  content:""; flex:none;
+  width:11px; height:11px;
+  border-right:2px solid var(--violet-lift); border-bottom:2px solid var(--violet-lift);
+  transform:rotate(45deg) translateY(-3px);
+  transition:transform .25s var(--ease);
+}
+details[open] summary::after{ transform:rotate(225deg) translateY(-3px); }
+details .ans{ padding:0 22px 22px; color:var(--ink-2); font-size:.98rem; max-width:72ch; }
+details .ans p + p{ margin-top:12px; }
+
+/* ---- Footer ---- */
+.site-foot{ padding:clamp(48px,7vw,72px) 0 44px; color:var(--ink-3); font-size:.92rem; }
+.foot-top{ display:flex; flex-wrap:wrap; gap:26px; justify-content:space-between; align-items:flex-start; }
+.foot-links{ display:flex; flex-wrap:wrap; gap:8px 22px; }
+.foot-links a{ color:var(--ink-2); text-decoration:none; }
+.foot-links a:hover{ color:var(--ink); text-decoration:underline; }
+.foot-note{ margin-top:32px; padding-top:24px; border-top:1px solid var(--hair); max-width:78ch; }
+.foot-note p + p{ margin-top:10px; }
+
+/* ============================ Motion ============================ */
+@media (prefers-reduced-motion: no-preference){
+  .hero .chips, .hero .kicker, .hero h1, .hero .lede, .hero .cta-row, .hero .cta-note, .hero .honest{
+    animation:rise .8s var(--ease) both;
+  }
+  .hero .kicker{ animation-delay:.04s }
+  .hero h1{ animation-delay:.08s }
+  .hero .lede{ animation-delay:.14s }
+  .hero .cta-row{ animation-delay:.2s }
+  .hero .cta-note{ animation-delay:.24s }
+  .hero .honest{ animation-delay:.28s }
+  @keyframes rise{ from{ opacity:0; transform:translateY(16px) } to{ opacity:1; transform:none } }
+
+  /* Scroll-driven reveal — CSS only, decorative, degrades to "always visible" */
+  @supports (animation-timeline: view()){
+    .reveal{
+      animation:reveal linear both;
+      animation-timeline:view();
+      animation-range:entry 2% entry 72%;
+    }
+    @keyframes reveal{ from{ opacity:0; transform:translateY(22px) } to{ opacity:1; transform:none } }
+  }
+}
+
+/* ============================ 10-foot / TV browsers ============================ */
+@media (min-width:1600px){ :root{ font-size:18px; --maxw:1320px; } }
+@media (min-width:2000px){ :root{ font-size:20px; --maxw:1480px; } }
+
+@media (forced-colors: active){
+  .card,.install,.req,details,.btn{ border:1px solid CanvasText; }
+  h1 .grad,.motto .display span{ color:CanvasText; -webkit-text-fill-color:CanvasText; }
+}
+</style>
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-head" id="head">
+  <div class="wrap head-in">
+    <a class="brand" href="#top" aria-label="NoXPlayer, home">
+      <svg viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id="logoG" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#1A0B2E"/>
+            <stop offset=".45" stop-color="#7C3AED"/>
+            <stop offset="1" stop-color="#E91E8C"/>
+          </linearGradient>
+        </defs>
+        <rect width="64" height="64" rx="15" fill="url(#logoG)"/>
+        <path d="M14 40V16h5l9 14V16h5v24h-5l-9-14v14z" fill="#F4F1F8"/>
+        <circle cx="45" cy="45" r="11" fill="#F0257F"/>
+        <path d="M41 39l12 6-12 6z" fill="#fff"/>
+      </svg>
+      <b>NoXPlayer</b>
+    </a>
+
+    <nav class="nav" aria-label="Primary">
+      <a href="#requirements">What you need</a>
+      <a href="#features">Features</a>
+      <a href="#tv">On the TV</a>
+      <a href="#install">Install</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/NoXqc/NoXPlayer">GitHub</a>
+    </nav>
+
+    <a class="btn btn-primary btn-sm" href="https://github.com/NoXqc/NoXPlayer/releases/latest/download/app-release.apk">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></svg>
+      Download
+    </a>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ==================== HERO ==================== -->
+  <section class="hero" id="top">
+    <div class="wrap">
+      <ul class="chips" aria-label="At a glance">
+        <li class="chip">GPL-3.0</li>
+        <li class="chip">No ads</li>
+        <li class="chip">No tracking</li>
+        <li class="chip">No account</li>
+        <li class="chip">No subscription</li>
+      </ul>
+
+      <p class="kicker">IPTV player for Android TV&nbsp;· Fire Stick&nbsp;· Phone</p>
+
+      <h1>Always free,<span class="grad">Always open source</span></h1>
+
+      <p class="lede">
+        NoXPlayer plays <strong>your</strong> IPTV subscription — live channels, movies and
+        series — with a proper TV guide and an interface built to be driven by a remote
+        from ten feet away. You bring the playlist. It brings everything else.
+      </p>
+
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/NoXqc/NoXPlayer/releases/latest/download/app-release.apk">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></svg>
+          Download the APK
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/NoXqc/NoXPlayer">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38l-.01-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>
+          Read the source
+        </a>
+      </div>
+
+      <p class="cta-note">
+        One universal APK — Android phones and tablets, Android TV boxes and Fire TV
+        sticks. Sideload it directly; there is nothing to sign up for.
+      </p>
+
+      <div class="honest">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M12 11v5.5"/><path d="M12 7.6v.2"/></svg>
+        <p>
+          <b>NoXPlayer ships no channels.</b> It is a player, not a streaming service —
+          there is no content inside it and none is provided. You need your own IPTV
+          provider: an Xtream Codes login, or an M3U playlist URL.
+        </p>
+      </div>
+
+      <div class="ruler" role="presentation"></div>
+    </div>
+
+    <div class="wrap hero-shot">
+      <figure class="shot">
+        <div class="shot-frame">
+          <img src="assets/shot-live.png" width="1600" height="900" fetchpriority="high" decoding="async"
+               alt="NoXPlayer live TV screen: a channel list on the left beside a scrolling programme guide grid, with the current programme previewed at the top.">
+        </div>
+        <figcaption>Live TV with the XMLTV guide</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ==================== REQUIREMENTS ==================== -->
+  <section class="sec" id="requirements">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">Before you start</span>
+        <h2>You bring the playlist</h2>
+        <p>
+          NoXPlayer connects to a provider you already pay for. If you don't have one,
+          the app will open, look lovely, and show you nothing. Either of these gets you
+          running:
+        </p>
+      </div>
+
+      <div class="req-grid reveal">
+        <div class="req">
+          <h3>Xtream Codes <span class="tag">Login</span></h3>
+          <p>
+            Server URL, username and password. NoXPlayer pulls your live channels, movies
+            and series catalogues, plus the EPG, straight from the provider's API.
+          </p>
+        </div>
+        <div class="req">
+          <h3>M3U playlist <span class="tag">URL</span></h3>
+          <p>
+            A direct <code>.m3u</code> or <code>.m3u8</code> URL, with an optional separate
+            XMLTV EPG URL for the guide. Add as many as you like and switch between them.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ==================== FEATURES ==================== -->
+  <section class="sec" id="features">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">What's inside</span>
+        <h2>Everything a set-top box should have done</h2>
+        <p>
+          Built by someone who got tired of IPTV apps that are slow, full of adverts, or
+          quietly phoning home. The full list, grouped — none of it behind a paywall,
+          because there isn't one.
+        </p>
+      </div>
+
+      <div class="clusters">
+
+        <!-- 01 -->
+        <article class="cluster reveal">
+          <div class="cluster-head">
+            <p class="step-no">01 / PLAYLISTS &amp; SERVERS</p>
+            <h3>Connect once, stay connected</h3>
+            <p>Providers go down. The app is built on the assumption that yours will.</p>
+          </div>
+
+          <ul class="feat-list">
+            <li>
+              <b>As many playlists as you want</b>
+              <span>Xtream Codes logins and M3U / M3U8 URLs side by side. Each one can be
+              switched on or off independently, and everything that's on merges into a
+              single set of tabs.</span>
+            </li>
+            <li>
+              <b>Backup servers</b>
+              <span>Give a playlist alternate server addresses. If the main one won't
+              answer, NoXPlayer tries each backup a few seconds apart, remembers which one
+              replied, and starts there next time.</span>
+            </li>
+            <li>
+              <b>Reconnects mid-stream</b>
+              <span>A live channel that drops while you're watching falls back through
+              those same backup servers rather than dumping you out to the menu.</span>
+            </li>
+            <li>
+              <b>Subscription expiry</b>
+              <span>When your provider reports an expiry date for the account, the app
+              shows it — so the day it lapses isn't a mystery.</span>
+            </li>
+            <li>
+              <b>Errors that say something</b>
+              <span>A failed connection names the server that failed and gives you a Retry
+              action, instead of an empty screen and a shrug.</span>
+            </li>
+          </ul>
+
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-add.png" width="1600" height="900" loading="lazy" decoding="async"
+                   alt="NoXPlayer's Add Playlist screen: a name field and three source options — M3U URL, Xtream Codes login, and Smart Add — with fields for the playlist URL and an optional XMLTV guide URL.">
+            </div>
+            <figcaption>Adding a playlist — M3U URL, Xtream Codes login, or Smart Add</figcaption>
+          </figure>
+        </article>
+
+        <!-- 02 -->
+        <article class="cluster reveal">
+          <div class="cluster-head">
+            <p class="step-no">02 / LIVE TV</p>
+            <h3>A guide worth reading</h3>
+            <p>The part most IPTV apps either skip or render unreadably.</p>
+          </div>
+
+          <ul class="feat-list">
+            <li>
+              <b>XMLTV programme guide</b>
+              <span>Now playing and up next for every channel, with a progress bar showing
+              how far through the current programme you are.</span>
+            </li>
+            <li>
+              <b>Groups in their own column</b>
+              <span>Channel groups get a dedicated column rather than being buried in a
+              dropdown, so moving between categories is one press sideways.</span>
+            </li>
+            <li>
+              <b>Hide the groups you never watch</b>
+              <span>Hidden groups are also skipped during background downloading, so the
+              categories you don't care about cost you nothing at all.</span>
+            </li>
+            <li>
+              <b>Favourite channels and groups</b>
+              <span>Pin individual channels or whole groups. Favourites are shared across
+              every playlist, so they survive switching providers.</span>
+            </li>
+            <li>
+              <b>Picks up where you left off</b>
+              <span>Launch the app and your last channel comes back automatically.</span>
+            </li>
+            <li>
+              <b>Live pill</b>
+              <span>Wander off into the movie catalogue and a floating pill stays on screen
+              to jump you straight back to the live channel you left playing.</span>
+            </li>
+          </ul>
+        </article>
+
+        <!-- 03 -->
+        <article class="cluster reveal">
+          <div class="cluster-head">
+            <p class="step-no">03 / MOVIES &amp; TV SHOWS</p>
+            <h3>A catalogue, not a spreadsheet</h3>
+            <p>Video on demand browsed by artwork, the way it should be.</p>
+          </div>
+
+          <ul class="feat-list">
+            <li>
+              <b>Poster-grid browsing</b>
+              <span>Films and series laid out as artwork by category, with the ratings your
+              provider supplies shown on the tiles.</span>
+            </li>
+            <li>
+              <b>Proper series support</b>
+              <span>Seasons and episodes are structured as such, and the next episode
+              auto-advances when the current one finishes.</span>
+            </li>
+            <li>
+              <b>Continue watching</b>
+              <span>Playback positions are kept for both films and individual episodes, so
+              you resume exactly where you stopped.</span>
+            </li>
+            <li>
+              <b>“What's New” slideshow</b>
+              <span>An optional rotating showcase of recently added titles. It's opt-in from
+              the groups list — off unless you ask for it.</span>
+            </li>
+            <li>
+              <b>Search across everything</b>
+              <span>Search live channels, movies or TV shows, switching between the three
+              with a single press.</span>
+            </li>
+          </ul>
+
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-movies.png" width="1600" height="900" loading="lazy" decoding="async"
+                   alt="NoXPlayer movies screen: a grid of film poster artwork with rating badges and a category list along the side.">
+            </div>
+            <figcaption>Movies — poster grid, categories and provider ratings</figcaption>
+          </figure>
+        </article>
+
+        <!-- 04 -->
+        <article class="cluster reveal">
+          <div class="cluster-head">
+            <p class="step-no">04 / REMOTE, TV &amp; SPEED</p>
+            <h3>Fast on the hardware you own</h3>
+            <p>Including the five-year-old stick behind the television.</p>
+          </div>
+
+          <ul class="feat-list">
+            <li>
+              <b>Full D-pad navigation</b>
+              <span>A genuine 10-foot interface — every screen is reachable with arrows and
+              OK, with no assumption that a touchscreen exists.</span>
+            </li>
+            <li>
+              <b>Phone, box and stick</b>
+              <span>Android phones and tablets, Android TV boxes such as Formuler, and
+              Amazon Fire Sticks, all from one universal APK.</span>
+            </li>
+            <li>
+              <b>Local catalogue database</b>
+              <span>Your provider's listings are indexed on-device instead of re-parsed
+              every launch, so tens of thousands of channels stay quick on cheap hardware.</span>
+            </li>
+            <li>
+              <b>Background updates, on your schedule</b>
+              <span>The catalogue refreshes itself in the background at an interval you
+              choose, rather than making you wait at startup.</span>
+            </li>
+            <li>
+              <b>Hardware-accelerated playback</b>
+              <span>Decoding is handed to the device, including 4K and HDR where the
+              hardware supports it.</span>
+            </li>
+            <li>
+              <b>Updates itself</b>
+              <span>A built-in update check tells you when a new release is out and fetches
+              it — no reinstalling by hand every time.</span>
+            </li>
+          </ul>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ==================== TEN FOOT ==================== -->
+  <section class="sec" id="tv">
+    <div class="wrap split">
+      <div class="reveal">
+        <span class="eyebrow">Ten feet away</span>
+        <h2>Designed for a remote, not retrofitted for one</h2>
+        <p style="color:var(--ink-2)">
+          Most IPTV apps are phone apps someone stretched onto a television. Every screen
+          here was laid out for a D-pad first: predictable focus order, targets big enough
+          to hit from the sofa, and a focus ring you can actually see across the room.
+        </p>
+        <ul class="ticks">
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5.2 5.2L20 6.9"/></svg>
+            <span><b>Nothing needs a pointer.</b> Arrows and OK reach every control, including the player.</span>
+          </li>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5.2 5.2L20 6.9"/></svg>
+            <span><b>Seek, subtitles and audio tracks</b> are all on the remote, without a settings safari.</span>
+          </li>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5.2 5.2L20 6.9"/></svg>
+            <span><b>Tested on the real thing</b> — Formuler boxes and Fire TV sticks, not just an emulator.</span>
+          </li>
+          <li>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 12.5 5.2 5.2L20 6.9"/></svg>
+            <span><b>Touch-first on phones.</b> The same app detects the device and lays itself out properly.</span>
+          </li>
+        </ul>
+      </div>
+
+      <figure class="shot reveal">
+        <div class="shot-frame">
+          <img src="assets/shot-settings.png" width="1600" height="900" loading="lazy" decoding="async"
+               alt="NoXPlayer's settings screen laid out for a remote: large, widely spaced rows for Add Playlist, Playlist Manager, Theme, EPG and Check for Updates, each with an icon and a short description.">
+        </div>
+        <figcaption>Every screen sized for a D-pad and a sofa</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ==================== INSTALL ==================== -->
+  <section class="sec" id="install">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">Install</span>
+        <h2>Three ways in, five minutes each</h2>
+        <p>
+          NoXPlayer isn't on the Play Store or the Amazon Appstore — it is sideloaded, the
+          same way you'd install anything else on a stick or a box.
+        </p>
+      </div>
+
+      <div class="install-grid">
+        <article class="install featured reveal">
+          <p class="step-no">01 / FIRE TV STICK</p>
+          <h3>Downloader app</h3>
+          <div class="codebox">
+            <span class="lbl" id="dl-code-label">Downloader code</span>
+            <span class="val mono" aria-labelledby="dl-code-label">7815226</span>
+            <button class="copy" type="button" data-copy="7815226">Copy</button>
+            <span class="copy-status" role="status" aria-live="polite"></span>
+          </div>
+          <ol>
+            <li>Install <b>Downloader</b> from the Amazon Appstore, and allow it to install unknown apps.</li>
+            <li>Open Downloader and enter the code <b class="mono">7815226</b>.</li>
+            <li>Let it fetch the APK, then choose <b>Install</b>.</li>
+          </ol>
+          <div class="spacer"></div>
+          <p class="cta-note" style="margin-top:20px">
+            The code always resolves to the newest release, so it never goes stale.
+          </p>
+        </article>
+
+        <article class="install reveal">
+          <p class="step-no">02 / ANDROID TV BOX</p>
+          <h3>Formuler, Shield &amp; friends</h3>
+          <ol>
+            <li>The same <b>Downloader</b> code <b class="mono">7815226</b> works here.</li>
+            <li>
+              Or, if you have developer options on, install over USB debugging with
+              <br><code>adb install -r app-release.apk</code>
+            </li>
+            <li>Launch NoXPlayer and add your playlist under Settings.</li>
+          </ol>
+          <div class="spacer"></div>
+          <p class="cta-note" style="margin-top:20px">
+            Built and tested on Formuler boxes with a physical remote.
+          </p>
+        </article>
+
+        <article class="install reveal">
+          <p class="step-no">03 / PHONE &amp; TABLET</p>
+          <h3>Direct download</h3>
+          <ol>
+            <li>Tap the download button below on the device itself.</li>
+            <li>Allow your browser to <b>install unknown apps</b> when prompted.</li>
+            <li>Open the downloaded APK and install it.</li>
+          </ol>
+          <div class="spacer"></div>
+          <a class="btn btn-ghost btn-sm" style="margin-top:20px; align-self:flex-start"
+             href="https://github.com/NoXqc/NoXPlayer/releases/latest/download/app-release.apk">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></svg>
+            Get app-release.apk
+          </a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== MOTTO ==================== -->
+  <section class="motto">
+    <div class="wrap">
+      <p class="display">Always free,<br><span>Always open source</span></p>
+      <p>
+        Not free-for-now, not free-with-an-upgrade-prompt. NoXPlayer is licensed under the
+        <strong style="color:var(--ink)">GNU General Public Licence v3.0</strong> — every line
+        of it is on GitHub, you can read it, build it, fork it, and it has to stay open.
+        There is no telemetry, no analytics SDK, no account, and nothing to buy.
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/NoXqc/NoXPlayer/releases/latest/download/app-release.apk">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></svg>
+          Download the APK
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/NoXqc/NoXPlayer">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38l-.01-1.34c-2.23.48-2.7-1.07-2.7-1.07-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>
+          NoXqc/NoXPlayer
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== FAQ ==================== -->
+  <section class="sec" id="faq">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">Straight answers</span>
+        <h2>Questions people actually ask</h2>
+      </div>
+
+      <div class="faq reveal">
+        <details>
+          <summary>Does NoXPlayer come with channels?</summary>
+          <div class="ans">
+            <p>
+              No. It contains no channels, no streams, no playlists and no subscription of
+              any kind, and none are supplied or sold. It is an empty player until you point
+              it at a provider you already have — via Xtream Codes credentials or an M3U URL.
+            </p>
+            <p>
+              What you connect it to, and whether you're entitled to that content, is
+              between you and your provider.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Is it really free? What's the catch?</summary>
+          <div class="ans">
+            <p>
+              There is no catch, no trial, no pro tier and no advertising. It's a personal
+              project released under GPL-3.0 because that felt like the right thing to do
+              with it. The licence means it stays that way, even if someone forks it.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Does it track me or send my credentials anywhere?</summary>
+          <div class="ans">
+            <p>
+              No analytics, no crash reporting services, no accounts. Your playlist URLs and
+              credentials are stored on the device and are sent only to the provider you
+              entered, because that's who serves the streams. The source is public if you'd
+              rather verify that than take a stranger's word for it.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Which devices does it run on?</summary>
+          <div class="ans">
+            <p>
+              Android phones and tablets, Android TV boxes (developed against Formuler
+              hardware) and Amazon Fire TV sticks. One universal APK covers all of them and
+              adapts its layout to touch or D-pad automatically.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Why isn't it on the Play Store?</summary>
+          <div class="ans">
+            <p>
+              Sideloading keeps it free of store policies, listing fees and the review
+              friction that tends to follow anything IPTV-shaped. The download link here
+              always points at the latest release, and the app can check for updates itself.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>I found a bug. Where do I send it?</summary>
+          <div class="ans">
+            <p>
+              Open an issue on
+              <a href="https://github.com/NoXqc/NoXPlayer">GitHub</a>, or email
+              <a href="mailto:noxqcx@gmail.com">noxqcx@gmail.com</a>. Your device model,
+              the app version and what you were doing at the time make it enormously
+              easier to fix.
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap">
+    <div class="foot-top">
+      <a class="brand" href="#top" aria-label="NoXPlayer, back to top">
+        <svg viewBox="0 0 64 64" role="img" aria-hidden="true" focusable="false">
+          <defs>
+            <linearGradient id="logoGf" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#1A0B2E"/>
+              <stop offset=".45" stop-color="#7C3AED"/>
+              <stop offset="1" stop-color="#E91E8C"/>
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="15" fill="url(#logoGf)"/>
+          <path d="M14 40V16h5l9 14V16h5v24h-5l-9-14v14z" fill="#F4F1F8"/>
+          <circle cx="45" cy="45" r="11" fill="#F0257F"/>
+          <path d="M41 39l12 6-12 6z" fill="#fff"/>
+        </svg>
+        <b>NoXPlayer</b>
+      </a>
+      <nav class="foot-links" aria-label="Footer">
+        <a href="https://github.com/NoXqc/NoXPlayer/releases/latest/download/app-release.apk">Download APK</a>
+        <a href="https://github.com/NoXqc/NoXPlayer">Source on GitHub</a>
+        <a href="https://github.com/NoXqc/NoXPlayer/blob/main/LICENSE">GPL-3.0 licence</a>
+        <a href="mailto:noxqcx@gmail.com">noxqcx@gmail.com</a>
+      </nav>
+    </div>
+
+    <div class="foot-note">
+      <p>
+        NoXPlayer is free software, licensed under the GNU General Public Licence v3.0.
+        Bug reports and questions: <a href="mailto:noxqcx@gmail.com">noxqcx@gmail.com</a>.
+      </p>
+      <p>
+        NoXPlayer is a media player only. It provides, hosts and bundles no television
+        channels, films or streams, and is not affiliated with any IPTV provider. Users
+        supply their own playlist or subscription and are responsible for holding the
+        rights to whatever they play through it.
+      </p>
+      <p>
+        Not affiliated with, or endorsed by, Amazon, Google, Formuler or any other
+        trademark holder mentioned on this page.
+      </p>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  /* Copy the Downloader code. Progressive: the number is plain text without JS. */
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    var status = btn.parentNode.querySelector(".copy-status");
+    var code = btn.getAttribute("data-copy") || "";
+    btn.setAttribute("aria-label", "Copy Downloader code " + code);
+
+    btn.addEventListener("click", function () {
+      var done = function (ok) {
+        if (status) { status.textContent = ok ? "Copied" : "Press Ctrl+C"; }
+        btn.textContent = ok ? "Copied" : "Copy";
+        window.setTimeout(function () {
+          btn.textContent = "Copy";
+          if (status) { status.textContent = ""; }
+        }, 2200);
+      };
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).then(function () { done(true); }, function () { done(false); });
+      } else {
+        try {
+          var t = document.createElement("textarea");
+          t.value = code;
+          t.setAttribute("readonly", "");
+          t.style.position = "fixed";
+          t.style.opacity = "0";
+          document.body.appendChild(t);
+          t.select();
+          done(document.execCommand("copy"));
+          document.body.removeChild(t);
+        } catch (e) { done(false); }
+      }
+    });
+  });
+
+  /* Hairline under the header once the page has moved. Passive, cheap. */
+  var head = document.getElementById("head");
+  if (head && "IntersectionObserver" in window) {
+    var sentinel = document.createElement("div");
+    sentinel.style.cssText = "position:absolute;top:0;left:0;width:1px;height:1px;pointer-events:none";
+    document.body.prepend(sentinel);
+    new IntersectionObserver(function (entries) {
+      head.classList.toggle("is-stuck", !entries[0].isIntersecting);
+    }).observe(sentinel);
+  }
+})();
+</script>
+
+</body>
+</html>
