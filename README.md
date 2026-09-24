@@ -27,3 +27,9 @@ Firesticks. Install it directly, or side-load it via
 On first launch, add your playlist under Settings — either a direct M3U URL
 (with an optional separate EPG URL), or Xtream Codes credentials (server,
 username, password).
+
+## Community
+
+Bug reports, suggestions/improvements, or general discussion — join the
+[Discord server](https://discord.gg/DDeGDHvFY), or open an issue here on
+GitHub.
