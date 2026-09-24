@@ -21,6 +21,7 @@ class AppPreferences extends ChangeNotifier {
   late bool showClock;
   late CyberpunkPalette palette;
   late String layoutMode; // 'auto', 'phone', 'tv'
+  late String guideViewMode; // 'live', 'timeline'
 
   /// Set once at startup from Android's own UI mode (see
   /// DeviceTypeService) — what 'auto' actually keys off now. Not
@@ -34,6 +35,7 @@ class AppPreferences extends ChangeNotifier {
     showClock = _storage.getShowClock();
     palette = _paletteById(_storage.getPaletteId());
     layoutMode = _storage.getLayoutMode();
+    guideViewMode = _storage.getGuideViewMode();
   }
 
   CyberpunkPalette _paletteById(String id) =>
@@ -61,6 +63,12 @@ class AppPreferences extends ChangeNotifier {
   void setLayoutMode(String mode) {
     layoutMode = mode;
     _storage.setLayoutMode(mode);
+    notifyListeners();
+  }
+
+  void setGuideViewMode(String mode) {
+    guideViewMode = mode;
+    _storage.setGuideViewMode(mode);
     notifyListeners();
   }
 }

@@ -156,6 +156,13 @@ class StorageService {
   Future<void> setLayoutMode(String mode) =>
       _prefs.setString(AppConstants.keyLayoutMode, mode);
 
+  /// 'live' or 'timeline'.
+  String getGuideViewMode() =>
+      _prefs.getString(AppConstants.keyGuideViewMode) ??
+      AppConstants.defaultGuideViewMode;
+  Future<void> setGuideViewMode(String mode) =>
+      _prefs.setString(AppConstants.keyGuideViewMode, mode);
+
   // --- Favorites (global — shared across every playlist) -------------------
 
   Set<String> getFavorites() =>

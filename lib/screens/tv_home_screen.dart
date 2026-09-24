@@ -8,6 +8,7 @@ import 'package:intl/intl.dart' hide TextDirection;
 import 'package:provider/provider.dart';
 
 import '../models/channel.dart';
+import '../models/epg_program.dart';
 import '../models/m3u_group.dart';
 import '../models/xtream_series.dart';
 import '../services/app_preferences.dart';
@@ -1089,6 +1090,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         secondary: prefs.palette.secondary, tertiary: prefs.palette.secondary);
 
     final isBrowseTab = _tab == 'Movies' || _tab == 'TV Shows';
+    // Only meaningful on the Live TV/Favorites side (the browse tabs have
+    // their own poster grid and no concept of this setting) — see
+    // _buildLiveRegion for where it actually swaps the content, and the
+    // Left/Right binding override just below for why the depth-2 column's
+    // own key handling needs to know about it too.
+    final showTimelineGuide =
+        !isBrowseTab && prefs.guideViewMode == 'timeline';
 
     return Theme(
       data: ThemeData(colorScheme: darkScheme, useMaterial3: true),
@@ -1213,9 +1221,25 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                                     // groups column, so Left/Right always
                                     // switching columns (never intra-row) is
                                     // safe here, same as before the merge.
+                                    //
+                                    // The timeline guide is the one exception:
+                                    // it replaces that same column-2 slot with
+                                    // a real Left/Right grid (block-to-block
+                                    // within a channel's row), so at depth 2
+                                    // while it's showing this defers to the
+                                    // exact same "try moving, otherwise arm a
+                                    // second press" escape the browse poster
+                                    // grid already uses (_handleBrowseLeft),
+                                    // and leaves Right unbound entirely so
+                                    // default traversal reaches the next
+                                    // programme block — same as the browse
+                                    // grid leaving Right unbound at its own
+                                    // depth 2, just below.
                                     const SingleActivator(
                                             LogicalKeyboardKey.arrowLeft):
-                                        () => _moveColumnFocus(-1, 2),
+                                        (_focusDepth == 2 && showTimelineGuide)
+                                            ? _handleBrowseLeft
+                                            : () => _moveColumnFocus(-1, 2),
                                     // Already in the last column: Right has
                                     // nowhere further to go, so it becomes a
                                     // shortcut straight to fullscreen on
@@ -1223,11 +1247,12 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                                     // a dead end — otherwise finding your way
                                     // back to fullscreen meant re-selecting
                                     // the same channel from the list again.
-                                    const SingleActivator(
-                                            LogicalKeyboardKey.arrowRight):
-                                        _focusDepth == 2
-                                            ? _goFullscreenIfPlaying
-                                            : () => _moveColumnFocus(1, 2),
+                                    if (!(_focusDepth == 2 && showTimelineGuide))
+                                      const SingleActivator(
+                                              LogicalKeyboardKey.arrowRight):
+                                          _focusDepth == 2
+                                              ? _goFullscreenIfPlaying
+                                              : () => _moveColumnFocus(1, 2),
                                   },
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1631,6 +1656,19 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         return _buildFavoriteGroupCatalog(
             playlist, resolved.category, resolved.playlistId, _selectedGroup!);
       }
+    }
+
+    // Opt-in alternate view (Settings > Theme > "Guide view") — see
+    // _TimelineGuide's own doc comment. Checked after the two branches
+    // above, not before: a favorited movies/shows group still needs its
+    // own catalog UI regardless of this setting, same as it would with
+    // the normal live-list view.
+    if (context.watch<AppPreferences>().guideViewMode == 'timeline') {
+      return _TimelineGuide(
+        channels: _currentLiveChannels(playlist),
+        epg: epg,
+        onOpen: _selectChannel,
+      );
     }
 
     final playback = context.watch<PlaybackService>();
@@ -3331,6 +3369,440 @@ class _ProgramDetails extends StatelessWidget {
                 style: const TextStyle(color: Colors.white54, fontSize: 12)),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Opt-in alternate Live TV view (Settings > Theme > "Guide view") — every
+/// visible channel at once on a scrollable schedule grid, instead of one
+/// channel's now/next at a time. Plugs into [_buildLiveRegion] in place of
+/// the normal channel-list-over-video content; the column/focus-depth
+/// structure around it is unchanged (still lives at `_focusDepth == 2`).
+///
+/// Deliberately a *fixed* time window (from shortly before "now" to a few
+/// hours after), computed once at [initState] — not an infinitely
+/// scrollable calendar. `EpgService.getPrograms` already holds each
+/// channel's full multi-day schedule in memory, so nothing here needs to
+/// fetch anything; this only ever decides what to draw from data that's
+/// already there.
+class _TimelineGuide extends StatefulWidget {
+  const _TimelineGuide(
+      {required this.channels, required this.epg, required this.onOpen});
+
+  final List<Channel> channels;
+  final EpgService epg;
+  final void Function(Channel channel) onOpen;
+
+  @override
+  State<_TimelineGuide> createState() => _TimelineGuideState();
+}
+
+class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
+  static const double _pixelsPerMinute = 6;
+  static const Duration _windowBefore = Duration(hours: 1);
+  static const Duration _windowAfter = Duration(hours: 5);
+  static const double _rowHeight = 64;
+  static const double _channelColumnWidth = 160;
+  static const double _rulerHeight = 32;
+
+  /// How often the "now" line (and every row's now/later styling) redraws
+  /// — a `setState` tick, not a re-fetch of anything. Cheap enough that
+  /// this doesn't need the same tight care as the actual data-loading
+  /// timers elsewhere in this file, but still paused while covered (see
+  /// [didPushNext]/[didPopNext]) on the same "don't run a timer for a
+  /// screen nobody can see" principle as [_WhatsNewCarouselState].
+  static const Duration _nowTickInterval = Duration(seconds: 30);
+
+  late final DateTime _windowStart;
+  late final DateTime _windowEnd;
+  late final double _totalWidth;
+
+  // Two independent controller pairs (ruler mirrors the grid horizontally,
+  // the channel-label column mirrors it vertically) rather than sharing
+  // one `ScrollController` across scroll views — a single controller can
+  // only usefully drive `jumpTo` across multiple attachments, actual drag
+  // gestures on one view never move the others. Only the grid itself is
+  // interactive; the ruler and label column just mirror it via listeners,
+  // the same "one side drives, the other follows" shape as everywhere
+  // else two things need to move in lockstep in this app.
+  final ScrollController _gridHScroll = ScrollController();
+  final ScrollController _rulerHScroll = ScrollController();
+  final ScrollController _gridVScroll = ScrollController();
+  final ScrollController _labelVScroll = ScrollController();
+  Timer? _nowTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _windowStart = now.subtract(_windowBefore);
+    _windowEnd = now.add(_windowAfter);
+    _totalWidth =
+        _windowEnd.difference(_windowStart).inMinutes * _pixelsPerMinute;
+    _gridHScroll.addListener(_mirrorRuler);
+    _gridVScroll.addListener(_mirrorLabels);
+    _startNowTimer();
+    // Opens scrolled to "now", not the window's start — matching what the
+    // user actually wants to see first. jumpTo, not animateTo: an
+    // animated scroll on a real device was confirmed elsewhere in this
+    // file as the direct cause of an ANR-length freeze on a long list;
+    // that lesson applies here just as much.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _gridHScroll.hasClients) {
+        _gridHScroll.jumpTo((_windowBefore.inMinutes * _pixelsPerMinute)
+            .clamp(0, _gridHScroll.position.maxScrollExtent));
+      }
+    });
+  }
+
+  void _mirrorRuler() {
+    if (_rulerHScroll.hasClients) _rulerHScroll.jumpTo(_gridHScroll.offset);
+  }
+
+  void _mirrorLabels() {
+    if (_labelVScroll.hasClients) _labelVScroll.jumpTo(_gridVScroll.offset);
+  }
+
+  void _startNowTimer() {
+    _nowTimer?.cancel();
+    _nowTimer = Timer.periodic(_nowTickInterval, (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute<void>) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void didPushNext() => _nowTimer?.cancel();
+
+  @override
+  void didPopNext() => _startNowTimer();
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    _nowTimer?.cancel();
+    _gridHScroll.removeListener(_mirrorRuler);
+    _gridVScroll.removeListener(_mirrorLabels);
+    _gridHScroll.dispose();
+    _rulerHScroll.dispose();
+    _gridVScroll.dispose();
+    _labelVScroll.dispose();
+    super.dispose();
+  }
+
+  double _xFor(DateTime t) =>
+      t.difference(_windowStart).inMinutes * _pixelsPerMinute;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.channels.isEmpty) {
+      return const Center(child: Text('No channels found.'));
+    }
+    final nowX = _xFor(DateTime.now()).clamp(0.0, _totalWidth);
+    return Column(
+      children: [
+        SizedBox(
+          height: _rulerHeight,
+          child: Row(
+            children: [
+              const SizedBox(width: _channelColumnWidth),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: ClipRect(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    controller: _rulerHScroll,
+                    physics: const NeverScrollableScrollPhysics(),
+                    child: SizedBox(
+                      width: _totalWidth,
+                      child: _TimeRuler(
+                          windowStart: _windowStart,
+                          windowEnd: _windowEnd,
+                          pixelsPerMinute: _pixelsPerMinute),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: _channelColumnWidth,
+                child: ClipRect(
+                  child: ListView.builder(
+                    controller: _labelVScroll,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: widget.channels.length,
+                    itemExtent: _rowHeight,
+                    itemBuilder: (context, i) =>
+                        _ChannelLabel(channel: widget.channels[i]),
+                  ),
+                ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  controller: _gridHScroll,
+                  child: SizedBox(
+                    width: _totalWidth,
+                    height: widget.channels.length * _rowHeight,
+                    child: Stack(
+                      children: [
+                        ListView.builder(
+                          controller: _gridVScroll,
+                          itemCount: widget.channels.length,
+                          itemExtent: _rowHeight,
+                          itemBuilder: (context, i) => _TimelineRow(
+                            programs:
+                                widget.epg.getPrograms(widget.channels[i].rawId),
+                            windowStart: _windowStart,
+                            windowEnd: _windowEnd,
+                            pixelsPerMinute: _pixelsPerMinute,
+                            onOpen: () => widget.onOpen(widget.channels[i]),
+                          ),
+                        ),
+                        Positioned(
+                          left: nowX,
+                          top: 0,
+                          bottom: 0,
+                          child: const IgnorePointer(
+                            child: SizedBox(
+                              width: 2,
+                              child: ColoredBox(color: Colors.redAccent),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Hour/half-hour tick labels across the guide's fixed time window —
+/// visually paired with the grid via [_TimelineGuideState._mirrorRuler],
+/// not an independently-scrolled view of its own.
+class _TimeRuler extends StatelessWidget {
+  const _TimeRuler(
+      {required this.windowStart,
+      required this.windowEnd,
+      required this.pixelsPerMinute});
+
+  final DateTime windowStart;
+  final DateTime windowEnd;
+  final double pixelsPerMinute;
+
+  @override
+  Widget build(BuildContext context) {
+    final timeFormat = DateFormat('h:mm a');
+    final firstTick =
+        DateTime(windowStart.year, windowStart.month, windowStart.day,
+                windowStart.hour, windowStart.minute - windowStart.minute % 30)
+            .add(const Duration(minutes: 30));
+    final ticks = <DateTime>[
+      for (var t = firstTick;
+          t.isBefore(windowEnd);
+          t = t.add(const Duration(minutes: 30)))
+        t,
+    ];
+    return Stack(
+      children: [
+        for (final tick in ticks)
+          Positioned(
+            left: tick.difference(windowStart).inMinutes * pixelsPerMinute,
+            top: 0,
+            bottom: 0,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(timeFormat.format(tick),
+                    style: const TextStyle(
+                        color: Colors.white70, fontSize: 12)),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The left column's per-row channel identity — purely informational, not
+/// itself focusable; D-pad focus lives entirely on the programme blocks in
+/// [_TimelineRow], same as the plain channel list never puts focus on a
+/// row's logo.
+class _ChannelLabel extends StatelessWidget {
+  const _ChannelLabel({required this.channel});
+
+  final Channel channel;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: _TimelineGuideState._rowHeight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 32,
+              height: 32,
+              child: (channel.logoUrl != null && channel.logoUrl!.isNotEmpty)
+                  ? CachedNetworkImage(
+                      imageUrl: channel.logoUrl!,
+                      fit: BoxFit.contain,
+                      errorWidget: (_, __, ___) => const Icon(Icons.tv))
+                  : const Icon(Icons.tv),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                channel.name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One channel's programmes for the visible window, each a real
+/// [Positioned] focusable block sized to its actual duration — no nested
+/// scrollable per row; the shared horizontal offset in
+/// [_TimelineGuideState] already provides one. Left/Right and Up/Down
+/// between blocks use plain default Flutter focus traversal (each block
+/// is its own [Focus]/`InkWell`, no per-row [FocusScope] — nesting one per
+/// row was tried elsewhere in this file for a similar row-of-rows layout
+/// and confirmed to break Up/Down between rows entirely).
+class _TimelineRow extends StatelessWidget {
+  const _TimelineRow({
+    required this.programs,
+    required this.windowStart,
+    required this.windowEnd,
+    required this.pixelsPerMinute,
+    required this.onOpen,
+  });
+
+  final List<EpgProgram> programs;
+  final DateTime windowStart;
+  final DateTime windowEnd;
+  final double pixelsPerMinute;
+  final VoidCallback onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final visible = programs.where((p) =>
+        p.stop.isAfter(windowStart) && p.start.isBefore(windowEnd));
+    return SizedBox(
+      height: _TimelineGuideState._rowHeight,
+      child: Stack(
+        children: [
+          for (final program in visible)
+            Positioned(
+              left: program.start.isBefore(windowStart)
+                  ? 0
+                  : program.start.difference(windowStart).inMinutes *
+                      pixelsPerMinute,
+              width: (program.stop.isAfter(windowEnd)
+                          ? windowEnd
+                          : program.stop)
+                      .difference(
+                          program.start.isBefore(windowStart)
+                              ? windowStart
+                              : program.start)
+                      .inMinutes *
+                  pixelsPerMinute,
+              top: 4,
+              bottom: 4,
+              child: _ProgramBlock(
+                program: program,
+                isNow: program.isNowPlaying(now),
+                onOpen: onOpen,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProgramBlock extends StatefulWidget {
+  const _ProgramBlock(
+      {required this.program, required this.isNow, required this.onOpen});
+
+  final EpgProgram program;
+  final bool isNow;
+  final VoidCallback onOpen;
+
+  @override
+  State<_ProgramBlock> createState() => _ProgramBlockState();
+}
+
+class _ProgramBlockState extends State<_ProgramBlock> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 1),
+      child: Focus(
+        onFocusChange: (f) {
+          setState(() => _focused = f);
+          // Instant, not animated — the same "jumpTo, never animateTo on
+          // a real device" reasoning as the rest of this widget; only
+          // relevant once these blocks are numerous enough to scroll.
+          if (f) Scrollable.ensureVisible(context, duration: Duration.zero);
+        },
+        child: InkWell(
+          onTap: widget.onOpen,
+          child: Container(
+            decoration: BoxDecoration(
+              color: _focused
+                  ? scheme.primary
+                  : widget.isNow
+                      ? scheme.primaryContainer.withValues(alpha: 0.55)
+                      : Colors.white.withValues(alpha: 0.06),
+              border: Border.all(
+                  color: _focused ? scheme.primary : Colors.white24),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            alignment: Alignment.centerLeft,
+            child: Text(
+              widget.program.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: _focused ? scheme.onPrimary : Colors.white,
+                  fontSize: 12),
+            ),
+          ),
+        ),
       ),
     );
   }

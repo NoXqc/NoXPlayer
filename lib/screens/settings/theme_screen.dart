@@ -98,6 +98,32 @@ class ThemeScreen extends StatelessWidget {
                       ],
                     ],
                   ),
+                  const Divider(height: 32),
+                  const SectionLabel('Live TV guide'),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Timeline shows every channel at once, on a scrollable '
+                    'schedule grid, instead of one channel\'s now/next at a time.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      for (final option in const [
+                        ('live', 'Live'),
+                        ('timeline', 'Timeline')
+                      ]) ...[
+                        Expanded(
+                          child: ModeButton(
+                            label: option.$2,
+                            selected: prefs.guideViewMode == option.$1,
+                            onTap: () => prefs.setGuideViewMode(option.$1),
+                          ),
+                        ),
+                        if (option.$1 != 'timeline') const SizedBox(width: 12),
+                      ],
+                    ],
+                  ),
                 ],
               ),
             ));

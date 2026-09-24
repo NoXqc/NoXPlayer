@@ -26,6 +26,11 @@ class AppConstants {
   static const String defaultLayoutMode =
       String.fromEnvironment('DEFAULT_LAYOUT_MODE', defaultValue: 'auto');
 
+  /// Fresh-install default for [AppPreferences.guideViewMode] — 'live'
+  /// (the original single-channel now/next view) or 'timeline' (the
+  /// cable-guide grid). Always overridable in Settings > Theme.
+  static const String defaultGuideViewMode = 'live';
+
   // SharedPreferences keys.
   //
   // keyM3uUrl/keyEpgUrl/keyXtreamServer.../keyPlaylistMode/
@@ -97,6 +102,10 @@ class AppConstants {
   /// one included) aren't officially certified Android TV devices, so
   /// there's no fully reliable automatic signal for "this is a TV".
   static const String keyLayoutMode = 'nox_layout_mode';
+
+  /// Live TV presentation: 'live' (single-channel now/next) or 'timeline'
+  /// (cable-guide grid, all visible channels at once).
+  static const String keyGuideViewMode = 'nox_guide_view_mode';
 
   /// LEGACY global scalar — "enable/disable playlist" (freeing a
   /// provider's connection slot for another device without touching
