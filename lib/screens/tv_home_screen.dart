@@ -1079,6 +1079,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// fullscreen on whatever's actually playing (PlaybackService's
   /// currentChannel) — not whichever row the D-pad cursor happens to be
   /// sitting on. No-ops if nothing's playing yet.
+  /// Timeline guide's Left: step one 30-minute slot back in time, and
+  /// only once the guide's time window has no earlier slot left fall back
+  /// to the usual "press again to leave for the groups" edge behaviour.
+  void _handleTimelineLeft() {
+    final moved = _timelineGuideKey.currentState?.moveHorizontal(-1) ?? false;
+    if (!moved) _handleBrowseLeft();
+  }
+
   void _goFullscreenIfPlaying() {
     final channel = context.read<PlaybackService>().currentChannel;
     if (channel == null) return;
@@ -1234,264 +1242,275 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
     return Theme(
       data: ThemeData(colorScheme: darkScheme, useMaterial3: true),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Stack(
-          children: [
-            // Same bright, saturated two-color diagonal used across every
-            // Settings screen (see SettingsGradientBackground's doc
-            // comment) — was a muted 3-stop alpha-blend-onto-black here,
-            // which read as "still basically black/grey" next to the
-            // Settings redesign. Reusing the shared widget instead of a
-            // second copy of the same gradient math keeps both screens in
-            // sync automatically if the recipe ever changes again.
-            const Positioned.fill(child: SettingsGradientBackground()),
-            SafeArea(
-              minimum: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  _TvTopBar(
-                      showClock: prefs.showClock,
-                      isLoading: playlist.isLoading),
-                  const CatalogWarmupBanner(),
-                  Expanded(
-                    child: (playlist.error != null && playlist.channels.isEmpty)
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  if (playlist.error != null)
-                                    Padding(
-                                      padding:
-                                          const EdgeInsets.only(bottom: 16),
-                                      child: Text(playlist.error!,
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .error)),
-                                    ),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      OutlinedButton(
-                                        onPressed: _retrying
-                                            ? null
-                                            : () async {
-                                                setState(
-                                                    () => _retrying = true);
-                                                await playlist
-                                                    .retryFailedConnections();
-                                                if (mounted) {
-                                                  setState(
-                                                      () => _retrying = false);
-                                                }
-                                              },
-                                        child: _retrying
-                                            ? const SizedBox(
-                                                width: 16,
-                                                height: 16,
-                                                child:
-                                                    CircularProgressIndicator(
-                                                        strokeWidth: 2))
-                                            : const Text('Retry'),
+      // Back walks out one column at a time — content -> groups -> tabs —
+      // and only exits the app from the tabs column (it used to exit
+      // straight from anywhere, including deep inside the guide).
+      child: PopScope(
+        canPop: _focusDepth == 0,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _moveColumnFocus(-1, 2);
+        },
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Stack(
+            children: [
+              // Same bright, saturated two-color diagonal used across every
+              // Settings screen (see SettingsGradientBackground's doc
+              // comment) — was a muted 3-stop alpha-blend-onto-black here,
+              // which read as "still basically black/grey" next to the
+              // Settings redesign. Reusing the shared widget instead of a
+              // second copy of the same gradient math keeps both screens in
+              // sync automatically if the recipe ever changes again.
+              const Positioned.fill(child: SettingsGradientBackground()),
+              SafeArea(
+                minimum: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    _TvTopBar(
+                        showClock: prefs.showClock,
+                        isLoading: playlist.isLoading),
+                    const CatalogWarmupBanner(),
+                    Expanded(
+                      child: (playlist.error != null &&
+                              playlist.channels.isEmpty)
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (playlist.error != null)
+                                      Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 16),
+                                        child: Text(playlist.error!,
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .error)),
                                       ),
-                                      const SizedBox(width: 12),
-                                      FilledButton(
-                                          onPressed: _openSettings,
-                                          child: const Text('Open Settings')),
-                                    ],
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        OutlinedButton(
+                                          onPressed: _retrying
+                                              ? null
+                                              : () async {
+                                                  setState(
+                                                      () => _retrying = true);
+                                                  await playlist
+                                                      .retryFailedConnections();
+                                                  if (mounted) {
+                                                    setState(() =>
+                                                        _retrying = false);
+                                                  }
+                                                },
+                                          child: _retrying
+                                              ? const SizedBox(
+                                                  width: 16,
+                                                  height: 16,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                          strokeWidth: 2))
+                                              : const Text('Retry'),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        FilledButton(
+                                            onPressed: _openSettings,
+                                            child: const Text('Open Settings')),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : CallbackShortcuts(
+                              // The 4-column Live TV/Favorites layout gets full
+                              // explicit column-switching. The Movies/TV Shows
+                              // browse view only has two columns (tabs, browse),
+                              // and needs Left/Right free inside the browse
+                              // column for poster-to-poster movement — but it
+                              // still needs an explicit Right from the tabs rail
+                              // to *enter* that column in the first place,
+                              // since default traversal couldn't reliably jump
+                              // there either (same class of bug as the groups
+                              // column getting "stuck").
+                              // Movies/TV Shows are 3 columns now (tabs, groups
+                              // shortcut rail, browse) instead of the 4-column
+                              // Live TV/Favorites layout (tabs, groups, list,
+                              // preview) — but the same per-depth pattern:
+                              // Left/Right always switch columns except inside
+                              // the poster grid itself, where Left/Right move
+                              // card-to-card (see _handleBrowseLeft for the
+                              // "nowhere further left" escape).
+                              bindings: isBrowseTab
+                                  ? switch (_focusDepth) {
+                                      0 => <ShortcutActivator, VoidCallback>{
+                                          const SingleActivator(
+                                              LogicalKeyboardKey
+                                                  .arrowRight): () =>
+                                              _moveColumnFocus(1, 2),
+                                        },
+                                      1 => <ShortcutActivator, VoidCallback>{
+                                          const SingleActivator(
+                                                  LogicalKeyboardKey.arrowLeft):
+                                              () => _moveColumnFocus(-1, 2),
+                                          const SingleActivator(
+                                                  LogicalKeyboardKey
+                                                      .arrowRight):
+                                              _enterBrowseColumn,
+                                        },
+                                      _ => <ShortcutActivator, VoidCallback>{
+                                          const SingleActivator(
+                                                  LogicalKeyboardKey.arrowLeft):
+                                              _handleBrowseLeft,
+                                        },
+                                    }
+                                  : <ShortcutActivator, VoidCallback>{
+                                      // 3 columns now (tabs, groups, the merged
+                                      // live-list-over-video region) — the list
+                                      // panel is a plain vertical list like the
+                                      // groups column, so Left/Right always
+                                      // switching columns (never intra-row) is
+                                      // safe here, same as before the merge.
+                                      //
+                                      // The timeline guide is the one exception: at depth 2 while
+                                      // it's showing, Left and Right step the view one 30-minute
+                                      // slot (see _TimelineGuideState.moveHorizontal) rather than
+                                      // moving column. Left falls back to the "press again to leave
+                                      // for the groups" escape (_handleBrowseLeft) only at the edge
+                                      // of the guide's window; the Back button is the quick way out.
+                                      const SingleActivator(
+                                              LogicalKeyboardKey.arrowLeft):
+                                          (_focusDepth == 2 &&
+                                                  showTimelineGuide)
+                                              ? _handleTimelineLeft
+                                              : () => _moveColumnFocus(-1, 2),
+                                      // Already in the last column: Right has
+                                      // nowhere further to go, so it becomes a
+                                      // shortcut straight to fullscreen on
+                                      // whatever's currently playing instead of
+                                      // a dead end — otherwise finding your way
+                                      // back to fullscreen meant re-selecting
+                                      // the same channel from the list again.
+                                      // In the timeline guide, Right steps
+                                      // the view one 30-minute slot instead
+                                      // (see moveHorizontal).
+                                      const SingleActivator(LogicalKeyboardKey
+                                          .arrowRight): (_focusDepth == 2 &&
+                                              showTimelineGuide)
+                                          ? () => _timelineGuideKey.currentState
+                                              ?.moveHorizontal(1)
+                                          : _focusDepth == 2
+                                              ? _goFullscreenIfPlaying
+                                              : () => _moveColumnFocus(1, 2),
+                                      // Default directional traversal picks
+                                      // Up/Down by on-screen rect overlap,
+                                      // which reliably lands on the wrong
+                                      // block once a row's programmes are
+                                      // much wider/narrower than its
+                                      // neighbours' — reported directly on
+                                      // real hardware (moving off a long
+                                      // block landed near the *end* of its
+                                      // span in the next row, not "now").
+                                      // See _TimelineGuideState.moveVertical.
+                                      if (_focusDepth == 2 &&
+                                          showTimelineGuide) ...{
+                                        const SingleActivator(
+                                                LogicalKeyboardKey.arrowDown):
+                                            () => _timelineGuideKey.currentState
+                                                ?.moveVertical(1),
+                                        const SingleActivator(
+                                                LogicalKeyboardKey.arrowUp):
+                                            () => _timelineGuideKey.currentState
+                                                ?.moveVertical(-1),
+                                      },
+                                    },
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _collapsible(
+                                    depth: 0,
+                                    expandedWidth: 160,
+                                    child: FocusTraversalGroup(
+                                      child: FocusScope(
+                                        node: _col0Scope,
+                                        onFocusChange: (has) {
+                                          if (has) _onColumnFocus(0);
+                                        },
+                                        child: _buildTabsColumn(
+                                            collapsed: _focusDepth > 0),
+                                      ),
+                                    ),
                                   ),
+                                  const VerticalDivider(width: 1),
+                                  if (isBrowseTab) ...[
+                                    _collapsible(
+                                      depth: 1,
+                                      expandedWidth: 260,
+                                      child: FocusTraversalGroup(
+                                        child: FocusScope(
+                                          node: _col1Scope,
+                                          onFocusChange: (has) {
+                                            if (has) _onColumnFocus(1);
+                                          },
+                                          child: _buildBrowseGroupsColumn(
+                                              playlist,
+                                              collapsed: _focusDepth > 1),
+                                        ),
+                                      ),
+                                    ),
+                                    const VerticalDivider(width: 1),
+                                    Expanded(
+                                      child: FocusTraversalGroup(
+                                        child: FocusScope(
+                                          node: _col2Scope,
+                                          onFocusChange: (has) {
+                                            if (has) _onColumnFocus(2);
+                                          },
+                                          child: _buildMainArea(playlist, epg),
+                                        ),
+                                      ),
+                                    ),
+                                  ] else ...[
+                                    _collapsible(
+                                      depth: 1,
+                                      expandedWidth: 260,
+                                      child: FocusTraversalGroup(
+                                        child: FocusScope(
+                                          node: _col1Scope,
+                                          onFocusChange: (has) {
+                                            if (has) _onColumnFocus(1);
+                                          },
+                                          child: _buildGroupsColumn(playlist,
+                                              collapsed: _focusDepth > 1),
+                                        ),
+                                      ),
+                                    ),
+                                    const VerticalDivider(width: 1),
+                                    Expanded(
+                                      child: FocusTraversalGroup(
+                                        child: FocusScope(
+                                          node: _col2Scope,
+                                          onFocusChange: (has) {
+                                            if (has) _onColumnFocus(2);
+                                          },
+                                          child:
+                                              _buildLiveRegion(playlist, epg),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),
-                          )
-                        : CallbackShortcuts(
-                            // The 4-column Live TV/Favorites layout gets full
-                            // explicit column-switching. The Movies/TV Shows
-                            // browse view only has two columns (tabs, browse),
-                            // and needs Left/Right free inside the browse
-                            // column for poster-to-poster movement — but it
-                            // still needs an explicit Right from the tabs rail
-                            // to *enter* that column in the first place,
-                            // since default traversal couldn't reliably jump
-                            // there either (same class of bug as the groups
-                            // column getting "stuck").
-                            // Movies/TV Shows are 3 columns now (tabs, groups
-                            // shortcut rail, browse) instead of the 4-column
-                            // Live TV/Favorites layout (tabs, groups, list,
-                            // preview) — but the same per-depth pattern:
-                            // Left/Right always switch columns except inside
-                            // the poster grid itself, where Left/Right move
-                            // card-to-card (see _handleBrowseLeft for the
-                            // "nowhere further left" escape).
-                            bindings: isBrowseTab
-                                ? switch (_focusDepth) {
-                                    0 => <ShortcutActivator, VoidCallback>{
-                                        const SingleActivator(
-                                                LogicalKeyboardKey.arrowRight):
-                                            () => _moveColumnFocus(1, 2),
-                                      },
-                                    1 => <ShortcutActivator, VoidCallback>{
-                                        const SingleActivator(
-                                                LogicalKeyboardKey.arrowLeft):
-                                            () => _moveColumnFocus(-1, 2),
-                                        const SingleActivator(
-                                                LogicalKeyboardKey.arrowRight):
-                                            _enterBrowseColumn,
-                                      },
-                                    _ => <ShortcutActivator, VoidCallback>{
-                                        const SingleActivator(
-                                                LogicalKeyboardKey.arrowLeft):
-                                            _handleBrowseLeft,
-                                      },
-                                  }
-                                : <ShortcutActivator, VoidCallback>{
-                                    // 3 columns now (tabs, groups, the merged
-                                    // live-list-over-video region) — the list
-                                    // panel is a plain vertical list like the
-                                    // groups column, so Left/Right always
-                                    // switching columns (never intra-row) is
-                                    // safe here, same as before the merge.
-                                    //
-                                    // The timeline guide is the one exception:
-                                    // it replaces that same column-2 slot with
-                                    // a real Left/Right grid (block-to-block
-                                    // within a channel's row), so at depth 2
-                                    // while it's showing this defers to the
-                                    // exact same "try moving, otherwise arm a
-                                    // second press" escape the browse poster
-                                    // grid already uses (_handleBrowseLeft),
-                                    // and leaves Right unbound entirely so
-                                    // default traversal reaches the next
-                                    // programme block — same as the browse
-                                    // grid leaving Right unbound at its own
-                                    // depth 2, just below.
-                                    const SingleActivator(
-                                            LogicalKeyboardKey.arrowLeft):
-                                        (_focusDepth == 2 && showTimelineGuide)
-                                            ? _handleBrowseLeft
-                                            : () => _moveColumnFocus(-1, 2),
-                                    // Already in the last column: Right has
-                                    // nowhere further to go, so it becomes a
-                                    // shortcut straight to fullscreen on
-                                    // whatever's currently playing instead of
-                                    // a dead end — otherwise finding your way
-                                    // back to fullscreen meant re-selecting
-                                    // the same channel from the list again.
-                                    if (!(_focusDepth == 2 &&
-                                        showTimelineGuide))
-                                      const SingleActivator(
-                                              LogicalKeyboardKey.arrowRight):
-                                          _focusDepth == 2
-                                              ? _goFullscreenIfPlaying
-                                              : () => _moveColumnFocus(1, 2),
-                                    // Default directional traversal picks
-                                    // Up/Down by on-screen rect overlap,
-                                    // which reliably lands on the wrong
-                                    // block once a row's programmes are
-                                    // much wider/narrower than its
-                                    // neighbours' — reported directly on
-                                    // real hardware (moving off a long
-                                    // block landed near the *end* of its
-                                    // span in the next row, not "now").
-                                    // See _TimelineGuideState.moveVertical.
-                                    if (_focusDepth == 2 &&
-                                        showTimelineGuide) ...{
-                                      const SingleActivator(
-                                              LogicalKeyboardKey.arrowDown):
-                                          () => _timelineGuideKey.currentState
-                                              ?.moveVertical(1),
-                                      const SingleActivator(
-                                              LogicalKeyboardKey.arrowUp):
-                                          () => _timelineGuideKey.currentState
-                                              ?.moveVertical(-1),
-                                    },
-                                  },
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _collapsible(
-                                  depth: 0,
-                                  expandedWidth: 160,
-                                  child: FocusTraversalGroup(
-                                    child: FocusScope(
-                                      node: _col0Scope,
-                                      onFocusChange: (has) {
-                                        if (has) _onColumnFocus(0);
-                                      },
-                                      child: _buildTabsColumn(
-                                          collapsed: _focusDepth > 0),
-                                    ),
-                                  ),
-                                ),
-                                const VerticalDivider(width: 1),
-                                if (isBrowseTab) ...[
-                                  _collapsible(
-                                    depth: 1,
-                                    expandedWidth: 260,
-                                    child: FocusTraversalGroup(
-                                      child: FocusScope(
-                                        node: _col1Scope,
-                                        onFocusChange: (has) {
-                                          if (has) _onColumnFocus(1);
-                                        },
-                                        child: _buildBrowseGroupsColumn(
-                                            playlist,
-                                            collapsed: _focusDepth > 1),
-                                      ),
-                                    ),
-                                  ),
-                                  const VerticalDivider(width: 1),
-                                  Expanded(
-                                    child: FocusTraversalGroup(
-                                      child: FocusScope(
-                                        node: _col2Scope,
-                                        onFocusChange: (has) {
-                                          if (has) _onColumnFocus(2);
-                                        },
-                                        child: _buildMainArea(playlist, epg),
-                                      ),
-                                    ),
-                                  ),
-                                ] else ...[
-                                  _collapsible(
-                                    depth: 1,
-                                    expandedWidth: 260,
-                                    child: FocusTraversalGroup(
-                                      child: FocusScope(
-                                        node: _col1Scope,
-                                        onFocusChange: (has) {
-                                          if (has) _onColumnFocus(1);
-                                        },
-                                        child: _buildGroupsColumn(playlist,
-                                            collapsed: _focusDepth > 1),
-                                      ),
-                                    ),
-                                  ),
-                                  const VerticalDivider(width: 1),
-                                  Expanded(
-                                    child: FocusTraversalGroup(
-                                      child: FocusScope(
-                                        node: _col2Scope,
-                                        onFocusChange: (has) {
-                                          if (has) _onColumnFocus(2);
-                                        },
-                                        child: _buildLiveRegion(playlist, epg),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -4039,6 +4058,76 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   void _trackFocus(int rowIndex, EpgProgram? program) {
     _focusedRowIndex = rowIndex;
     _focusedProgram = program;
+    // A focus arrival we didn't cause (touch, first entry into the guide)
+    // says nothing about which 30-minute column the user meant — drop
+    // back to deriving it from the block itself. Our own Up/Down/Left/
+    // Right moves keep it (see [_keepCursorUntil]).
+    if (!DateTime.now().isBefore(_keepCursorUntil)) _cursorSlot = null;
+  }
+
+  /// The 30-minute column Left/Right have stepped to — the slot's start
+  /// time. Null means the live slot (follows the clock; "now"). Left/
+  /// Right step exactly one slot per press instead of hopping to the
+  /// neighbouring programme, which for a long one could be an hour or
+  /// more away (reported directly: "only move the guide by 30 min
+  /// blocks, not the end of your current channel"). Up/Down then keep
+  /// whatever column this names.
+  DateTime? _cursorSlot;
+  DateTime _keepCursorUntil = DateTime.fromMillisecondsSinceEpoch(0);
+
+  static const Duration _slot = Duration(minutes: 30);
+
+  DateTime _floorToSlot(DateTime t) =>
+      DateTime(t.year, t.month, t.day, t.hour, t.minute - t.minute % 30);
+
+  void _keepCursor() =>
+      _keepCursorUntil = DateTime.now().add(const Duration(milliseconds: 750));
+
+  /// The moment to look for blocks at, for [slot] (null = live/"now").
+  DateTime _timeForSlot(DateTime? slot) {
+    final now = DateTime.now();
+    return (slot == null || slot == _floorToSlot(now)) ? now : slot;
+  }
+
+  /// Steps the guide one 30-minute slot left (-1) or right (+1): scrolls
+  /// the view by that amount and focuses whichever block in the current
+  /// row covers the new slot (which may be the very same long block —
+  /// then only the view moves, and the sticky label keeps its title
+  /// readable). Returns false when there's nowhere further that way (the
+  /// edge of the guide's time window), so the caller can fall back to
+  /// its own edge behaviour.
+  bool moveHorizontal(int dir) {
+    final rowIndex = _focusedRowIndex;
+    if (rowIndex == null) return false;
+    final now = DateTime.now();
+    final program = _focusedProgram;
+    final current = _cursorSlot ??
+        _floorToSlot((program == null || program.isNowPlaying(now))
+            ? now
+            : (program.start.isBefore(_windowStart)
+                ? _windowStart
+                : program.start));
+    final target = current.add(_slot * dir);
+    if (target.isBefore(_floorToSlot(_windowStart)) ||
+        !target.isBefore(_windowEnd)) {
+      return false;
+    }
+    final live = target == _floorToSlot(now);
+    _cursorSlot = live ? null : target;
+    _keepCursor();
+    if (_gridHScroll.hasClients) {
+      _gridHScroll.jumpTo(_xFor(live ? now : target)
+          .clamp(0.0, _gridHScroll.position.maxScrollExtent));
+    }
+    final blocks = _rowBlocks[rowIndex];
+    final best = blocks == null
+        ? null
+        : _bestBlockFor(blocks, _timeForSlot(_cursorSlot));
+    if (best != null) {
+      _markVerticalArrival(best.node);
+      best.node.requestFocus();
+    }
+    return true;
   }
 
   /// "Now" for a programme that's actually airing right now (recomputed
@@ -4051,6 +4140,8 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   /// past slot, not currently airing) instead keeps its own start —
   /// staying on that same time column is exactly what's wanted there.
   DateTime _referenceTime(EpgProgram? program) {
+    final slot = _cursorSlot;
+    if (slot != null) return _timeForSlot(slot);
     final now = DateTime.now();
     return (program == null || program.isNowPlaying(now)) ? now : program.start;
   }
@@ -4108,6 +4199,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     final targetRow = rowIndex + delta;
     if (targetRow < 0 || targetRow >= widget.channels.length) return;
     final time = _referenceTime(_focusedProgram);
+    _keepCursor();
     _ensureRowVisible(targetRow);
     final blocks = _rowBlocks[targetRow];
     final best = blocks == null ? null : _bestBlockFor(blocks, time);
@@ -4152,6 +4244,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
       final best =
           blocks == null ? null : _bestBlockFor(blocks, DateTime.now());
       if (best == null) return;
+      _cursorSlot = null;
       // Back to the current time, not wherever the focused block's own
       // left edge is — a long programme that began earlier used to drag
       // the view back to its start on return (reported directly: "brings
