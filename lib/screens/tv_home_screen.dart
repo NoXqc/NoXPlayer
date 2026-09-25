@@ -4079,6 +4079,29 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   /// [_trackFocus] and finds whichever block in the target row covers
   /// that same moment, so moving between rows stays on the same time
   /// column instead of following block geometry.
+  FocusNode? _verticalArrivalTarget;
+  DateTime? _verticalArrivalAt;
+
+  void _markVerticalArrival(FocusNode node) {
+    _verticalArrivalTarget = node;
+    _verticalArrivalAt = DateTime.now();
+  }
+
+  /// True exactly once for the block [moveVertical] just handed focus to
+  /// — lets that block skip its own "scroll me fully into view"
+  /// horizontal reveal (see [_ProgramBlockState]). The timestamp guards
+  /// against a stale mark (a request that never actually landed) being
+  /// mistaken for a later Left/Right arrival on the same block.
+  bool _consumeVerticalArrival(FocusNode node) {
+    final at = _verticalArrivalAt;
+    final match = _verticalArrivalTarget == node &&
+        at != null &&
+        DateTime.now().difference(at) < const Duration(milliseconds: 750);
+    _verticalArrivalTarget = null;
+    _verticalArrivalAt = null;
+    return match;
+  }
+
   void moveVertical(int delta) {
     final rowIndex = _focusedRowIndex;
     if (rowIndex == null) return;
@@ -4089,6 +4112,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     final blocks = _rowBlocks[targetRow];
     final best = blocks == null ? null : _bestBlockFor(blocks, time);
     if (best != null) {
+      _markVerticalArrival(best.node);
       best.node.requestFocus();
       return;
     }
@@ -4099,7 +4123,11 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final retry = _rowBlocks[targetRow];
-      if (retry != null) _bestBlockFor(retry, time)?.node.requestFocus();
+      final retryBest = retry == null ? null : _bestBlockFor(retry, time);
+      if (retryBest != null) {
+        _markVerticalArrival(retryBest.node);
+        retryBest.node.requestFocus();
+      }
     });
   }
 
@@ -4212,6 +4240,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
                             ensureRowVisible: _ensureRowVisible,
                             onFocusChanged: widget.onFocusChanged,
                             onFocusTracked: _trackFocus,
+                            consumeVerticalArrival: _consumeVerticalArrival,
                             onRegisterBlock: _registerBlock,
                             onUnregisterBlock: _unregisterBlock,
                             hScroll: _gridHScroll,
@@ -4357,6 +4386,7 @@ class _TimelineRow extends StatelessWidget {
     required this.ensureRowVisible,
     required this.onFocusChanged,
     required this.onFocusTracked,
+    required this.consumeVerticalArrival,
     required this.onRegisterBlock,
     required this.onUnregisterBlock,
     required this.hScroll,
@@ -4376,6 +4406,7 @@ class _TimelineRow extends StatelessWidget {
 
   /// Feeds [_TimelineGuideState._trackFocus] — see its own doc comment.
   final void Function(int rowIndex, EpgProgram? program)? onFocusTracked;
+  final bool Function(FocusNode node) consumeVerticalArrival;
   final void Function(
           int rowIndex, DateTime start, DateTime end, FocusNode node)
       onRegisterBlock;
@@ -4419,6 +4450,7 @@ class _TimelineRow extends StatelessWidget {
             isNow: false,
             onOpen: onOpen,
             onShowOptions: onShowOptions,
+            consumeVerticalArrival: consumeVerticalArrival,
             blockLeft: 0,
             blockWidth: totalWidth,
             hScroll: hScroll,
@@ -4457,6 +4489,7 @@ class _TimelineRow extends StatelessWidget {
                 isNow: program.isNowPlaying(now),
                 onOpen: onOpen,
                 onShowOptions: onShowOptions,
+                consumeVerticalArrival: consumeVerticalArrival,
                 blockLeft: leftFor(program),
                 blockWidth: widthFor(program),
                 hScroll: hScroll,
@@ -4485,6 +4518,7 @@ class _ProgramBlock extends StatefulWidget {
       required this.blockLeft,
       required this.blockWidth,
       required this.hScroll,
+      required this.consumeVerticalArrival,
       this.onFocusGained,
       this.placeholderLabel,
       this.onRegister,
@@ -4513,6 +4547,9 @@ class _ProgramBlock extends StatefulWidget {
   final double blockLeft;
   final double blockWidth;
   final ScrollController hScroll;
+
+  /// See [_TimelineGuideState._consumeVerticalArrival].
+  final bool Function(FocusNode node) consumeVerticalArrival;
 
   /// Registers/unregisters this block's own [FocusNode] with
   /// [_TimelineGuideState] on mount/unmount — lets
@@ -4544,6 +4581,24 @@ class _ProgramBlockState extends State<_ProgramBlock> {
     super.dispose();
   }
 
+  /// Left/Right arrivals still scroll this block fully into view, as
+  /// before. A block reached by Up/Down doesn't — a long programme that
+  /// started earlier used to yank the whole guide left to show its start
+  /// (reported directly: it should stay on the current 30-minute view;
+  /// the sticky label already keeps its title readable). It only scrolls
+  /// if the block is entirely off-screen horizontally.
+  void _revealHorizontally() {
+    if (widget.consumeVerticalArrival(_node) && widget.hScroll.hasClients) {
+      final pos = widget.hScroll.position;
+      final viewLeft = pos.pixels;
+      final viewRight = viewLeft + pos.viewportDimension;
+      final overlaps = widget.blockLeft < viewRight &&
+          widget.blockLeft + widget.blockWidth > viewLeft;
+      if (overlaps) return;
+    }
+    Scrollable.ensureVisible(context, duration: Duration.zero);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -4570,7 +4625,7 @@ class _ProgramBlockState extends State<_ProgramBlock> {
             // axis to settle.
             if (f) {
               widget.onFocusGained?.call();
-              Scrollable.ensureVisible(context, duration: Duration.zero);
+              _revealHorizontally();
             }
           },
           child: InkWell(
