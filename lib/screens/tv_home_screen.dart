@@ -4149,9 +4149,22 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final blocks = _rowBlocks[rowIndex];
-      if (blocks != null) {
-        _bestBlockFor(blocks, DateTime.now())?.node.requestFocus();
+      final best =
+          blocks == null ? null : _bestBlockFor(blocks, DateTime.now());
+      if (best == null) return;
+      // Back to the current time, not wherever the focused block's own
+      // left edge is — a long programme that began earlier used to drag
+      // the view back to its start on return (reported directly: "brings
+      // us back to the time the channel started, not the current time
+      // block"). Same "now at the left edge" position the guide opens
+      // on; the block is then marked as an Up/Down-style arrival so its
+      // own reveal doesn't undo this while it overlaps the view.
+      if (_gridHScroll.hasClients) {
+        _gridHScroll.jumpTo(_xFor(DateTime.now())
+            .clamp(0.0, _gridHScroll.position.maxScrollExtent));
       }
+      _markVerticalArrival(best.node);
+      best.node.requestFocus();
     });
   }
 
