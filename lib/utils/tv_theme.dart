@@ -14,12 +14,26 @@ import 'constants.dart';
 /// sidebar still rendered solid purple, because it inherits the root
 /// theme, built via `colorSchemeSeed: prefs.palette.primary` directly,
 /// not this file's own override).
+/// Swaps in [CyberpunkPalette.highlight] as the scheme's primary (with a
+/// readable dark text color on top of it) when the palette has one; a
+/// no-op for every palette that doesn't. Shared with `TvHomeScreen`,
+/// which builds its own dark scheme instead of calling
+/// [buildPaletteColorScheme].
+ColorScheme applyPaletteHighlight(
+    ColorScheme scheme, CyberpunkPalette palette) {
+  final h = palette.highlight;
+  if (h == null) return scheme;
+  return scheme.copyWith(primary: h, onPrimary: const Color(0xFF10163A));
+}
+
 ColorScheme buildPaletteColorScheme(
     CyberpunkPalette palette, Brightness brightness) {
   if (!palette.isMinimal) {
-    return ColorScheme.fromSeed(
-            seedColor: palette.primary, brightness: brightness)
-        .copyWith(secondary: palette.secondary, tertiary: palette.secondary);
+    return applyPaletteHighlight(
+        ColorScheme.fromSeed(seedColor: palette.primary, brightness: brightness)
+            .copyWith(
+                secondary: palette.secondary, tertiary: palette.secondary),
+        palette);
   }
   // Deliberately NOT `ColorScheme.fromSeed(seedColor: Colors.white, ...)`
   // — a fully desaturated seed has no real hue for Material's HCT

@@ -1230,11 +1230,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // gives accessible contrast colors (onPrimary etc.); the secondary/
     // tertiary override makes the second accent deliberate instead of
     // algorithmically derived from the same single hue.
-    final darkScheme = ColorScheme.fromSeed(
-      seedColor: prefs.palette.primary,
-      brightness: Brightness.dark,
-    ).copyWith(
-        secondary: prefs.palette.secondary, tertiary: prefs.palette.secondary);
+    final darkScheme = applyPaletteHighlight(
+        ColorScheme.fromSeed(
+          seedColor: prefs.palette.primary,
+          brightness: Brightness.dark,
+        ).copyWith(
+            secondary: prefs.palette.secondary,
+            tertiary: prefs.palette.secondary),
+        prefs.palette);
 
     final isBrowseTab = _tab == 'Movies' || _tab == 'TV Shows';
     // Only meaningful on the Live TV/Favorites side (the browse tabs have
@@ -3611,9 +3614,11 @@ class _TvTopBar extends StatelessWidget {
         children: [
           ShaderMask(
             blendMode: BlendMode.srcIn,
-            shaderCallback: (bounds) =>
-                LinearGradient(colors: [palette.primary, palette.secondary])
-                    .createShader(bounds),
+            shaderCallback: (bounds) => LinearGradient(colors: [
+              palette.primary,
+              if (palette.highlight != null) palette.highlight!,
+              palette.secondary,
+            ]).createShader(bounds),
             child: const Text(
               AppConstants.appName,
               // Was bumped to 64 thinking this was the launcher banner text

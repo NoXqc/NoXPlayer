@@ -11,6 +11,7 @@ class CyberpunkPalette {
     required this.primary,
     required this.secondary,
     this.isMinimal = false,
+    this.highlight,
   });
 
   /// Stored in prefs — stable even if [label] wording changes later.
@@ -26,6 +27,14 @@ class CyberpunkPalette {
 
   /// Gradient partner, badges, secondary glow.
   final Color secondary;
+
+  /// Optional third color for palettes that need one — replaces the
+  /// theme's own `ColorScheme.primary` (the focus fill / selected state /
+  /// glow that every screen reads) and becomes the middle stop of the
+  /// wordmark and swatch gradients. Habs uses white here so the theme
+  /// is actually red, *white* and blue rather than a second copy of
+  /// Red / Blue. Null for every other palette (unchanged behavior).
+  final Color? highlight;
 
   /// True for the single "Minimalist" palette: flat black backgrounds
   /// (no duo-tone gradient) and a translucent white "glass" focus style

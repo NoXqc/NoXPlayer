@@ -158,13 +158,14 @@ class AppConstants {
     // mapped to this one — see AppPreferences._paletteById). Bleu-blanc-
     // rouge: the red is the Canadiens' own C8102E; the blue is lifted well
     // above the team's near-navy so the wordmark gradient and focus glow
-    // stay readable on this UI's black backgrounds (white comes from the
-    // UI's own text/focus contrast, not a third palette slot).
+    // stay readable on this UI's black backgrounds. The white is the
+    // focus/selected color (see CyberpunkPalette.highlight).
     CyberpunkPalette(
       id: 'habs',
       label: 'Habs',
       primary: Color(0xFFC8102E),
       secondary: Color(0xFF1F4FD8),
+      highlight: Colors.white,
     ),
     CyberpunkPalette(
       id: 'dark_gold',

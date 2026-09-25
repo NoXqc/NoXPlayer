@@ -188,7 +188,12 @@ class _PaletteSwatchState extends State<_PaletteSwatch> {
                   end: Alignment.bottomRight,
                   colors: widget.palette.isMinimal
                       ? [Colors.black, Colors.white]
-                      : [widget.palette.primary, widget.palette.secondary],
+                      : [
+                          widget.palette.primary,
+                          if (widget.palette.highlight != null)
+                            widget.palette.highlight!,
+                          widget.palette.secondary,
+                        ],
                 ),
                 border: widget.selected
                     ? Border.all(
