@@ -419,6 +419,30 @@ class PlaylistManager extends ChangeNotifier {
 
   Set<String> hiddenGroupsFor(String playlistId) =>
       _sessionFor(playlistId)?.hiddenGroups ?? {};
+
+  /// Live TV only — see [AppConstants.keyHiddenChannels]'s doc comment.
+  bool isChannelHidden(Channel channel) =>
+      _sessionFor(channel.playlistId)?.hiddenChannels.contains(channel.rawId) ??
+      false;
+
+  Future<void> toggleChannelHidden(Channel channel) =>
+      _sessionFor(channel.playlistId)
+          ?.toggleChannelHidden(channel.rawId) ??
+      Future.value();
+
+  /// Every hidden channel across [playlistId] — used by the "Hidden
+  /// channels" section in Group Management to list and unhide them.
+  /// Resolved against [visibleChannels]-bypassing raw lists (`liveChannels`
+  /// /`channels`) since the whole point is finding entries that
+  /// `visibleChannels` itself would now filter out.
+  List<Channel> hiddenChannelsFor(String playlistId) {
+    final session = _sessionFor(playlistId);
+    if (session == null) return const [];
+    final rawIds = session.hiddenChannels;
+    if (rawIds.isEmpty) return const [];
+    final all = session.isXtream ? session.liveChannels : session.channels;
+    return all.where((c) => rawIds.contains(c.rawId)).toList();
+  }
   Set<String> favoritedGroupsFor(String playlistId) =>
       _sessionFor(playlistId)?.favoritedGroups ?? {};
 
@@ -623,11 +647,12 @@ class PlaylistManager extends ChangeNotifier {
   // --- Series / VOD detail --------------------------------------------------
 
   Future<({Map<int, List<Channel>> episodes, String? plot})> loadSeriesEpisodes(
-      XtreamSeries series) {
+      XtreamSeries series,
+      {bool plotOnly = false}) {
     final session = _sessionFor(series.playlistId);
     if (session == null)
       return Future.value((episodes: <int, List<Channel>>{}, plot: null));
-    return session.loadSeriesEpisodes(series);
+    return session.loadSeriesEpisodes(series, plotOnly: plotOnly);
   }
 
   /// Movie plot/description, fetched on demand when [MovieDetailScreen]
@@ -639,5 +664,45 @@ class PlaylistManager extends ChangeNotifier {
     if (session == null) return null;
     final rawStreamId = channel.rawId.replaceFirst('xt_vod_', '');
     return session.getVodDescription(rawStreamId);
+  }
+
+  // --- Browse-hero description cache ---------------------------------------
+  //
+  // In-memory only, cleared on relaunch. Shared between the Movies/TV
+  // Shows browse hero's dwell-fetch (see `TvHomeScreen._updateBrowseFocus`)
+  // and MovieDetailScreen/SeriesDetailScreen — whichever hits a given
+  // title first populates it, and both read through it, so opening a
+  // detail screen after browsing past it (or vice versa) never repeats
+  // the same network fetch. Keyed by Channel.id/XtreamSeries.id, which
+  // can't collide with each other (different prefixes).
+
+  final Map<String, String?> _descriptionCache = {};
+
+  bool hasCachedDescription(String id) => _descriptionCache.containsKey(id);
+  String? peekCachedDescription(String id) => _descriptionCache[id];
+  void cacheDescription(String id, String? plot) =>
+      _descriptionCache[id] = plot;
+
+  /// Movies browse hero only — cache-first, at most one network hit per
+  /// title per session (a confirmed "no plot" is cached as null too, so
+  /// it isn't retried every time the same title is refocused).
+  Future<String?> getHeroVodDescription(Channel channel) async {
+    if (_descriptionCache.containsKey(channel.id)) {
+      return _descriptionCache[channel.id];
+    }
+    final plot = await getVodDescription(channel);
+    _descriptionCache[channel.id] = plot;
+    return plot;
+  }
+
+  /// TV Shows browse hero only — `plotOnly: true` skips building the
+  /// episode map entirely, which the hero never needs.
+  Future<String?> getHeroSeriesDescription(XtreamSeries series) async {
+    if (_descriptionCache.containsKey(series.id)) {
+      return _descriptionCache[series.id];
+    }
+    final result = await loadSeriesEpisodes(series, plotOnly: true);
+    _descriptionCache[series.id] = result.plot;
+    return result.plot;
   }
 }

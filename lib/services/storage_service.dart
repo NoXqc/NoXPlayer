@@ -188,6 +188,16 @@ class StorageService {
       _prefs.setStringList(
           '${AppConstants.keyHiddenGroups}_$playlistId', groups.toList());
 
+  /// Keyed by `Channel.rawId` (not the composite `id`) — this is already
+  /// namespaced per playlist via the key suffix, same as [getHiddenGroups].
+  Set<String> getHiddenChannels(String playlistId) =>
+      (_prefs.getStringList('${AppConstants.keyHiddenChannels}_$playlistId') ??
+              [])
+          .toSet();
+  Future<void> setHiddenChannels(String playlistId, Set<String> rawIds) =>
+      _prefs.setStringList(
+          '${AppConstants.keyHiddenChannels}_$playlistId', rawIds.toList());
+
   Set<String> getFavoritedGroups(String playlistId) =>
       (_prefs.getStringList('${AppConstants.keyFavoritedGroups}_$playlistId') ??
               [])

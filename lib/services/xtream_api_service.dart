@@ -224,8 +224,13 @@ class XtreamApiService {
   /// for a second request just for the plot.
   Future<({Map<int, List<Channel>> episodes, String? plot})> getSeriesEpisodes(
     int seriesId,
-    String seriesName,
-  ) async {
+    String seriesName, {
+    // The browse hero only ever wants the plot (see PlaylistManager
+    // .getHeroSeriesDescription) — skips the entire episode-map build
+    // below, which it would just discard, without needing a second
+    // endpoint (plot already comes from this same `get_series_info` call).
+    bool plotOnly = false,
+  }) async {
     final decoded =
         await _getJson('get_series_info', {'series_id': '$seriesId'});
     if (decoded is! Map<String, dynamic>)
@@ -234,6 +239,7 @@ class XtreamApiService {
     final info = decoded['info'];
     final rawPlot = info is Map ? info['plot']?.toString() : null;
     final plot = (rawPlot != null && rawPlot.isNotEmpty) ? rawPlot : null;
+    if (plotOnly) return (episodes: <int, List<Channel>>{}, plot: plot);
 
     final episodesByS = decoded['episodes'];
     if (episodesByS is! Map)

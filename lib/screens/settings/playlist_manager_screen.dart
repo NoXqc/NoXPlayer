@@ -15,6 +15,7 @@ import '../../widgets/tv_app_bar_button.dart';
 import '../../widgets/tv_switch_list_tile.dart';
 import 'add_playlist_screen.dart';
 import 'group_management_screen.dart';
+import 'hidden_channels_screen.dart';
 
 /// Replaces the old single-playlist `ContentManagerScreen` — a
 /// MyTVOnline3-style list of every playlist (unlimited, not capped),
@@ -436,6 +437,19 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
                                   MaterialPageRoute(
                                       builder: (_) => GroupManagementScreen(
                                           playlistId: profile.id)),
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(
+                                      Icons.visibility_off_outlined),
+                                  label: const Text('Hidden Channels'),
+                                  onPressed: () => Navigator.of(context).push(
+                                    MaterialPageRoute(
+                                        builder: (_) => HiddenChannelsScreen(
+                                            playlistId: profile.id)),
+                                  ),
                                 ),
                               ),
                               Padding(

@@ -48,6 +48,12 @@ class AppConstants {
   static const String keyFavorites = 'nox_favorites';
   static const String keyFavoriteSeries = 'nox_favorite_series';
   static const String keyHiddenGroups = 'nox_hidden_groups';
+
+  /// Per-channel hide, scoped to live TV only — for duplicate feeds a
+  /// provider lists within an otherwise-wanted group (e.g. the same
+  /// channel in both HD and HEVC), where hiding the whole group isn't
+  /// an option. Namespaced per playlist exactly like [keyHiddenGroups].
+  static const String keyHiddenChannels = 'nox_hidden_channels';
   static const String keyFavoritedGroups = 'nox_favorited_groups';
   static const String keyRecentSearches = 'nox_recent_searches';
 

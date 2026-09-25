@@ -74,6 +74,11 @@ class PlaylistSession {
   Set<String> hiddenGroups = {};
   Set<String> favoritedGroups = {};
 
+  /// Live TV only — see [AppConstants.keyHiddenChannels]'s doc comment
+  /// for why this exists alongside whole-group hiding. Keyed by
+  /// [Channel.rawId].
+  Set<String> hiddenChannels = {};
+
   // --- M3U-mode state ---------------------------------------------------
   List<Channel> channels = [];
 
@@ -174,6 +179,7 @@ class PlaylistSession {
   Future<void> restoreOrLoad() async {
     hiddenGroups = storage.getHiddenGroups(profile.id);
     favoritedGroups = storage.getFavoritedGroups(profile.id);
+    hiddenChannels = storage.getHiddenChannels(profile.id);
 
     if (isXtream) {
       final username = profile.xtreamUsername;
@@ -931,10 +937,12 @@ class PlaylistSession {
 
   /// Fetches episodes for one series, grouped by season number.
   Future<({Map<int, List<Channel>> episodes, String? plot})> loadSeriesEpisodes(
-      XtreamSeries series) async {
+      XtreamSeries series,
+      {bool plotOnly = false}) async {
     final api = xtreamApi;
     if (api == null) return (episodes: <int, List<Channel>>{}, plot: null);
-    final result = await api.getSeriesEpisodes(series.seriesId, series.name);
+    final result = await api.getSeriesEpisodes(series.seriesId, series.name,
+        plotOnly: plotOnly);
     for (final list in result.episodes.values) {
       for (final channel in list) {
         channel.isFavorite = favoriteIds().contains(channel.id);
@@ -1002,11 +1010,16 @@ class PlaylistSession {
     if (isXtream) {
       switch (category) {
         case 'tv':
-          return groupTitle != null
-              ? liveChannels.where((c) => c.group == groupTitle).toList()
-              : liveChannels
-                  .where((c) => !hiddenGroups.contains(c.group))
-                  .toList();
+          final list = groupTitle != null
+              ? liveChannels.where((c) => c.group == groupTitle)
+              : liveChannels.where((c) => !hiddenGroups.contains(c.group));
+          // Applied even when a specific group was asked for (unlike
+          // hiddenGroups above) — a hidden channel is usually a
+          // duplicate *within* an otherwise-wanted group, so hiding the
+          // whole group isn't the option the user actually wants.
+          return list
+              .where((c) => !hiddenChannels.contains(c.rawId))
+              .toList();
         case 'vod':
           return groupTitle != null
               ? (vodByCategoryName[groupTitle] ?? const [])
@@ -1020,13 +1033,28 @@ class PlaylistSession {
     }
 
     if (groupTitle != null) {
-      return channels.where((c) => c.group == groupTitle).toList();
+      final list = channels.where((c) => c.group == groupTitle);
+      return (category == 'tv'
+              ? list.where((c) => !hiddenChannels.contains(c.rawId))
+              : list)
+          .toList();
     }
     return channels
         .where((c) =>
             _classifyGroup(c.group) == category &&
-            !hiddenGroups.contains(c.group))
+            !hiddenGroups.contains(c.group) &&
+            (category != 'tv' || !hiddenChannels.contains(c.rawId)))
         .toList();
+  }
+
+  Future<void> toggleChannelHidden(String rawId) async {
+    if (hiddenChannels.contains(rawId)) {
+      hiddenChannels.remove(rawId);
+    } else {
+      hiddenChannels.add(rawId);
+    }
+    await storage.setHiddenChannels(profile.id, hiddenChannels);
+    onNotify();
   }
 
   List<XtreamSeries> visibleSeries(String? categoryName) {

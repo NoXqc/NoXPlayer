@@ -31,8 +31,13 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
   @override
   void initState() {
     super.initState();
+    // getHeroVodDescription, not getVodDescription directly — shares the
+    // same cache the Movies browse hero's dwell-fetch populates, so
+    // opening this screen for a title already focused in the grid (or
+    // vice versa, browsing back to it after opening it here) is instant
+    // instead of repeating the same network fetch.
     _descriptionFuture =
-        context.read<PlaylistManager>().getVodDescription(widget.channel);
+        context.read<PlaylistManager>().getHeroVodDescription(widget.channel);
   }
 
   @override

@@ -83,6 +83,15 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   String? _focusedTitle;
   String? _focusedImageUrl;
 
+  /// The stable id of whatever's currently focused in the Movies/TV Shows
+  /// browse grid — `_updateBrowseFocus`'s de-dupe key (title alone isn't
+  /// unique enough across playlists) and the dwell timer's "is this
+  /// still the same thing" guard once it fires.
+  String? _focusedId;
+  String? _focusedDescription;
+  Timer? _descriptionDwellTimer;
+  static const _kDescriptionDwell = Duration(milliseconds: 400);
+
   /// How far right D-pad focus currently is: 0=tabs, 1=groups, 2=list,
   /// 3=preview. Columns with an index below this collapse to an icon-only
   /// strip — "show only the tab you're on", as requested.
@@ -117,6 +126,15 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// all the way out of the catalog and back to the tabs rail.
   bool _leftEdgeArmed = false;
   Timer? _leftEdgeArmTimer;
+
+  /// Whichever programme block last took focus in the Timeline Guide —
+  /// lifted up here (not kept inside [_TimelineGuide]) because the header
+  /// that describes it, [_GuideNowPanel], sits above the guide as a
+  /// sibling, not inside it. Null until the guide is first navigated,
+  /// which is when [_GuideNowPanel] falls back to the playing channel's
+  /// own live programme instead.
+  Channel? _guideFocusedChannel;
+  EpgProgram? _guideFocusedProgram;
 
   /// The "double ← for groups" hint's floating overlay — anchored to
   /// whichever poster is actually focused at the moment [_handleBrowseLeft]
@@ -239,6 +257,51 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     }
   }
 
+  /// Timeline Guide equivalent of [_showGroupOptions] — reported directly:
+  /// holding Select on a programme block doesn't do anything, because
+  /// (unlike the plain live list, where the focused row *is* the channel)
+  /// the focused thing here is a specific time slot, not the channel
+  /// itself, so there was nothing for a bare hold-to-favorite gesture to
+  /// act on. A menu instead of a single hold action for a second reason
+  /// the user raised directly: a single hold gesture on a channel could
+  /// mean either "favourite" or "hide" here, unlike the plain list where
+  /// hold has only ever meant one thing.
+  Future<void> _showChannelOptions(Channel channel) async {
+    final playlist = context.read<PlaylistManager>();
+    final isFavorited = channel.isFavorite;
+    final isHidden = playlist.isChannelHidden(channel);
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(channel.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop('favorite'),
+            child: Text(
+                isFavorited ? 'Remove from Favourites' : 'Add to Favourites'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop('hide'),
+            child: Text(isHidden ? 'Unhide this channel' : 'Hide this channel'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    switch (choice) {
+      case 'favorite':
+        _toggleFavoriteWithFeedback(context, channel);
+      case 'hide':
+        _toggleHiddenWithFeedback(context, channel);
+    }
+  }
+
   GlobalKey _keyForGroup(String playlistId, String title) => _groupRowKeys
       .putIfAbsent(_groupKey(playlistId, title), () => GlobalKey());
 
@@ -280,6 +343,15 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// (see [_restoreLiveFocus]).
   final FocusNode _currentChannelFocusNode =
       FocusNode(debugLabel: 'current-channel-row');
+
+  /// Imperative access to the Timeline Guide's own State — lets
+  /// [didPopNext] and the Up/Down key bindings below call
+  /// [_TimelineGuideState.restoreFocusToChannel]/`.moveVertical` directly.
+  /// A GlobalKey (not a plain field reference) because [_buildLiveRegion]
+  /// creates a fresh [_TimelineGuide] widget on every rebuild — the key
+  /// is what keeps Flutter reusing the same underlying State instead of
+  /// a new one each time.
+  final GlobalKey<_TimelineGuideState> _timelineGuideKey = GlobalKey();
 
   /// A starting estimate only — rows can grow to two lines for a long
   /// channel name — refined by `Scrollable.ensureVisible` once the target
@@ -352,11 +424,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     _col2Scope.dispose();
     _col1Scope = FocusScopeNode(debugLabel: 'tv-col1');
     _col2Scope = FocusScopeNode(debugLabel: 'tv-col2');
+    _descriptionDwellTimer?.cancel();
     setState(() {
       _tab = tab;
       _selectedGroup = null;
       _focusedTitle = null;
       _focusedImageUrl = null;
+      _focusedId = null;
+      _focusedDescription = null;
       _focusDepth = 0;
       // Opt-in only, not the default view — groups + Continue Watching
       // come up first on entering either tab, same as before this
@@ -485,7 +560,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// groups together with no single caller-known playlist.
   void _onGroupSelected(String? group, {String? playlistId}) {
     context.read<PlaybackService>().clearSilentResume();
-    setState(() => _selectedGroup = group);
+    setState(() {
+      _selectedGroup = group;
+      // Otherwise the Timeline Guide's header keeps describing a program
+      // from whichever group was focused before this switch, until the
+      // D-pad happens to land on something in the new one.
+      _guideFocusedChannel = null;
+      _guideFocusedProgram = null;
+    });
     if (group == null || group == _favoritesGroupSentinel) return;
     if (_tab == 'Favorites') {
       // A favorited *group* here can be a live TV group, a movies group,
@@ -686,11 +768,45 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         _ => 'tv',
       };
 
-  void _updateBrowseFocus(String title, String? imageUrl) {
-    if (_focusedTitle == title) return;
+  /// Title/backdrop image commit immediately on every focus change, same
+  /// as before — [fetchDescription] is the only part that waits, and
+  /// only when [id] isn't already cached from an earlier fetch this
+  /// session (either from here or from opening the detail screen
+  /// directly — see `PlaylistManager`'s description cache). Debounced
+  /// (not fetched on every single focus change) so scrolling quickly
+  /// through a row of posters doesn't fire a network request per poster
+  /// passed over — same cancel-and-restart `Timer` idiom already used in
+  /// `search_screen.dart` for exactly this "wait for things to settle"
+  /// reason.
+  void _updateBrowseFocus({
+    required PlaylistManager playlist,
+    required String id,
+    required String title,
+    String? imageUrl,
+    required Future<String?> Function() fetchDescription,
+  }) {
+    if (_focusedId == id) return;
+    _descriptionDwellTimer?.cancel();
+    final cached = playlist.hasCachedDescription(id);
     setState(() {
+      _focusedId = id;
       _focusedTitle = title;
       _focusedImageUrl = imageUrl;
+      _focusedDescription = cached ? playlist.peekCachedDescription(id) : null;
+    });
+    if (cached) return;
+    _descriptionDwellTimer = Timer(_kDescriptionDwell, () async {
+      String? description;
+      try {
+        description = await fetchDescription();
+      } catch (_) {
+        // Leave it blank rather than cache a transient failure — a retry
+        // is still possible next time this title is focused.
+        return;
+      }
+      if (!mounted || _focusedId != id) return;
+      playlist.cacheDescription(id, description);
+      setState(() => _focusedDescription = description);
     });
   }
 
@@ -724,6 +840,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   void dispose() {
     appRouteObserver.unsubscribe(this);
     _leftEdgeArmTimer?.cancel();
+    _descriptionDwellTimer?.cancel();
     _leftEdgeHintOverlay?.remove();
     _browseScrollController.dispose();
     _liveListController.dispose();
@@ -790,7 +907,25 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           setState(() => _selectedGroup = null);
         }
       }
-      _restoreLiveFocus();
+      // The Timeline Guide has no equivalent of the plain list's
+      // dedicated _currentChannelFocusNode — _restoreLiveFocus only ever
+      // does anything for that plain list's own rows, so it silently
+      // no-ops in Timeline mode and leaves Flutter's own implicit
+      // pop-focus-restoration to fend for itself, landing back wherever
+      // the D-pad happened to be *before* Select was pressed instead of
+      // the channel actually playing. Reported directly: "hitting left
+      // to go back to guide... doesn't bring us back to the current
+      // channel but where we last were before."
+      if (context.read<AppPreferences>().guideViewMode == 'timeline') {
+        final channel = context.read<PlaybackService>().currentChannel;
+        if (channel != null) {
+          _timelineGuideKey.currentState?.restoreFocusToChannel(channel.id);
+        } else {
+          _col0Scope.requestFocus();
+        }
+      } else {
+        _restoreLiveFocus();
+      }
       return;
     }
     // Popping fullscreen while sitting on a Movies/TV Shows tab used to
@@ -1095,8 +1230,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // _buildLiveRegion for where it actually swaps the content, and the
     // Left/Right binding override just below for why the depth-2 column's
     // own key handling needs to know about it too.
-    final showTimelineGuide =
-        !isBrowseTab && prefs.guideViewMode == 'timeline';
+    final showTimelineGuide = !isBrowseTab && prefs.guideViewMode == 'timeline';
 
     return Theme(
       data: ThemeData(colorScheme: darkScheme, useMaterial3: true),
@@ -1247,12 +1381,34 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                                     // a dead end — otherwise finding your way
                                     // back to fullscreen meant re-selecting
                                     // the same channel from the list again.
-                                    if (!(_focusDepth == 2 && showTimelineGuide))
+                                    if (!(_focusDepth == 2 &&
+                                        showTimelineGuide))
                                       const SingleActivator(
                                               LogicalKeyboardKey.arrowRight):
                                           _focusDepth == 2
                                               ? _goFullscreenIfPlaying
                                               : () => _moveColumnFocus(1, 2),
+                                    // Default directional traversal picks
+                                    // Up/Down by on-screen rect overlap,
+                                    // which reliably lands on the wrong
+                                    // block once a row's programmes are
+                                    // much wider/narrower than its
+                                    // neighbours' — reported directly on
+                                    // real hardware (moving off a long
+                                    // block landed near the *end* of its
+                                    // span in the next row, not "now").
+                                    // See _TimelineGuideState.moveVertical.
+                                    if (_focusDepth == 2 &&
+                                        showTimelineGuide) ...{
+                                      const SingleActivator(
+                                              LogicalKeyboardKey.arrowDown):
+                                          () => _timelineGuideKey.currentState
+                                              ?.moveVertical(1),
+                                      const SingleActivator(
+                                              LogicalKeyboardKey.arrowUp):
+                                          () => _timelineGuideKey.currentState
+                                              ?.moveVertical(-1),
+                                    },
                                   },
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1621,6 +1777,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   // cost — not worth risking on the weaker Formuler/Firestick hardware
   // this app has spent this whole session getting stable.
 
+  void _onGuideFocusChanged(Channel channel, EpgProgram? program) {
+    setState(() {
+      _guideFocusedChannel = channel;
+      _guideFocusedProgram = program;
+    });
+  }
+
   Widget _buildLiveRegion(PlaylistManager playlist, EpgService epg) {
     // Kick off the live channel list's first load the moment this tab is
     // actually shown — see ensureLiveChannelsLoaded's doc comment for why
@@ -1658,19 +1821,6 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       }
     }
 
-    // Opt-in alternate view (Settings > Theme > "Guide view") — see
-    // _TimelineGuide's own doc comment. Checked after the two branches
-    // above, not before: a favorited movies/shows group still needs its
-    // own catalog UI regardless of this setting, same as it would with
-    // the normal live-list view.
-    if (context.watch<AppPreferences>().guideViewMode == 'timeline') {
-      return _TimelineGuide(
-        channels: _currentLiveChannels(playlist),
-        epg: epg,
-        onOpen: _selectChannel,
-      );
-    }
-
     final playback = context.watch<PlaybackService>();
     // Only a genuinely live channel belongs in this preview — a movie/
     // episode isn't stopped just because its fullscreen view was left
@@ -1692,6 +1842,102 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     final channel = rawChannel != null && Channel.isLiveId(rawChannel.rawId)
         ? rawChannel
         : null;
+
+    // Opt-in alternate view (Settings > Theme > "Guide view") — see
+    // _TimelineGuide's own doc comment. Checked after the two branches
+    // above, not before: a favorited movies/shows group still needs its
+    // own catalog UI regardless of this setting, same as it would with
+    // the normal live-list view.
+    if (context.watch<AppPreferences>().guideViewMode == 'timeline') {
+      // A reduced, fixed-size preview plus a description panel stacked
+      // *above* the guide (ynoTV's layout), rather than the guide taking
+      // the whole region with no video at all — reported on real hardware
+      // as "the live stream player never reduced". A Column, not a Stack:
+      // the guide's own channel-label column has to start below the
+      // header, not run underneath it. The groups column is a sibling of
+      // this whole region in the outer Row, so it stays full height.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: 160,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 284,
+                  clipBehavior: Clip.antiAlias,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.18),
+                        width: 1.5),
+                  ),
+                  child: channel == null
+                      ? const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.tv_off, color: Colors.white54),
+                              SizedBox(height: 6),
+                              Text('Nothing playing',
+                                  style: TextStyle(color: Colors.white70)),
+                            ],
+                          ),
+                        )
+                      : ExcludeFocus(
+                          // Excluded from focus, not just tap-only — this
+                          // box sits directly above the grid's top row,
+                          // and default D-pad traversal reaching Up from
+                          // there would otherwise land here instead of
+                          // stopping cleanly at the guide's own edge.
+                          child: GestureDetector(
+                            onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        PlayerScreen(channel: channel))),
+                            // Same channel-id key as the full-size pane in
+                            // the non-timeline branch below — see the long
+                            // comment there for why (stale-frame vs.
+                            // texture-teardown race). showControls: false
+                            // — the full title/seek/play-pause bar this
+                            // draws by default doesn't fit a box this
+                            // small; reported directly as "stuck on"
+                            // permanently covering most of the preview.
+                            // Tapping the bare video now jumps to
+                            // fullscreen instead of a separate button.
+                            child: VideoPlayerPane(
+                                key: ValueKey(channel.id),
+                                showEpgBar: false,
+                                showControls: false),
+                          ),
+                        ),
+                ),
+                Expanded(
+                  child: _GuideNowPanel(
+                    focusedChannel: _guideFocusedChannel,
+                    focusedProgram: _guideFocusedProgram,
+                    playingChannel: channel,
+                    epg: epg,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 12),
+          Expanded(
+            child: _TimelineGuide(
+              key: _timelineGuideKey,
+              channels: _currentLiveChannels(playlist),
+              epg: epg,
+              onOpen: _selectChannel,
+              onFocusChanged: _onGuideFocusChanged,
+              onShowOptions: _showChannelOptions,
+            ),
+          ),
+        ],
+      );
+    }
 
     // A thin rounded frame around the whole pane — same "frosted glass"
     // language as SettingsPanel/the new gradient background, so this reads
@@ -1808,6 +2054,24 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text(
           channel.isFavorite ? 'Added to Favorites' : 'Removed from Favorites'),
+      duration: const Duration(seconds: 2),
+    ));
+  }
+
+  /// Live TV only — for a duplicate feed within an otherwise-wanted group
+  /// (e.g. the same channel offered in both HD and HEVC) that whole-group
+  /// hiding can't target. `toggleChannelHidden` mutates the underlying
+  /// Set synchronously before its own `await` (same shape as
+  /// `toggleFavorite`/`Channel.isFavorite` above), so `isChannelHidden`
+  /// already reflects the new state by the time the snackbar reads it.
+  void _toggleHiddenWithFeedback(BuildContext context, Channel channel) {
+    final playlist = context.read<PlaylistManager>();
+    playlist.toggleChannelHidden(channel);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(playlist.isChannelHidden(channel)
+          ? 'Hidden — find it again in Settings > Playlist Manager > '
+              'Hidden Channels'
+          : 'Unhidden'),
       duration: const Duration(seconds: 2),
     ));
   }
@@ -2046,13 +2310,29 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
               // PlaylistManager.knownChannelIdsFor's doc comment.
               subtitle: _CurrentProgramLine(channelId: channel.rawId),
               trailing: ExcludeFocus(
-                child: IconButton(
-                  icon: Icon(
-                      channel.isFavorite ? Icons.star : Icons.star_border,
-                      color:
-                          channel.isFavorite ? Colors.amber : Colors.white70),
-                  onPressed: () =>
-                      _toggleFavoriteWithFeedback(context, channel),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // For a duplicate feed within this same group (e.g.
+                    // the same channel in HD and HEVC) — see
+                    // AppConstants.keyHiddenChannels's doc comment.
+                    IconButton(
+                      icon: const Icon(Icons.visibility_off_outlined,
+                          color: Colors.white70),
+                      tooltip: 'Hide this channel',
+                      onPressed: () =>
+                          _toggleHiddenWithFeedback(context, channel),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                          channel.isFavorite ? Icons.star : Icons.star_border,
+                          color: channel.isFavorite
+                              ? Colors.amber
+                              : Colors.white70),
+                      onPressed: () =>
+                          _toggleFavoriteWithFeedback(context, channel),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -2078,6 +2358,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       {required String idPrefix, required void Function(Channel) onTap}) {
     final playback = context.watch<PlaybackService>();
     final storage = context.read<StorageService>();
+    final playlist = context.read<PlaylistManager>();
     var items = playback.recentlyPlayed
         .where((c) =>
             c.rawId.startsWith(idPrefix) && storage.getLastPosition(c.id) > 0)
@@ -2129,7 +2410,45 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                   ))
                 : onTap(c),
             onFocusGained: () {
-              _updateBrowseFocus(title, imageUrl);
+              // asSeries alone isn't a safe "definitely a movie" proxy —
+              // an episode with no resolvable seriesId still isn't a
+              // movie, and would hit the wrong API call (get_vod_info on
+              // an episode's raw id) if it fell into that branch below.
+              if (asSeries) {
+                final series = XtreamSeries(
+                  seriesId: c.seriesId!,
+                  playlistId: c.playlistId,
+                  name: c.seriesName ?? c.name,
+                  categoryId: '',
+                  coverUrl: c.seriesCoverUrl,
+                );
+                _updateBrowseFocus(
+                  playlist: playlist,
+                  id: series.id,
+                  title: title,
+                  imageUrl: imageUrl,
+                  fetchDescription: () =>
+                      playlist.getHeroSeriesDescription(series),
+                );
+              } else if (idPrefix == 'xt_vod_') {
+                _updateBrowseFocus(
+                  playlist: playlist,
+                  id: c.id,
+                  title: title,
+                  imageUrl: imageUrl,
+                  fetchDescription: () => playlist.getHeroVodDescription(c),
+                );
+              } else {
+                // An episode with no seriesId to resolve — nothing
+                // sensible to fetch a plot for.
+                _updateBrowseFocus(
+                  playlist: playlist,
+                  id: c.id,
+                  title: title,
+                  imageUrl: imageUrl,
+                  fetchDescription: () => Future.value(null),
+                );
+              }
               _ensureRowVisible(_continueWatchingRowKey);
             },
           );
@@ -2212,7 +2531,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 onToggleFavorite: () => _toggleFavoriteWithFeedback(context, c),
                 onTap: () => _openMovie(c),
                 onFocusGained: () {
-                  _updateBrowseFocus(c.name, c.logoUrl);
+                  _updateBrowseFocus(
+                    playlist: playlist,
+                    id: c.id,
+                    title: c.name,
+                    imageUrl: c.logoUrl,
+                    fetchDescription: () => playlist.getHeroVodDescription(c),
+                  );
                   _ensureRowVisible(
                       _keyForGroup(group.playlistId, group.title));
                 },
@@ -2294,7 +2619,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 _toggleSeriesFavoriteWithFeedback(context, s),
             onTap: () => _openSeries(s),
             onFocusGained: () {
-              _updateBrowseFocus(s.name, s.coverUrl);
+              _updateBrowseFocus(
+                playlist: playlist,
+                id: s.id,
+                title: s.name,
+                imageUrl: s.coverUrl,
+                fetchDescription: () => playlist.getHeroSeriesDescription(s),
+              );
               _ensureRowVisible(_keyForGroup(group.playlistId, group.title));
             },
           ),
@@ -2310,7 +2641,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   Widget _buildBrowseScaffold({required List<Widget> rows, String? emptyText}) {
     return Column(
       children: [
-        _BrowseHero(title: _focusedTitle, imageUrl: _focusedImageUrl),
+        _BrowseHero(
+            title: _focusedTitle,
+            imageUrl: _focusedImageUrl,
+            description: _focusedDescription),
         Expanded(
           child: emptyText != null
               ? Center(child: Text(emptyText))
@@ -2801,21 +3135,32 @@ class _CategoryRow<T> extends StatelessWidget {
 /// focus, with its title overlaid — mirrors the hero-banner pattern from
 /// Apple TV / Android TV browse screens.
 class _BrowseHero extends StatelessWidget {
-  const _BrowseHero({required this.title, required this.imageUrl});
+  const _BrowseHero(
+      {required this.title, required this.imageUrl, this.description});
 
   final String? title;
   final String? imageUrl;
+
+  /// Null while nothing's been focused yet, while it's still being
+  /// fetched (see `_TvHomeScreenState._updateBrowseFocus`'s debounce), or
+  /// when the title genuinely has none — the description area just shows
+  /// nothing in all three cases, same as leaving a field blank rather
+  /// than showing a misleading "no description" for something that might
+  /// still arrive a moment later.
+  final String? description;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
-      // Was 200 — tall enough that its bottom-edge title overlapped the
-      // Continue Watching row's own label right below it once you moved
-      // focus into the catalog.
-      height: 130,
-      margin: const EdgeInsets.only(bottom: 14),
+      // Was 130 (before that, 200 — tall enough that its bottom-edge
+      // title overlapped the Continue Watching row's own label right
+      // underneath). Grown again for the description text below the
+      // title now that it has one; the larger bottom margin below is the
+      // same "don't collide with the row label" guard scaled up with it.
+      height: 210,
+      margin: const EdgeInsets.only(bottom: 18),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
         // Was a custom-painted gradient border (GradientBoxBorder) — a
@@ -2856,20 +3201,45 @@ class _BrowseHero extends StatelessWidget {
             left: 20,
             bottom: 16,
             right: 20,
-            child: Row(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(width: 4, height: 22, color: scheme.secondary),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    title ?? 'Browse',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold),
-                  ),
+                Row(
+                  children: [
+                    Container(width: 4, height: 22, color: scheme.secondary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        title ?? 'Browse',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: description == null
+                      ? const SizedBox.shrink()
+                      : Padding(
+                          key: ValueKey(description),
+                          padding: const EdgeInsets.only(left: 14),
+                          child: Text(
+                            description!,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 14,
+                                height: 1.3),
+                          ),
+                        ),
                 ),
               ],
             ),
@@ -3013,8 +3383,7 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
                 controller: _pageController,
                 itemCount: items.length,
                 onPageChanged: (i) => setState(() => _index = i),
-                itemBuilder: (context, i) =>
-                    _buildPage(context, items[i]),
+                itemBuilder: (context, i) => _buildPage(context, items[i]),
               ),
             ),
             _buildDots(context, items.length),
@@ -3374,6 +3743,108 @@ class _ProgramDetails extends StatelessWidget {
   }
 }
 
+/// The Timeline Guide's description header — the programme currently
+/// focused in the grid, not only the one playing. Kept separate from
+/// [_ProgramDetails] rather than parameterising it: that one always
+/// describes a channel's *live* programme plus what's next, while this one
+/// has to describe any block the D-pad lands on, including ones hours
+/// ahead, where a progress bar would be meaningless.
+class _GuideNowPanel extends StatelessWidget {
+  const _GuideNowPanel({
+    required this.focusedChannel,
+    required this.focusedProgram,
+    required this.playingChannel,
+    required this.epg,
+  });
+
+  final Channel? focusedChannel;
+  final EpgProgram? focusedProgram;
+  final Channel? playingChannel;
+  final EpgService epg;
+
+  @override
+  Widget build(BuildContext context) {
+    final timeFormat = DateFormat('HH:mm');
+    // Whichever channel the guide is actually focused on, even if that
+    // row turned out to have no programme data (focusedProgram null but
+    // focusedChannel set) — only falls back to whatever's playing when
+    // nothing in the guide has been focused at all yet.
+    final channel = focusedChannel ?? playingChannel;
+    // rawId, not the composite `id` — see
+    // PlaylistManager.knownChannelIdsFor's doc comment.
+    final program = focusedProgram ??
+        (channel == null
+            ? null
+            : epg.getCurrentProgram(channel.rawId) ??
+                epg.getNextProgram(channel.rawId));
+
+    if (channel == null && program == null) {
+      return const Center(
+        child: Text('Focus a program to see details',
+            style: TextStyle(color: Colors.white70)),
+      );
+    }
+
+    final now = DateTime.now();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(program?.title ?? channel!.name,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(color: Colors.white),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+          if (program != null && channel != null)
+            Text(channel.name,
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 4),
+          if (program != null) ...[
+            Row(
+              children: [
+                Text(
+                    '${timeFormat.format(program.start)} - ${timeFormat.format(program.stop)}',
+                    style: const TextStyle(color: Colors.white70)),
+                if (program.isNowPlaying(now)) ...[
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Builder(builder: (context) {
+                      final totalMs =
+                          program.stop.difference(program.start).inMilliseconds;
+                      final elapsedMs =
+                          now.difference(program.start).inMilliseconds;
+                      final ratio = totalMs == 0
+                          ? 0.0
+                          : (elapsedMs / totalMs).clamp(0.0, 1.0);
+                      return LinearProgressIndicator(value: ratio);
+                    }),
+                  ),
+                ],
+              ],
+            ),
+            if (program.description != null) ...[
+              const SizedBox(height: 6),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Text(program.description!,
+                      style: const TextStyle(color: Colors.white70)),
+                ),
+              ),
+            ],
+          ] else
+            const Text('No program data available',
+                style: TextStyle(color: Colors.white70)),
+        ],
+      ),
+    );
+  }
+}
+
 /// Opt-in alternate Live TV view (Settings > Theme > "Guide view") — every
 /// visible channel at once on a scrollable schedule grid, instead of one
 /// channel's now/next at a time. Plugs into [_buildLiveRegion] in place of
@@ -3388,11 +3859,20 @@ class _ProgramDetails extends StatelessWidget {
 /// already there.
 class _TimelineGuide extends StatefulWidget {
   const _TimelineGuide(
-      {required this.channels, required this.epg, required this.onOpen});
+      {super.key,
+      required this.channels,
+      required this.epg,
+      required this.onOpen,
+      required this.onFocusChanged,
+      required this.onShowOptions});
 
   final List<Channel> channels;
   final EpgService epg;
   final void Function(Channel channel) onOpen;
+  final void Function(Channel channel, EpgProgram? program) onFocusChanged;
+
+  /// Hold-Select on a block — see [_TvHomeScreenState._showChannelOptions].
+  final void Function(Channel channel) onShowOptions;
 
   @override
   State<_TimelineGuide> createState() => _TimelineGuideState();
@@ -3500,12 +3980,165 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   double _xFor(DateTime t) =>
       t.difference(_windowStart).inMinutes * _pixelsPerMinute;
 
+  /// Scrolls the grid vertically only as far as needed to bring
+  /// [rowIndex] fully into view — flush against whichever edge it crossed,
+  /// never re-aligned to the top. Runs before each block's own
+  /// `Scrollable.ensureVisible`, whose default `alignment: 0.0` otherwise
+  /// snapped the newly-focused row to the viewport's top on every step
+  /// past the bottom edge: a whole page-flip per Down press, reported on
+  /// real hardware as "the guide moves up instead of the selector going
+  /// down". Once this has run, that call's vertical half is a no-op and
+  /// it only ever handles the horizontal axis.
+  void _ensureRowVisible(int rowIndex) {
+    if (!_gridVScroll.hasClients) return;
+    final top = rowIndex * _rowHeight;
+    final bottom = top + _rowHeight;
+    final pos = _gridVScroll.position;
+    final viewTop = pos.pixels;
+    final viewBottom = viewTop + pos.viewportDimension;
+    if (top < viewTop) {
+      _gridVScroll.jumpTo(top);
+    } else if (bottom > viewBottom) {
+      _gridVScroll.jumpTo(
+          (bottom - pos.viewportDimension).clamp(0.0, pos.maxScrollExtent));
+    }
+  }
+
+  // Every currently-mounted programme block registers its own FocusNode
+  // here on mount (see _ProgramBlockState.initState/dispose) — lets
+  // moveVertical/restoreFocusToChannel below jump straight to a specific
+  // block instead of trusting Flutter's default directional traversal.
+  final Map<int, List<({DateTime start, DateTime end, FocusNode node})>>
+      _rowBlocks = {};
+
+  void _registerBlock(
+      int rowIndex, DateTime start, DateTime end, FocusNode node) {
+    (_rowBlocks[rowIndex] ??= []).add((start: start, end: end, node: node));
+  }
+
+  void _unregisterBlock(int rowIndex, FocusNode node) {
+    _rowBlocks[rowIndex]?.removeWhere((b) => b.node == node);
+  }
+
+  /// Whichever block last took focus, as a row + the programme itself
+  /// (not a fixed moment in time) — [moveVertical] derives its actual
+  /// reference moment fresh, on every call, via [_referenceTime]. Two
+  /// earlier attempts at a fixed reference both broke on a currently-
+  /// airing programme that started well before "now" (a long block —
+  /// its own `start` landed Down/Up on whatever aired back then instead
+  /// of "now"; clamping to the scroll position instead landed on
+  /// whatever a since-changed scroll offset happened to show, which
+  /// drifted the *other* direction once `Scrollable.ensureVisible`
+  /// re-aligned it for an over-wide block). Neither a stored time survives
+  /// contact with "the wall clock keeps advancing while a block sits
+  /// focused" anyway. [null] for a placeholder block with no real
+  /// programme.
+  int? _focusedRowIndex;
+  EpgProgram? _focusedProgram;
+
+  void _trackFocus(int rowIndex, EpgProgram? program) {
+    _focusedRowIndex = rowIndex;
+    _focusedProgram = program;
+  }
+
+  /// "Now" for a programme that's actually airing right now (recomputed
+  /// fresh, never the stale value from whenever focus first landed on
+  /// it) — that's the case that actually matters, since it's what makes
+  /// Down/Up from a long "now playing" block land on the *other*
+  /// channel's own currently-airing block instead of on whatever aired
+  /// back when the focused block's own (possibly hours-old) start time
+  /// was. A block deliberately drilled into via Left/Right (a future or
+  /// past slot, not currently airing) instead keeps its own start —
+  /// staying on that same time column is exactly what's wanted there.
+  DateTime _referenceTime(EpgProgram? program) {
+    final now = DateTime.now();
+    return (program == null || program.isNowPlaying(now)) ? now : program.start;
+  }
+
+  ({DateTime start, DateTime end, FocusNode node})? _bestBlockFor(
+      List<({DateTime start, DateTime end, FocusNode node})> blocks,
+      DateTime time) {
+    if (blocks.isEmpty) return null;
+    for (final b in blocks) {
+      if (!b.start.isAfter(time) && b.end.isAfter(time)) return b;
+    }
+    return blocks.reduce((a, c) =>
+        (c.start.difference(time)).abs() < (a.start.difference(time)).abs()
+            ? c
+            : a);
+  }
+
+  /// Explicit Up/Down dispatch, bound in [_TvHomeScreenState.build] in
+  /// place of default directional traversal. Default traversal picks the
+  /// nearest widget by on-screen rect overlap, which reliably picks the
+  /// wrong block once rows have very differently-sized programmes:
+  /// focused on a channel's 2-hour block and pressing Down into a row
+  /// full of 30-minute ones landed near the *end* of that 2-hour span
+  /// instead of "now" — reported directly on real hardware. This tracks
+  /// the actual moment in time the guide is "looking at" via
+  /// [_trackFocus] and finds whichever block in the target row covers
+  /// that same moment, so moving between rows stays on the same time
+  /// column instead of following block geometry.
+  void moveVertical(int delta) {
+    final rowIndex = _focusedRowIndex;
+    if (rowIndex == null) return;
+    final targetRow = rowIndex + delta;
+    if (targetRow < 0 || targetRow >= widget.channels.length) return;
+    final time = _referenceTime(_focusedProgram);
+    _ensureRowVisible(targetRow);
+    final blocks = _rowBlocks[targetRow];
+    final best = blocks == null ? null : _bestBlockFor(blocks, time);
+    if (best != null) {
+      best.node.requestFocus();
+      return;
+    }
+    // Target row wasn't already built (a rarer case for a single-row
+    // move than for restoreFocusToChannel below, but possible right
+    // after the guide first opens) — give layout one frame to build it
+    // from the jump above, then retry once.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final retry = _rowBlocks[targetRow];
+      if (retry != null) _bestBlockFor(retry, time)?.node.requestFocus();
+    });
+  }
+
+  /// Called after backing out of fullscreen (see
+  /// [_TvHomeScreenState.didPopNext]) — the guide has no equivalent of
+  /// the plain live list's dedicated "currently playing" FocusNode
+  /// (`_currentChannelFocusNode`), so without this, leaving fullscreen
+  /// just restored whatever was focused before Select was pressed, not
+  /// the channel actually playing. Reported directly as "brings us back
+  /// to where we last were, not the current channel."
+  void restoreFocusToChannel(String channelId) {
+    final rowIndex = widget.channels.indexWhere((c) => c.id == channelId);
+    if (rowIndex < 0) return;
+    _ensureRowVisible(rowIndex);
+    // Always deferred, not tried synchronously first — unlike
+    // moveVertical's single-row step, this jump can be arbitrarily far
+    // from wherever the guide happened to be scrolled, so the target row
+    // is very unlikely to already be built.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final blocks = _rowBlocks[rowIndex];
+      if (blocks != null) {
+        _bestBlockFor(blocks, DateTime.now())?.node.requestFocus();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.channels.isEmpty) {
       return const Center(child: Text('No channels found.'));
     }
     final nowX = _xFor(DateTime.now()).clamp(0.0, _totalWidth);
+    // Distinguishes "still fetching, give it a moment" from "this channel
+    // genuinely has none" for a row with nothing to show — reported on
+    // real hardware as every row rendering completely empty (nothing to
+    // focus, so Down couldn't even reach past it) during the window
+    // before EPG had loaded at all.
+    final epgLoading = widget.epg.isLoading || widget.epg.lastUpdated == null;
     return Column(
       children: [
         SizedBox(
@@ -3566,12 +4199,23 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
                           itemCount: widget.channels.length,
                           itemExtent: _rowHeight,
                           itemBuilder: (context, i) => _TimelineRow(
-                            programs:
-                                widget.epg.getPrograms(widget.channels[i].rawId),
+                            rowIndex: i,
+                            channel: widget.channels[i],
+                            programs: widget.epg
+                                .getPrograms(widget.channels[i].rawId),
                             windowStart: _windowStart,
                             windowEnd: _windowEnd,
                             pixelsPerMinute: _pixelsPerMinute,
                             onOpen: () => widget.onOpen(widget.channels[i]),
+                            onShowOptions: () =>
+                                widget.onShowOptions(widget.channels[i]),
+                            ensureRowVisible: _ensureRowVisible,
+                            onFocusChanged: widget.onFocusChanged,
+                            onFocusTracked: _trackFocus,
+                            onRegisterBlock: _registerBlock,
+                            onUnregisterBlock: _unregisterBlock,
+                            hScroll: _gridHScroll,
+                            epgLoading: epgLoading,
                           ),
                         ),
                         Positioned(
@@ -3614,10 +4258,13 @@ class _TimeRuler extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final timeFormat = DateFormat('h:mm a');
-    final firstTick =
-        DateTime(windowStart.year, windowStart.month, windowStart.day,
-                windowStart.hour, windowStart.minute - windowStart.minute % 30)
-            .add(const Duration(minutes: 30));
+    final firstTick = DateTime(
+            windowStart.year,
+            windowStart.month,
+            windowStart.day,
+            windowStart.hour,
+            windowStart.minute - windowStart.minute % 30)
+        .add(const Duration(minutes: 30));
     final ticks = <DateTime>[
       for (var t = firstTick;
           t.isBefore(windowEnd);
@@ -3636,8 +4283,8 @@ class _TimeRuler extends StatelessWidget {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: Text(timeFormat.format(tick),
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 12)),
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 12)),
               ),
             ),
           ),
@@ -3699,49 +4346,128 @@ class _ChannelLabel extends StatelessWidget {
 /// and confirmed to break Up/Down between rows entirely).
 class _TimelineRow extends StatelessWidget {
   const _TimelineRow({
+    required this.rowIndex,
+    required this.channel,
     required this.programs,
     required this.windowStart,
     required this.windowEnd,
     required this.pixelsPerMinute,
     required this.onOpen,
+    required this.onShowOptions,
+    required this.ensureRowVisible,
+    required this.onFocusChanged,
+    required this.onFocusTracked,
+    required this.onRegisterBlock,
+    required this.onUnregisterBlock,
+    required this.hScroll,
+    required this.epgLoading,
   });
 
+  final int rowIndex;
+  final Channel channel;
   final List<EpgProgram> programs;
   final DateTime windowStart;
   final DateTime windowEnd;
   final double pixelsPerMinute;
   final VoidCallback onOpen;
+  final VoidCallback onShowOptions;
+  final void Function(int rowIndex)? ensureRowVisible;
+  final void Function(Channel channel, EpgProgram? program)? onFocusChanged;
+
+  /// Feeds [_TimelineGuideState._trackFocus] — see its own doc comment.
+  final void Function(int rowIndex, EpgProgram? program)? onFocusTracked;
+  final void Function(
+          int rowIndex, DateTime start, DateTime end, FocusNode node)
+      onRegisterBlock;
+  final void Function(int rowIndex, FocusNode node) onUnregisterBlock;
+
+  /// Shared with every block in the grid — drives the sticky-label fix
+  /// in [_ProgramBlockState] (each block reacts to the same horizontal
+  /// scroll position independently).
+  final ScrollController hScroll;
+
+  /// Whether the EPG fetch hasn't completed at all yet — vs. having
+  /// completed with genuinely nothing for this channel (a duplicate with
+  /// no EPG mapping, commonly). Only changes which placeholder label an
+  /// empty row shows below; doesn't affect real programme blocks.
+  final bool epgLoading;
 
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
-    final visible = programs.where((p) =>
-        p.stop.isAfter(windowStart) && p.start.isBefore(windowEnd));
+    final visible = programs
+        .where(
+            (p) => p.stop.isAfter(windowStart) && p.start.isBefore(windowEnd))
+        .toList();
+    if (visible.isEmpty) {
+      // A row with nothing to show used to render a totally empty Stack
+      // — no focusable child at all, so the D-pad had nowhere to land on
+      // that channel and Down couldn't move past it ("stuck in the black
+      // void", reported on real hardware). One full-window placeholder
+      // block keeps every row focusable regardless of EPG state, and
+      // still opens the channel on Select like a real block would.
+      final totalWidth =
+          windowEnd.difference(windowStart).inMinutes * pixelsPerMinute;
+      return SizedBox(
+        height: _TimelineGuideState._rowHeight,
+        child: Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 4),
+          child: _ProgramBlock(
+            program: null,
+            placeholderLabel:
+                epgLoading ? 'Loading EPG…' : 'No program data available',
+            isNow: false,
+            onOpen: onOpen,
+            onShowOptions: onShowOptions,
+            blockLeft: 0,
+            blockWidth: totalWidth,
+            hScroll: hScroll,
+            onRegister: (node) =>
+                onRegisterBlock(rowIndex, windowStart, windowEnd, node),
+            onUnregister: (node) => onUnregisterBlock(rowIndex, node),
+            onFocusGained: () {
+              ensureRowVisible?.call(rowIndex);
+              onFocusChanged?.call(channel, null);
+              onFocusTracked?.call(rowIndex, null);
+            },
+          ),
+        ),
+      );
+    }
+    double leftFor(EpgProgram p) => p.start.isBefore(windowStart)
+        ? 0.0
+        : p.start.difference(windowStart).inMinutes * pixelsPerMinute;
+    double widthFor(EpgProgram p) =>
+        (p.stop.isAfter(windowEnd) ? windowEnd : p.stop)
+            .difference(p.start.isBefore(windowStart) ? windowStart : p.start)
+            .inMinutes *
+        pixelsPerMinute;
     return SizedBox(
       height: _TimelineGuideState._rowHeight,
       child: Stack(
         children: [
           for (final program in visible)
             Positioned(
-              left: program.start.isBefore(windowStart)
-                  ? 0
-                  : program.start.difference(windowStart).inMinutes *
-                      pixelsPerMinute,
-              width: (program.stop.isAfter(windowEnd)
-                          ? windowEnd
-                          : program.stop)
-                      .difference(
-                          program.start.isBefore(windowStart)
-                              ? windowStart
-                              : program.start)
-                      .inMinutes *
-                  pixelsPerMinute,
+              left: leftFor(program),
+              width: widthFor(program),
               top: 4,
               bottom: 4,
               child: _ProgramBlock(
                 program: program,
                 isNow: program.isNowPlaying(now),
                 onOpen: onOpen,
+                onShowOptions: onShowOptions,
+                blockLeft: leftFor(program),
+                blockWidth: widthFor(program),
+                hScroll: hScroll,
+                onRegister: (node) => onRegisterBlock(
+                    rowIndex, program.start, program.stop, node),
+                onUnregister: (node) => onUnregisterBlock(rowIndex, node),
+                onFocusGained: () {
+                  ensureRowVisible?.call(rowIndex);
+                  onFocusChanged?.call(channel, program);
+                  onFocusTracked?.call(rowIndex, program);
+                },
               ),
             ),
         ],
@@ -3752,11 +4478,50 @@ class _TimelineRow extends StatelessWidget {
 
 class _ProgramBlock extends StatefulWidget {
   const _ProgramBlock(
-      {required this.program, required this.isNow, required this.onOpen});
+      {required this.program,
+      required this.isNow,
+      required this.onOpen,
+      required this.onShowOptions,
+      required this.blockLeft,
+      required this.blockWidth,
+      required this.hScroll,
+      this.onFocusGained,
+      this.placeholderLabel,
+      this.onRegister,
+      this.onUnregister});
 
-  final EpgProgram program;
+  /// Null for a row with no EPG data at all — [placeholderLabel] is shown
+  /// instead of a title, but this block is still focusable and selectable
+  /// (Select still opens the channel) exactly like a real one.
+  final EpgProgram? program;
+  final String? placeholderLabel;
   final bool isNow;
   final VoidCallback onOpen;
+
+  /// Hold-Select — see [_TvHomeScreenState._showChannelOptions]'s doc
+  /// comment for why this needs to exist at all here (the focused thing
+  /// is a time slot, not the channel itself, so a bare hold-to-favorite
+  /// like the plain live list's had nothing to act on).
+  final VoidCallback onShowOptions;
+  final VoidCallback? onFocusGained;
+
+  /// This block's own left/width within the shared horizontally-scrolled
+  /// region — the same values [_TimelineRow] used to position its
+  /// `Positioned` wrapper. Needed to keep the title visible once the
+  /// block is wider than the viewport and has scrolled partway
+  /// off-screen (see the sticky-label [ListenableBuilder] below).
+  final double blockLeft;
+  final double blockWidth;
+  final ScrollController hScroll;
+
+  /// Registers/unregisters this block's own [FocusNode] with
+  /// [_TimelineGuideState] on mount/unmount — lets
+  /// [_TimelineGuideState.moveVertical]/[_TimelineGuideState
+  /// .restoreFocusToChannel] jump straight to a specific block instead of
+  /// trusting default directional traversal (see [_TimelineGuideState
+  /// .moveVertical]'s doc comment for why that's unreliable here).
+  final void Function(FocusNode node)? onRegister;
+  final void Function(FocusNode node)? onUnregister;
 
   @override
   State<_ProgramBlock> createState() => _ProgramBlockState();
@@ -3764,42 +4529,105 @@ class _ProgramBlock extends StatefulWidget {
 
 class _ProgramBlockState extends State<_ProgramBlock> {
   bool _focused = false;
+  final FocusNode _node = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.onRegister?.call(_node);
+  }
+
+  @override
+  void dispose() {
+    widget.onUnregister?.call(_node);
+    _node.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 1),
-      child: Focus(
-        onFocusChange: (f) {
-          setState(() => _focused = f);
-          // Instant, not animated — the same "jumpTo, never animateTo on
-          // a real device" reasoning as the rest of this widget; only
-          // relevant once these blocks are numerous enough to scroll.
-          if (f) Scrollable.ensureVisible(context, duration: Duration.zero);
-        },
-        child: InkWell(
-          onTap: widget.onOpen,
-          child: Container(
-            decoration: BoxDecoration(
-              color: _focused
-                  ? scheme.primary
-                  : widget.isNow
-                      ? scheme.primaryContainer.withValues(alpha: 0.55)
-                      : Colors.white.withValues(alpha: 0.06),
-              border: Border.all(
-                  color: _focused ? scheme.primary : Colors.white24),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            alignment: Alignment.centerLeft,
-            child: Text(
-              widget.program.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: _focused ? scheme.onPrimary : Colors.white,
-                  fontSize: 12),
+      // Same HoldToActivate-over-InkWell shape as the plain live list's
+      // rows — a held Select here now opens _showChannelOptions, the
+      // one thing that plain hold-to-favorite couldn't do for a block
+      // (the focused thing is a time slot, not the channel).
+      child: HoldToActivate(
+        onTap: widget.onOpen,
+        onHold: widget.onShowOptions,
+        child: Focus(
+          focusNode: _node,
+          onFocusChange: (f) {
+            setState(() => _focused = f);
+            // Instant, not animated — the same "jumpTo, never animateTo
+            // on a real device" reasoning as the rest of this widget;
+            // only relevant once these blocks are numerous enough to
+            // scroll. onFocusGained runs first so the vertical axis has
+            // already been edge-scrolled (see
+            // _TimelineGuideState._ensureRowVisible) by the time
+            // ensureVisible looks at it — leaving it only the horizontal
+            // axis to settle.
+            if (f) {
+              widget.onFocusGained?.call();
+              Scrollable.ensureVisible(context, duration: Duration.zero);
+            }
+          },
+          child: InkWell(
+            onTap: widget.onOpen,
+            child: Container(
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: _focused
+                    ? scheme.primary
+                    : widget.isNow
+                        ? scheme.primaryContainer.withValues(alpha: 0.55)
+                        : Colors.white.withValues(alpha: 0.06),
+                border: Border.all(
+                    color: _focused ? scheme.primary : Colors.white24),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              alignment: Alignment.centerLeft,
+              // A block wider than the viewport (a long "now playing"
+              // programme, or one that started before the guide's visible
+              // window and got clamped to the left edge) used to render as
+              // a solid block of color with its title anchored at the
+              // block's own literal left edge — which is exactly what
+              // scrolls out of view first, leaving no visible label at
+              // all. Reported directly on real hardware: "I can't see
+              // what's currently playing there." This nudges the label
+              // right by however far the viewport has scrolled past this
+              // block's own left edge, clamped so it never pushes past the
+              // block's own right edge — a plain sticky-header effect.
+              child: ListenableBuilder(
+                listenable: widget.hScroll,
+                builder: (context, _) {
+                  final scrollX =
+                      widget.hScroll.hasClients ? widget.hScroll.offset : 0.0;
+                  final maxInset =
+                      (widget.blockWidth - 40.0).clamp(0.0, double.infinity);
+                  final inset =
+                      (scrollX - widget.blockLeft).clamp(0.0, maxInset);
+                  return Padding(
+                    padding: EdgeInsets.fromLTRB(6 + inset, 2, 6, 2),
+                    child: Text(
+                      widget.program?.title ?? widget.placeholderLabel ?? '',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: _focused
+                              ? scheme.onPrimary
+                              : widget.program == null
+                                  ? Colors.white54
+                                  : Colors.white,
+                          fontSize: 12,
+                          fontStyle: widget.program == null
+                              ? FontStyle.italic
+                              : FontStyle.normal),
+                    ),
+                  );
+                },
+              ),
             ),
           ),
         ),

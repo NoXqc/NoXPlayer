@@ -44,10 +44,15 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _episodesFuture = context
-        .read<PlaylistManager>()
-        .loadSeriesEpisodes(widget.series)
-        .then((result) {
+    final playlist = context.read<PlaylistManager>();
+    _episodesFuture =
+        playlist.loadSeriesEpisodes(widget.series).then((result) {
+      // Shares its plot with the Movies/TV Shows browse hero's
+      // description cache — this screen still needs the real episode
+      // list (so plotOnly stays false above), but caching the plot here
+      // too means browsing back to this title afterward shows its
+      // description instantly instead of re-fetching it.
+      playlist.cacheDescription(widget.series.id, result.plot);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final seasons = result.episodes.keys.toList()..sort();

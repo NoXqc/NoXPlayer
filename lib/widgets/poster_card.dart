@@ -32,9 +32,13 @@ class PosterCard extends StatefulWidget {
   /// shows). The title now always renders in its own row below the
   /// poster, for every card, so this is smaller than before (less to
   /// decode/cache per poster too — see cacheWidth/cacheHeight below).
-  static const double width = 104;
-  static const double posterHeight = 148;
-  static const double titleHeight = 34;
+  /// Shrunk again (was 104x148/34) per feedback that the catalog should
+  /// show more at once and leave more room for a bigger hero banner —
+  /// same ~0.70 poster aspect ratio kept; titleHeight only trimmed to
+  /// what 11pt/2 lines actually needs, not the font itself.
+  static const double width = 84;
+  static const double posterHeight = 120;
+  static const double titleHeight = 30;
   static const double height = posterHeight + titleHeight;
 
   final String title;
@@ -86,7 +90,10 @@ class _PosterCardState extends State<PosterCard> {
           if (f) widget.onFocusGained();
         },
         child: AnimatedScale(
-          scale: _focused ? 1.08 : 1.0,
+          // Bumped from 1.08 — the same relative scale at this smaller
+          // card size grew it by fewer pixels, so the focus "pop" read
+          // as noticeably weaker; this restores a similarly visible glow.
+          scale: _focused ? 1.10 : 1.0,
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
           child: SizedBox(
@@ -169,22 +176,22 @@ class _PosterCardState extends State<PosterCard> {
                         const _PosterFallbackIcon(),
                       if (widget.watched)
                         Positioned(
-                          top: 6,
-                          right: 6,
+                          top: 4,
+                          right: 4,
                           child: Icon(Icons.check_circle,
                               color: scheme.primary,
-                              size: 22,
+                              size: 18,
                               shadows: const [
                                 Shadow(color: Colors.black, blurRadius: 4),
                               ]),
                         )
                       else if (widget.rating != null)
                         Positioned(
-                          top: 6,
-                          left: 6,
+                          top: 4,
+                          left: 4,
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
+                                horizontal: 5, vertical: 1),
                             decoration: BoxDecoration(
                               color: Colors.black.withValues(alpha: 0.75),
                               borderRadius: BorderRadius.circular(4),
@@ -193,7 +200,7 @@ class _PosterCardState extends State<PosterCard> {
                               '★ ${widget.rating}',
                               style: const TextStyle(
                                   color: Colors.amber,
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   fontWeight: FontWeight.bold),
                             ),
                           ),
@@ -203,11 +210,11 @@ class _PosterCardState extends State<PosterCard> {
                       // the other.
                       if (widget.isFavorite)
                         Positioned(
-                          top: widget.watched ? 32 : 6,
-                          right: 6,
+                          top: widget.watched ? 26 : 4,
+                          right: 4,
                           child: const Icon(Icons.star,
                               color: Colors.amber,
-                              size: 20,
+                              size: 16,
                               shadows: [
                                 Shadow(color: Colors.black, blurRadius: 4),
                               ]),
