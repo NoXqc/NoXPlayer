@@ -826,6 +826,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       1 => _col1Scope,
       _ => _col2Scope,
     };
+    if (target == 2 &&
+        (_timelineGuideKey.currentState?.focusEntry() ?? false)) {
+      return;
+    }
     scope.requestFocus();
   }
 
@@ -3949,8 +3953,8 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     // that lesson applies here just as much.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _gridHScroll.hasClients) {
-        _gridHScroll.jumpTo((_windowBefore.inMinutes * _pixelsPerMinute)
-            .clamp(0, _gridHScroll.position.maxScrollExtent));
+        _gridHScroll.jumpTo(_xFor(_floorToSlot(DateTime.now()))
+            .clamp(0.0, _gridHScroll.position.maxScrollExtent));
       }
     });
   }
@@ -4058,11 +4062,6 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   void _trackFocus(int rowIndex, EpgProgram? program) {
     _focusedRowIndex = rowIndex;
     _focusedProgram = program;
-    // A focus arrival we didn't cause (touch, first entry into the guide)
-    // says nothing about which 30-minute column the user meant — drop
-    // back to deriving it from the block itself. Our own Up/Down/Left/
-    // Right moves keep it (see [_keepCursorUntil]).
-    if (!DateTime.now().isBefore(_keepCursorUntil)) _cursorSlot = null;
   }
 
   /// The 30-minute column Left/Right have stepped to — the slot's start
@@ -4073,15 +4072,11 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   /// blocks, not the end of your current channel"). Up/Down then keep
   /// whatever column this names.
   DateTime? _cursorSlot;
-  DateTime _keepCursorUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
   static const Duration _slot = Duration(minutes: 30);
 
   DateTime _floorToSlot(DateTime t) =>
       DateTime(t.year, t.month, t.day, t.hour, t.minute - t.minute % 30);
-
-  void _keepCursor() =>
-      _keepCursorUntil = DateTime.now().add(const Duration(milliseconds: 750));
 
   /// The moment to look for blocks at, for [slot] (null = live/"now").
   DateTime _timeForSlot(DateTime? slot) {
@@ -4114,17 +4109,18 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     }
     final live = target == _floorToSlot(now);
     _cursorSlot = live ? null : target;
-    _keepCursor();
     if (_gridHScroll.hasClients) {
-      _gridHScroll.jumpTo(_xFor(live ? now : target)
-          .clamp(0.0, _gridHScroll.position.maxScrollExtent));
+      // The slot's own start, live slot included — aligning the live
+      // one to "now" instead cut the current block off at the edge
+      // (reported directly: it should show the whole 9:00-9:30 block).
+      _gridHScroll.jumpTo(
+          _xFor(target).clamp(0.0, _gridHScroll.position.maxScrollExtent));
     }
     final blocks = _rowBlocks[rowIndex];
     final best = blocks == null
         ? null
         : _bestBlockFor(blocks, _timeForSlot(_cursorSlot));
     if (best != null) {
-      _markVerticalArrival(best.node);
       best.node.requestFocus();
     }
     return true;
@@ -4170,41 +4166,16 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   /// [_trackFocus] and finds whichever block in the target row covers
   /// that same moment, so moving between rows stays on the same time
   /// column instead of following block geometry.
-  FocusNode? _verticalArrivalTarget;
-  DateTime? _verticalArrivalAt;
-
-  void _markVerticalArrival(FocusNode node) {
-    _verticalArrivalTarget = node;
-    _verticalArrivalAt = DateTime.now();
-  }
-
-  /// True exactly once for the block [moveVertical] just handed focus to
-  /// — lets that block skip its own "scroll me fully into view"
-  /// horizontal reveal (see [_ProgramBlockState]). The timestamp guards
-  /// against a stale mark (a request that never actually landed) being
-  /// mistaken for a later Left/Right arrival on the same block.
-  bool _consumeVerticalArrival(FocusNode node) {
-    final at = _verticalArrivalAt;
-    final match = _verticalArrivalTarget == node &&
-        at != null &&
-        DateTime.now().difference(at) < const Duration(milliseconds: 750);
-    _verticalArrivalTarget = null;
-    _verticalArrivalAt = null;
-    return match;
-  }
-
   void moveVertical(int delta) {
     final rowIndex = _focusedRowIndex;
     if (rowIndex == null) return;
     final targetRow = rowIndex + delta;
     if (targetRow < 0 || targetRow >= widget.channels.length) return;
     final time = _referenceTime(_focusedProgram);
-    _keepCursor();
     _ensureRowVisible(targetRow);
     final blocks = _rowBlocks[targetRow];
     final best = blocks == null ? null : _bestBlockFor(blocks, time);
     if (best != null) {
-      _markVerticalArrival(best.node);
       best.node.requestFocus();
       return;
     }
@@ -4216,11 +4187,42 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
       if (!mounted) return;
       final retry = _rowBlocks[targetRow];
       final retryBest = retry == null ? null : _bestBlockFor(retry, time);
-      if (retryBest != null) {
-        _markVerticalArrival(retryBest.node);
-        retryBest.node.requestFocus();
-      }
+      retryBest?.node.requestFocus();
     });
+  }
+
+  /// Called when focus is moving into the guide from the groups column
+  /// (see [_TvHomeScreenState._moveColumnFocus]): focuses the block at the
+  /// current time column, in the row last focused (or the top visible
+  /// row) — instead of letting the scope land on the leftmost block of
+  /// the first row, which dragged the view back to the start of the
+  /// window (reported directly). Returns false if there's nothing to
+  /// focus, so the caller can fall back to plain scope focus.
+  bool focusEntry() {
+    if (widget.channels.isEmpty) return false;
+    var rowIndex = _focusedRowIndex;
+    if (rowIndex == null || rowIndex >= widget.channels.length) {
+      rowIndex = _gridVScroll.hasClients
+          ? (_gridVScroll.offset / _rowHeight)
+              .ceil()
+              .clamp(0, widget.channels.length - 1)
+          : 0;
+    }
+    final row = rowIndex;
+    final time = _referenceTime(_focusedProgram);
+    _ensureRowVisible(row);
+    final blocks = _rowBlocks[row];
+    final best = blocks == null ? null : _bestBlockFor(blocks, time);
+    if (best != null) {
+      best.node.requestFocus();
+      return true;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final retry = _rowBlocks[row];
+      (retry == null ? null : _bestBlockFor(retry, time))?.node.requestFocus();
+    });
+    return true;
   }
 
   /// Called after backing out of fullscreen (see
@@ -4249,14 +4251,11 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
       // left edge is — a long programme that began earlier used to drag
       // the view back to its start on return (reported directly: "brings
       // us back to the time the channel started, not the current time
-      // block"). Same "now at the left edge" position the guide opens
-      // on; the block is then marked as an Up/Down-style arrival so its
-      // own reveal doesn't undo this while it overlaps the view.
+      // block"). Same slot-aligned position the guide opens on.
       if (_gridHScroll.hasClients) {
-        _gridHScroll.jumpTo(_xFor(DateTime.now())
+        _gridHScroll.jumpTo(_xFor(_floorToSlot(DateTime.now()))
             .clamp(0.0, _gridHScroll.position.maxScrollExtent));
       }
-      _markVerticalArrival(best.node);
       best.node.requestFocus();
     });
   }
@@ -4346,7 +4345,6 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
                             ensureRowVisible: _ensureRowVisible,
                             onFocusChanged: widget.onFocusChanged,
                             onFocusTracked: _trackFocus,
-                            consumeVerticalArrival: _consumeVerticalArrival,
                             onRegisterBlock: _registerBlock,
                             onUnregisterBlock: _unregisterBlock,
                             hScroll: _gridHScroll,
@@ -4492,7 +4490,6 @@ class _TimelineRow extends StatelessWidget {
     required this.ensureRowVisible,
     required this.onFocusChanged,
     required this.onFocusTracked,
-    required this.consumeVerticalArrival,
     required this.onRegisterBlock,
     required this.onUnregisterBlock,
     required this.hScroll,
@@ -4512,7 +4509,6 @@ class _TimelineRow extends StatelessWidget {
 
   /// Feeds [_TimelineGuideState._trackFocus] — see its own doc comment.
   final void Function(int rowIndex, EpgProgram? program)? onFocusTracked;
-  final bool Function(FocusNode node) consumeVerticalArrival;
   final void Function(
           int rowIndex, DateTime start, DateTime end, FocusNode node)
       onRegisterBlock;
@@ -4556,7 +4552,6 @@ class _TimelineRow extends StatelessWidget {
             isNow: false,
             onOpen: onOpen,
             onShowOptions: onShowOptions,
-            consumeVerticalArrival: consumeVerticalArrival,
             blockLeft: 0,
             blockWidth: totalWidth,
             hScroll: hScroll,
@@ -4595,7 +4590,6 @@ class _TimelineRow extends StatelessWidget {
                 isNow: program.isNowPlaying(now),
                 onOpen: onOpen,
                 onShowOptions: onShowOptions,
-                consumeVerticalArrival: consumeVerticalArrival,
                 blockLeft: leftFor(program),
                 blockWidth: widthFor(program),
                 hScroll: hScroll,
@@ -4624,7 +4618,6 @@ class _ProgramBlock extends StatefulWidget {
       required this.blockLeft,
       required this.blockWidth,
       required this.hScroll,
-      required this.consumeVerticalArrival,
       this.onFocusGained,
       this.placeholderLabel,
       this.onRegister,
@@ -4653,9 +4646,6 @@ class _ProgramBlock extends StatefulWidget {
   final double blockLeft;
   final double blockWidth;
   final ScrollController hScroll;
-
-  /// See [_TimelineGuideState._consumeVerticalArrival].
-  final bool Function(FocusNode node) consumeVerticalArrival;
 
   /// Registers/unregisters this block's own [FocusNode] with
   /// [_TimelineGuideState] on mount/unmount — lets
@@ -4687,14 +4677,15 @@ class _ProgramBlockState extends State<_ProgramBlock> {
     super.dispose();
   }
 
-  /// Left/Right arrivals still scroll this block fully into view, as
-  /// before. A block reached by Up/Down doesn't — a long programme that
-  /// started earlier used to yank the whole guide left to show its start
-  /// (reported directly: it should stay on the current 30-minute view;
-  /// the sticky label already keeps its title readable). It only scrolls
-  /// if the block is entirely off-screen horizontally.
+  /// Scrolls horizontally only when this block is entirely off-screen. A
+  /// block that overlaps the view at all stays put — a long programme
+  /// that started earlier used to yank the whole guide back to its start
+  /// on every arrival (reported directly, more than once); the sticky
+  /// label keeps its title readable instead. Left/Right and Up/Down are
+  /// dispatched explicitly (see [_TimelineGuideState.moveHorizontal]),
+  /// which position the view themselves.
   void _revealHorizontally() {
-    if (widget.consumeVerticalArrival(_node) && widget.hScroll.hasClients) {
+    if (widget.hScroll.hasClients) {
       final pos = widget.hScroll.position;
       final viewLeft = pos.pixels;
       final viewRight = viewLeft + pos.viewportDimension;
