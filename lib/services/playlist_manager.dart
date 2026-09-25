@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../models/channel.dart';
 import '../models/m3u_group.dart';
@@ -26,6 +27,36 @@ class PlaylistManager extends ChangeNotifier {
 
   final StorageService _storage;
   final CatalogDatabase _catalogDb;
+
+  bool _deferredNotifyPending = false;
+
+  /// Never notifies while a frame is being built/laid out/painted — a
+  /// notification fired synchronously from inside another widget's build
+  /// (e.g. TvHomeScreen kicking `ensureCategoriesLoaded` from its own
+  /// build, whose first step marks a category as loading and notifies)
+  /// can silently drop a rebuild for a *different*, still-mounted
+  /// listener in release mode, where debug mode's "setState() called
+  /// during build" assertion doesn't exist. Reported repeatedly on the
+  /// Formuler and Fire Stick as Group Management's checkmarks (after
+  /// Hide All / Show All / a single toggle) not redrawing until you
+  /// switched tabs, even though the data was correct — see
+  /// `PlaylistSession._loadLiveChannelsOnce` for the first, narrower fix
+  /// of the same bug class. This is the general one: anything that
+  /// notifies mid-frame is deferred to the end of that frame instead.
+  @override
+  void notifyListeners() {
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      if (_deferredNotifyPending) return;
+      _deferredNotifyPending = true;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        _deferredNotifyPending = false;
+        super.notifyListeners();
+      });
+      return;
+    }
+    super.notifyListeners();
+  }
 
   Set<String> _favoriteIds = {};
   Set<String> _favoriteSeriesIds = {};
@@ -382,8 +413,7 @@ class PlaylistManager extends ChangeNotifier {
   /// not series, and dropping every untitled-year entry would leave TV
   /// Shows permanently empty rather than merely selective.
   static final RegExp _titleYear = RegExp(r'(?:19|20)\d{2}');
-  static Iterable<T> _thisYearOnly<T>(
-      List<T> rows, String Function(T) nameOf) {
+  static Iterable<T> _thisYearOnly<T>(List<T> rows, String Function(T) nameOf) {
     final currentYear = DateTime.now().year;
     return rows.where((row) {
       final matches = _titleYear.allMatches(nameOf(row));
@@ -426,8 +456,7 @@ class PlaylistManager extends ChangeNotifier {
       false;
 
   Future<void> toggleChannelHidden(Channel channel) =>
-      _sessionFor(channel.playlistId)
-          ?.toggleChannelHidden(channel.rawId) ??
+      _sessionFor(channel.playlistId)?.toggleChannelHidden(channel.rawId) ??
       Future.value();
 
   /// Every hidden channel across [playlistId] — used by the "Hidden
@@ -443,6 +472,7 @@ class PlaylistManager extends ChangeNotifier {
     final all = session.isXtream ? session.liveChannels : session.channels;
     return all.where((c) => rawIds.contains(c.rawId)).toList();
   }
+
   Set<String> favoritedGroupsFor(String playlistId) =>
       _sessionFor(playlistId)?.favoritedGroups ?? {};
 
