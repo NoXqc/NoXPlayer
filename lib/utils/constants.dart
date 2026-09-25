@@ -154,11 +154,17 @@ class AppConstants {
       primary: Color(0xFF7C3AED),
       secondary: Color(0xFFE91E8C),
     ),
+    // Replaced the old Green / Orange palette (id 'green_orange', still
+    // mapped to this one — see AppPreferences._paletteById). Bleu-blanc-
+    // rouge: the red is the Canadiens' own C8102E; the blue is lifted well
+    // above the team's near-navy so the wordmark gradient and focus glow
+    // stay readable on this UI's black backgrounds (white comes from the
+    // UI's own text/focus contrast, not a third palette slot).
     CyberpunkPalette(
-      id: 'green_orange',
-      label: 'Green / Orange',
-      primary: Color(0xFF76FF03),
-      secondary: Color(0xFFFF6D00),
+      id: 'habs',
+      label: 'Habs',
+      primary: Color(0xFFC8102E),
+      secondary: Color(0xFF1F4FD8),
     ),
     CyberpunkPalette(
       id: 'dark_gold',
