@@ -4067,6 +4067,22 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   void _trackFocus(int rowIndex, EpgProgram? program) {
     _focusedRowIndex = rowIndex;
     _focusedProgram = program;
+    if (_guideDrivenFocus) {
+      _guideDrivenFocus = false;
+      return;
+    }
+    // Focus arrived from outside the guide's own Up/Down/Left/Right
+    // (a tap, or default traversal): adopt that block's column so the
+    // next Up/Down stays on it.
+    final now = DateTime.now();
+    if (program == null || program.isNowPlaying(now)) {
+      _cursorSlot = null;
+    } else {
+      final start = program.start.isBefore(_windowStart)
+          ? _windowStart
+          : program.start;
+      _cursorSlot = _floorToSlot(start);
+    }
   }
 
   /// The 30-minute column Left/Right have stepped to — the slot's start
@@ -4126,7 +4142,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
         ? null
         : _bestBlockFor(blocks, _timeForSlot(_cursorSlot));
     if (best != null) {
-      best.node.requestFocus();
+      _focusBlock(best.node);
     }
     return true;
   }
@@ -4140,11 +4156,30 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   /// was. A block deliberately drilled into via Left/Right (a future or
   /// past slot, not currently airing) instead keeps its own start —
   /// staying on that same time column is exactly what's wanted there.
-  DateTime _referenceTime(EpgProgram? program) {
-    final slot = _cursorSlot;
-    if (slot != null) return _timeForSlot(slot);
-    final now = DateTime.now();
-    return (program == null || program.isNowPlaying(now)) ? now : program.start;
+  ///
+  /// The time column is owned by [_cursorSlot] alone (null = live/"now"),
+  /// never re-derived from whichever block a vertical move happened to
+  /// land on. Deriving it from the landed block's own `start` made the
+  /// column drift: landing on a row with a gap at "now" fell back to the
+  /// nearest block (possibly hours away), and the *next* Up/Down then
+  /// followed that block's start instead of the column the user was on.
+  /// A focus that didn't come from the guide's own moves (touch, default
+  /// traversal) re-seeds the column in [_trackFocus] instead.
+  DateTime _referenceTime(EpgProgram? program) => _timeForSlot(_cursorSlot);
+
+  /// Set right before the guide itself calls `requestFocus`, so
+  /// [_trackFocus] can tell a guide-driven focus change (keep the column)
+  /// from an external one (adopt the block's column). Cleared by the next
+  /// [_trackFocus] or, if focus didn't actually change (already on that
+  /// node), after the frame.
+  bool _guideDrivenFocus = false;
+
+  void _focusBlock(FocusNode node) {
+    _guideDrivenFocus = true;
+    node.requestFocus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _guideDrivenFocus = false;
+    });
   }
 
   ({DateTime start, DateTime end, FocusNode node})? _bestBlockFor(
@@ -4154,10 +4189,14 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     for (final b in blocks) {
       if (!b.start.isAfter(time) && b.end.isAfter(time)) return b;
     }
-    return blocks.reduce((a, c) =>
-        (c.start.difference(time)).abs() < (a.start.difference(time)).abs()
-            ? c
-            : a);
+    // A gap at [time]: nearest block by distance to its *interval* (its
+    // start or its end, whichever is closer) — not just its start, which
+    // preferred a block hours ahead over the one that ended a minute ago.
+    Duration gap(({DateTime start, DateTime end, FocusNode node}) b) =>
+        time.isBefore(b.start)
+            ? b.start.difference(time)
+            : time.difference(b.end);
+    return blocks.reduce((a, c) => gap(c) < gap(a) ? c : a);
   }
 
   /// Explicit Up/Down dispatch, bound in [_TvHomeScreenState.build] in
@@ -4181,7 +4220,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     final blocks = _rowBlocks[targetRow];
     final best = blocks == null ? null : _bestBlockFor(blocks, time);
     if (best != null) {
-      best.node.requestFocus();
+      _focusBlock(best.node);
       return;
     }
     // Target row wasn't already built (a rarer case for a single-row
@@ -4192,7 +4231,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
       if (!mounted) return;
       final retry = _rowBlocks[targetRow];
       final retryBest = retry == null ? null : _bestBlockFor(retry, time);
-      retryBest?.node.requestFocus();
+      if (retryBest != null) _focusBlock(retryBest.node);
     });
   }
 
@@ -4219,13 +4258,14 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     final blocks = _rowBlocks[row];
     final best = blocks == null ? null : _bestBlockFor(blocks, time);
     if (best != null) {
-      best.node.requestFocus();
+      _focusBlock(best.node);
       return true;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final retry = _rowBlocks[row];
-      (retry == null ? null : _bestBlockFor(retry, time))?.node.requestFocus();
+      final r = retry == null ? null : _bestBlockFor(retry, time);
+      if (r != null) _focusBlock(r.node);
     });
     return true;
   }
@@ -4261,7 +4301,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
         _gridHScroll.jumpTo(_xFor(_floorToSlot(DateTime.now()))
             .clamp(0.0, _gridHScroll.position.maxScrollExtent));
       }
-      best.node.requestFocus();
+      _focusBlock(best.node);
     });
   }
 
@@ -4586,6 +4626,13 @@ class _TimelineRow extends StatelessWidget {
         children: [
           for (final program in visible)
             Positioned(
+              // Keyed by the programme's own span: a block's registered
+              // start/end (see _registerBlock) is captured once at mount,
+              // so after an EPG refresh an unkeyed block would be matched
+              // by position to a *different* programme and keep answering
+              // Up/Down lookups with the old one's times.
+              key: ValueKey(
+                  '${program.start.millisecondsSinceEpoch}-${program.stop.millisecondsSinceEpoch}'),
               left: leftFor(program),
               width: widthFor(program),
               top: 4,
@@ -4673,6 +4720,16 @@ class _ProgramBlockState extends State<_ProgramBlock> {
   void initState() {
     super.initState();
     widget.onRegister?.call(_node);
+  }
+
+  @override
+  void didUpdateWidget(_ProgramBlock old) {
+    super.didUpdateWidget(old);
+    if (old.program?.start != widget.program?.start ||
+        old.program?.stop != widget.program?.stop) {
+      old.onUnregister?.call(_node);
+      widget.onRegister?.call(_node);
+    }
   }
 
   @override
