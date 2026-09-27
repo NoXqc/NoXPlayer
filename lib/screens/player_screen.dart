@@ -377,12 +377,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                           Expanded(
                                             child: _searchScope == 'TV'
                                                 ? EpgGuide(
-                                                    // rawId, not the
-                                                    // composite `id` — see
-                                                    // PlaylistManager
+                                                    // epgId (rawId, or a
+                                                    // manual override), not
+                                                    // the composite `id` —
+                                                    // see PlaylistManager
                                                     // .knownChannelIdsFor's
                                                     // doc comment.
-                                                    channelId: channel.rawId)
+                                                    channelId: channel.epgId)
                                                 : Text(
                                                     channel.name,
                                                     maxLines: 1,
@@ -439,12 +440,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                     child: PlayerControls(
                                       controller: controller,
                                       title: channel.name,
-                                      // rawId, not the composite `id` —
+                                      // epgId (rawId, or a manual override), not the composite `id` —
                                       // see PlaylistManager
                                       // .knownChannelIdsFor's doc comment;
                                       // Channel.isLiveId also documents
                                       // that it expects rawId, not id.
-                                      channelId: channel.rawId,
+                                      channelId: channel.epgId,
                                       isLive: Channel.isLiveId(channel.rawId),
                                       isFavorite: channel.isFavorite,
                                       onToggleFavorite: () =>

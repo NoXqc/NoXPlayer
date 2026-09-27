@@ -14,6 +14,16 @@ import 'storage_service.dart';
 /// programmes for — see [EpgService.refresh]'s doc comment.
 typedef EpgSource = ({String url, Set<String> knownChannelIds});
 
+/// Every EPG channel id this service touches — a feed's own `<channel id>`,
+/// a provider's `epg_channel_id`, a manual override, an M3U `tvg-id` — is
+/// normalized through this before it's ever used as a map key or compared.
+/// Two real providers were confirmed to disagree on casing for the exact
+/// same channel (`espn.us` vs `ESPN.us`) despite XMLTV ids conventionally
+/// being case-insensitive identifiers in practice; a plain exact-string
+/// map lookup silently failed on that alone, with no error to show for
+/// it — indistinguishable from "the feed just doesn't have this channel".
+String normalizeEpgId(String id) => id.trim().toLowerCase();
+
 /// Top-level (isolate-safe) so [compute] can run them off the main
 /// isolate — a full-catalog EPG cache is easily tens of thousands of
 /// programmes, and decoding/encoding that much JSON synchronously on the
@@ -55,6 +65,35 @@ class EpgService extends ChangeNotifier {
   final StorageService _storage;
 
   final Map<String, List<EpgProgram>> _programs = {};
+
+  /// Every `<channel id>` -> its first `<display-name>` this session has
+  /// seen, across every source refreshed so far — *not* scoped to any one
+  /// playlist's [EpgSource.knownChannelIds] the way [_programs] itself is
+  /// (see [refresh]'s doc comment): the whole point is letting "Assign
+  /// EPG channel" browse the *feed's* full channel directory to search
+  /// for a match, independent of which ids a given playlist happens to
+  /// already own. Small either way (a few thousand short strings, not
+  /// full programme data) so keeping every source's entries around at
+  /// once costs nothing worth guarding. Rebuilt fresh each app launch
+  /// (not cached to disk like [_programs] is) — acceptable for now since
+  /// "Update EPG Now" is right there in the same settings screen that
+  /// would use this.
+  final Map<String, String> _channelCatalog = {};
+  Map<String, String> get channelCatalog => Map.unmodifiable(_channelCatalog);
+
+  /// Every `<channel id>`'s own currently-airing programme, as of
+  /// whenever it was last refreshed — lets "Assign EPG channel" show what
+  /// a *candidate* id is airing right now (e.g. telling `espn.us` apart
+  /// from `espn2.us`/`espnu.us` by matching it against what the real
+  /// channel is actually showing), not just its display name. Reported
+  /// directly: several plausible-looking candidates for the same channel,
+  /// no way to tell which one is actually right without trial and error.
+  /// Same unfiltered-by-[EpgSource.knownChannelIds] reasoning as
+  /// [_channelCatalog] — see [_parseXmltvStream]'s doc comment.
+  final Map<String, EpgProgram> _nowPlayingCatalog = {};
+  EpgProgram? currentProgramInCatalog(String id) =>
+      _nowPlayingCatalog[normalizeEpgId(id)];
+
   DateTime? lastUpdated;
   bool isLoading = false;
   String? error;
@@ -148,12 +187,29 @@ class EpgService extends ChangeNotifier {
             'Failed to load EPG (HTTP ${streamedResponse.statusCode})');
       }
 
-      final effectiveFilter =
-          knownChannelIds.isNotEmpty ? knownChannelIds : null;
-      final parsed = await _parseXmltvStream(
-        streamedResponse.stream,
+      // Normalized the same way the parser normalizes the feed's own ids
+      // (see [normalizeEpgId]) — these are Channel.epgId values (rawId or
+      // a manual override), compared against the feed's <channel>/
+      // <programme channel="..."> ids below, and a caller's casing
+      // convention won't generally match the feed's own.
+      final effectiveFilter = knownChannelIds.isEmpty
+          ? null
+          : knownChannelIds.map(normalizeEpgId).toSet();
+      final result = await _parseXmltvStream(
+        await _autoGunzip(streamedResponse.stream),
         knownChannelIds: effectiveFilter,
       ).timeout(const Duration(minutes: 10));
+      final parsed = result.programs;
+      // First-seen wins on a duplicate id across sources — an arbitrary
+      // but harmless tie-break; these are just display labels for a
+      // picker, not something correctness depends on.
+      for (final entry in result.channelNames.entries) {
+        _channelCatalog.putIfAbsent(entry.key, () => entry.value);
+      }
+      // Overwrite (not putIfAbsent) — unlike a channel's name, "what's on
+      // right now" for a given id goes stale, so a fresh refresh's answer
+      // should replace whatever an earlier one found.
+      _nowPlayingCatalog.addAll(result.nowPlaying);
 
       // Only ever removes *this source's own* stale entries (channels
       // that had programmes before but don't appear in this fresh parse)
@@ -184,6 +240,34 @@ class EpgService extends ChangeNotifier {
     }
   }
 
+  /// Transparently decompresses gzip — plenty of third-party XMLTV sources
+  /// (large ones especially) are served as `.xml.gz` to save bandwidth,
+  /// and a plain file host (unlike a real web server) commonly serves that
+  /// as its literal bytes with no `Content-Encoding: gzip` header, so
+  /// there's nothing for the HTTP client to auto-decompress — confirmed
+  /// directly against a real feed advertised for this app. Detected by
+  /// sniffing the gzip magic number on the stream's first chunk rather
+  /// than trusting the URL's extension (a redirect, or a server not
+  /// bothering to name it `.gz`, would defeat that). Still fully
+  /// streaming either way — `gzip.decoder` decompresses incrementally, so
+  /// this never buffers the whole (routinely much larger, decompressed)
+  /// file in memory, matching [_parseXmltvStream]'s own reason for
+  /// avoiding a full DOM parse.
+  Future<Stream<List<int>>> _autoGunzip(Stream<List<int>> input) async {
+    final it = StreamIterator(input);
+    if (!await it.moveNext()) return const Stream.empty();
+    final first = it.current;
+    Stream<List<int>> rebuilt() async* {
+      yield first;
+      while (await it.moveNext()) {
+        yield it.current;
+      }
+    }
+
+    final isGzip = first.length >= 2 && first[0] == 0x1F && first[1] == 0x8B;
+    return isGzip ? rebuilt().transform(gzip.decoder) : rebuilt();
+  }
+
   /// Parses XMLTV as a stream of events rather than building a full DOM —
   /// full program guides (many channels x many days) are routinely well
   /// over 100MB of XML, and loading that into one String plus a full
@@ -197,38 +281,59 @@ class EpgService extends ChangeNotifier {
   /// is the one *unbounded* allocation left in this otherwise-streaming
   /// pipeline (see this method's own doc comment above, and
   /// [EpgService._knownChannelIds]).
-  Future<Map<String, List<EpgProgram>>> _parseXmltvStream(
+  Future<
+      ({
+        Map<String, List<EpgProgram>> programs,
+        Map<String, String> channelNames,
+        Map<String, EpgProgram> nowPlaying
+      })> _parseXmltvStream(
     Stream<List<int>> byteStream, {
     Set<String>? knownChannelIds,
   }) async {
     final result = <String, List<EpgProgram>>{};
+    // Every <channel id>'s first <display-name> — unlike [result] above,
+    // never filtered by [knownChannelIds]: see [EpgService._channelCatalog]'s
+    // doc comment for why the *whole* feed's directory matters here, not
+    // just whatever one playlist already owns.
+    final channelNames = <String, String>{};
+    // Every <channel id>'s own currently-airing programme, same
+    // unfiltered-by-design reasoning as [channelNames] — "Assign EPG
+    // channel" needs to show what's actually on right now for each
+    // *candidate* id, most of which aren't in [knownChannelIds] at all
+    // (that's the whole point of searching for one). Bounded the same
+    // way [channelNames] is (one entry per channel, not per programme),
+    // so keeping it unfiltered costs nothing worth guarding against.
+    final nowPlaying = <String, EpgProgram>{};
+    final now = DateTime.now();
 
     String? channelId;
     String? startRaw;
     String? stopRaw;
-    String? currentTextTag; // 'title' or 'desc' while collecting its text
+    // 'title'/'desc' while inside a <programme>, or 'display-name' while
+    // inside a <channel> — safe to share one flag either way since XMLTV
+    // never nests one inside the other.
+    String? currentTextTag;
     String? title;
     String? desc;
+    String? catalogChannelId;
+    String? catalogDisplayName;
 
     void finalizeProgramme() {
       if (channelId == null || startRaw == null || stopRaw == null) return;
-      if (knownChannelIds != null && !knownChannelIds.contains(channelId))
-        return;
       try {
         final start = _parseXmltvTime(startRaw);
         final stop = _parseXmltvTime(stopRaw);
-        result.putIfAbsent(channelId, () => []).add(
-              EpgProgram(
-                channelId: channelId,
-                title: title?.trim().isNotEmpty == true
-                    ? title!.trim()
-                    : 'No Title',
-                description:
-                    (desc?.trim().isNotEmpty ?? false) ? desc!.trim() : null,
-                start: start,
-                stop: stop,
-              ),
-            );
+        final program = EpgProgram(
+          channelId: channelId,
+          title: title?.trim().isNotEmpty == true ? title!.trim() : 'No Title',
+          description: (desc?.trim().isNotEmpty ?? false) ? desc!.trim() : null,
+          start: start,
+          stop: stop,
+        );
+        if (program.isNowPlaying(now)) nowPlaying[channelId] = program;
+        if (knownChannelIds == null || knownChannelIds.contains(channelId)) {
+          result.putIfAbsent(channelId, () => []).add(program);
+        }
       } catch (_) {
         // Unparseable timestamp — skip this one programme, keep going.
       }
@@ -263,7 +368,7 @@ class EpgService extends ChangeNotifier {
           for (final attr in event.attributes) {
             switch (attr.name) {
               case 'channel':
-                channelId = attr.value;
+                channelId = normalizeEpgId(attr.value);
               case 'start':
                 startRaw = attr.value;
               case 'stop':
@@ -273,9 +378,20 @@ class EpgService extends ChangeNotifier {
           // A self-closing <programme/> has no title/desc children and no
           // matching end event, so it must be recorded right here.
           if (event.isSelfClosing) finalizeProgramme();
-        } else if ((event.name == 'title' || event.name == 'desc') &&
+        } else if (event.name == 'channel') {
+          catalogChannelId = null;
+          catalogDisplayName = null;
+          currentTextTag = null;
+          for (final attr in event.attributes) {
+            if (attr.name == 'id') {
+              catalogChannelId = normalizeEpgId(attr.value);
+            }
+          }
+        } else if ((event.name == 'title' ||
+                event.name == 'desc' ||
+                event.name == 'display-name') &&
             !event.isSelfClosing) {
-          // Self-closing <title/> / <desc/> carry no text — leave
+          // Self-closing versions of these carry no text — leave
           // currentTextTag unset so we don't wait on an end event that
           // will never arrive for them.
           currentTextTag = event.name;
@@ -285,12 +401,25 @@ class EpgService extends ChangeNotifier {
           title = (title ?? '') + event.value;
         } else if (currentTextTag == 'desc') {
           desc = (desc ?? '') + event.value;
+        } else if (currentTextTag == 'display-name' &&
+            catalogDisplayName == null) {
+          // First <display-name> only — a channel can list several
+          // (language variants, abbreviations); the first is XMLTV's own
+          // convention for "the" name.
+          catalogDisplayName = event.value;
         }
       } else if (event is XmlEndElementEvent) {
         if (event.name == 'title' || event.name == 'desc') {
           currentTextTag = null;
+        } else if (event.name == 'display-name') {
+          currentTextTag = null;
         } else if (event.name == 'programme') {
           finalizeProgramme();
+        } else if (event.name == 'channel') {
+          final id = catalogChannelId;
+          if (id != null && catalogDisplayName != null) {
+            channelNames.putIfAbsent(id, () => catalogDisplayName!.trim());
+          }
         }
       }
     }
@@ -299,7 +428,11 @@ class EpgService extends ChangeNotifier {
       list.sort((a, b) => a.start.compareTo(b.start));
     }
 
-    return result;
+    return (
+      programs: result,
+      channelNames: channelNames,
+      nowPlaying: nowPlaying
+    );
   }
 
   /// Parses XMLTV timestamps such as `20240101120000 +0000`.
@@ -331,7 +464,7 @@ class EpgService extends ChangeNotifier {
   }
 
   EpgProgram? getCurrentProgram(String channelId) {
-    final list = _programs[channelId];
+    final list = _programs[normalizeEpgId(channelId)];
     if (list == null) return null;
     final now = DateTime.now();
     for (final p in list) {
@@ -341,7 +474,7 @@ class EpgService extends ChangeNotifier {
   }
 
   EpgProgram? getNextProgram(String channelId) {
-    final list = _programs[channelId];
+    final list = _programs[normalizeEpgId(channelId)];
     if (list == null) return null;
     final now = DateTime.now();
     for (final p in list) {
@@ -350,7 +483,8 @@ class EpgService extends ChangeNotifier {
     return null;
   }
 
-  List<EpgProgram> getPrograms(String channelId) => _programs[channelId] ?? [];
+  List<EpgProgram> getPrograms(String channelId) =>
+      _programs[normalizeEpgId(channelId)] ?? [];
 
   @override
   void dispose() {

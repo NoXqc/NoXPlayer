@@ -183,7 +183,24 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
     _mode = existing?.mode ?? 'm3u';
     _nameController = TextEditingController(text: existing?.name ?? '');
     _m3uController = TextEditingController(text: existing?.m3uUrl ?? '');
-    _epgController = TextEditingController(text: existing?.epgUrl ?? '');
+    // For an Xtream profile, epgUrl is usually just the auto-derived
+    // xmltv.php link (see _save) rather than something the user actually
+    // typed in — pre-filling this field with that would make a later
+    // credential edit (server/username/password) silently keep the *old*
+    // auto-derived URL instead of re-deriving it, since a non-empty field
+    // here is taken as a deliberate override. Only genuinely-custom EPG
+    // URLs (saved because they didn't match what today's credentials
+    // would derive) get pre-filled.
+    final existingAutoEpg = (existing != null && existing.mode == 'xtream')
+        ? XtreamHelper.buildEpgUrl(
+            server: existing.xtreamServer ?? '',
+            username: existing.xtreamUsername ?? '',
+            password: existing.xtreamPassword ?? '')
+        : null;
+    _epgController = TextEditingController(
+        text: existing?.epgUrl == existingAutoEpg
+            ? ''
+            : (existing?.epgUrl ?? ''));
     _xtreamServerController =
         TextEditingController(text: existing?.xtreamServer ?? '');
     _xtreamUsernameController =
@@ -296,7 +313,7 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
 
     final fields = _mode == 'm3u'
         ? [_m3uFocus, _epgFocus]
-        : [_serverFocus, _usernameFocus, _passwordFocus];
+        : [_serverFocus, _usernameFocus, _passwordFocus, _epgFocus];
     final index = fields.indexWhere((n) => n == effective);
     if (index < 0) return false;
 
@@ -426,8 +443,19 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
         // playlist itself always goes through the real API, not a derived
         // M3U URL. xmltv.php is still used for EPG since that endpoint is
         // commonly left enabled even when get.php isn't.
-        epgUrl = XtreamHelper.buildEpgUrl(
-            server: server, username: username, password: password);
+        //
+        // A panel's own xmltv.php can also just be empty/unreliable even
+        // when it responds — reported directly (Trex). The EPG field
+        // (same one M3U mode always exposes) lets a third-party XMLTV
+        // (e.g. EPGgenius) override the auto-derived link; blank means
+        // "use the panel's own", so nothing changes for anyone who
+        // doesn't touch it. It only fills in a channel's guide if that
+        // feed's <channel id> matches this panel's own epg_channel_id.
+        final customEpgUrl = _epgController.text.trim();
+        epgUrl = customEpgUrl.isNotEmpty
+            ? customEpgUrl
+            : XtreamHelper.buildEpgUrl(
+                server: server, username: username, password: password);
         profile = PlaylistProfile(
           id: playlistId,
           name: name,
@@ -883,8 +911,28 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                                     () => _obscurePassword = !_obscurePassword),
                               ),
                             ),
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => _epgFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _epgController,
+                            focusNode: _epgFocus,
+                            decoration: const InputDecoration(
+                              labelText: 'Custom EPG (XMLTV) URL — optional',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: TextInputType.url,
                             textInputAction: TextInputAction.done,
                             onSubmitted: (_) => _addButtonFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Leave blank to use the panel\'s own xmltv.php. Set this '
+                            'if your provider\'s EPG is empty or unreliable (e.g. a '
+                            'third-party feed like EPGgenius) — it only fills in a '
+                            'channel if that feed\'s ids match this panel\'s.',
+                            style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 8),
                           TextButton.icon(
@@ -934,12 +982,27 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                                     () => _obscurePassword = !_obscurePassword),
                               ),
                             ),
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => _epgFocus.requestFocus(),
+                          ),
+                          const SizedBox(height: 16),
+                          TextField(
+                            controller: _epgController,
+                            focusNode: _epgFocus,
+                            decoration: const InputDecoration(
+                              labelText: 'Custom EPG (XMLTV) URL — optional',
+                              border: OutlineInputBorder(),
+                            ),
+                            keyboardType: TextInputType.url,
                             textInputAction: TextInputAction.done,
                             onSubmitted: (_) => _addButtonFocus.requestFocus(),
                           ),
-                          const SizedBox(height: 8),
+                          const SizedBox(height: 4),
                           Text(
-                            'The EPG (xmltv.php) URL is derived automatically from these credentials.',
+                            'Leave blank to use the panel\'s own xmltv.php. Set this '
+                            'if your provider\'s EPG is empty or unreliable (e.g. a '
+                            'third-party feed like EPGgenius) — it only fills in a '
+                            'channel if that feed\'s ids match this panel\'s.',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],

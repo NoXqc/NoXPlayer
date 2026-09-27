@@ -67,7 +67,7 @@ class ChannelListTile extends StatelessWidget {
         // never prefixed with a playlist id. See
         // PlaylistManager.knownChannelIdsFor's doc comment for the
         // matching parse-side fix.
-        subtitle: EpgGuide(channelId: channel.rawId, compact: true),
+        subtitle: EpgGuide(channelId: channel.epgId, compact: true),
         // Excluded from focus traversal (matches the equivalent star fix
         // already applied to the Live TV list, and the Slider in
         // PlayerControls) — without this, D-pad Up/Down here can land on

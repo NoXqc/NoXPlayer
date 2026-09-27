@@ -459,6 +459,12 @@ class PlaylistManager extends ChangeNotifier {
       _sessionFor(channel.playlistId)?.toggleChannelHidden(channel.rawId) ??
       Future.value();
 
+  /// [epgId] null clears a channel's manual EPG assignment — see
+  /// [Channel.epgIdOverride]'s doc comment.
+  Future<void> setEpgIdOverride(Channel channel, String? epgId) =>
+      _sessionFor(channel.playlistId)?.setEpgIdOverride(channel.rawId, epgId) ??
+      Future.value();
+
   /// Every hidden channel across [playlistId] — used by the "Hidden
   /// channels" section in Group Management to list and unhide them.
   /// Resolved against [visibleChannels]-bypassing raw lists (`liveChannels`
@@ -524,18 +530,23 @@ class PlaylistManager extends ChangeNotifier {
   /// is a real OOM risk). Same `isXtream ? liveChannels : channels` split
   /// as the merged [channels] getter above, just scoped to one session.
   ///
-  /// Must be `rawId` (the real `tvg-id`/`epg_channel_id`), not the
-  /// composite `id` — an XMLTV feed's own `<programme channel="...">`
-  /// attribute is always that raw value, never `$playlistId::$rawId`.
-  /// Confirmed as a real regression: with `id` here, this filter never
-  /// matched a single `<programme>` while parsing, so every channel
-  /// showed "No program data" regardless of a real, successful EPG
-  /// refresh — see `EpgGuide`'s callers for the matching display-side fix.
+  /// Must be `rawId` (the real `tvg-id`/`epg_channel_id`) — or a manual
+  /// override, see [Channel.epgId] — not the composite `id`: an XMLTV
+  /// feed's own `<programme channel="...">` attribute is always that raw
+  /// value, never `$playlistId::$rawId`. Confirmed as a real regression:
+  /// with `id` here, this filter never matched a single `<programme>`
+  /// while parsing, so every channel showed "No program data" regardless
+  /// of a real, successful EPG refresh — see `EpgGuide`'s callers for the
+  /// matching display-side fix. `epgId`, not `rawId` directly, for the
+  /// same reason every EPG-lookup call site uses it — a channel with a
+  /// manual assignment (`Channel.epgIdOverride`) needs *that* id to
+  /// survive this filter on the next refresh, not its own unassignable
+  /// provider id.
   Set<String> knownChannelIdsFor(String playlistId) {
     final session = _sessionFor(playlistId);
     if (session == null) return const {};
     return (session.isXtream ? session.liveChannels : session.channels)
-        .map((c) => c.rawId)
+        .map((c) => c.epgId)
         .toSet();
   }
 

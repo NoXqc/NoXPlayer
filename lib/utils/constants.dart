@@ -54,6 +54,13 @@ class AppConstants {
   /// channel in both HD and HEVC), where hiding the whole group isn't
   /// an option. Namespaced per playlist exactly like [keyHiddenGroups].
   static const String keyHiddenChannels = 'nox_hidden_channels';
+
+  /// Manual EPG channel-id assignment (see `Channel.epgIdOverride`) —
+  /// `Channel.rawId` -> the EPG feed's own `<channel id>`, JSON-encoded
+  /// since a `Map`, unlike the `Set`s above, needs more than
+  /// `getStringList`/`setStringList`. Namespaced per playlist exactly
+  /// like [keyHiddenChannels].
+  static const String keyEpgIdOverrides = 'nox_epg_id_overrides';
   static const String keyFavoritedGroups = 'nox_favorited_groups';
   static const String keyRecentSearches = 'nox_recent_searches';
 

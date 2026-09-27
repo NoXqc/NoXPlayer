@@ -2332,9 +2332,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                     : const Icon(Icons.tv),
               ),
               label: channel.name,
-              // rawId, not the composite `id` — see
+              // epgId (rawId, or a manual override), not the composite `id`
+              // — see
               // PlaylistManager.knownChannelIdsFor's doc comment.
-              subtitle: _CurrentProgramLine(channelId: channel.rawId),
+              subtitle: _CurrentProgramLine(channelId: channel.epgId),
               trailing: ExcludeFocus(
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -3708,10 +3709,11 @@ class _ProgramDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // rawId, not the composite `id` — see
+    // epgId (rawId, or a manual override), not the composite `id`
+    // — see
     // PlaylistManager.knownChannelIdsFor's doc comment.
-    final current = epg.getCurrentProgram(channel.rawId);
-    final next = epg.getNextProgram(channel.rawId);
+    final current = epg.getCurrentProgram(channel.epgId);
+    final next = epg.getNextProgram(channel.epgId);
     final timeFormat = DateFormat('HH:mm');
 
     return Padding(
@@ -3798,13 +3800,14 @@ class _GuideNowPanel extends StatelessWidget {
     // focusedChannel set) — only falls back to whatever's playing when
     // nothing in the guide has been focused at all yet.
     final channel = focusedChannel ?? playingChannel;
-    // rawId, not the composite `id` — see
+    // epgId (rawId, or a manual override), not the composite `id`
+    // — see
     // PlaylistManager.knownChannelIdsFor's doc comment.
     final program = focusedProgram ??
         (channel == null
             ? null
-            : epg.getCurrentProgram(channel.rawId) ??
-                epg.getNextProgram(channel.rawId));
+            : epg.getCurrentProgram(channel.epgId) ??
+                epg.getNextProgram(channel.epgId));
 
     if (channel == null && program == null) {
       return const Center(
@@ -4078,9 +4081,8 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     if (program == null || program.isNowPlaying(now)) {
       _cursorSlot = null;
     } else {
-      final start = program.start.isBefore(_windowStart)
-          ? _windowStart
-          : program.start;
+      final start =
+          program.start.isBefore(_windowStart) ? _windowStart : program.start;
       _cursorSlot = _floorToSlot(start);
     }
   }
@@ -4380,7 +4382,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
                             rowIndex: i,
                             channel: widget.channels[i],
                             programs: widget.epg
-                                .getPrograms(widget.channels[i].rawId),
+                                .getPrograms(widget.channels[i].epgId),
                             windowStart: _windowStart,
                             windowEnd: _windowEnd,
                             pixelsPerMinute: _pixelsPerMinute,

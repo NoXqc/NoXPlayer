@@ -198,6 +198,28 @@ class StorageService {
       _prefs.setStringList(
           '${AppConstants.keyHiddenChannels}_$playlistId', rawIds.toList());
 
+  /// Keyed by `Channel.rawId` -> the assigned EPG feed's own channel id —
+  /// see [AppConstants.keyEpgIdOverrides]'s doc comment. A malformed/
+  /// pre-Map value (there isn't one pre-existing, but a corrupt prefs
+  /// entry isn't unheard of elsewhere in this file) reads back as empty
+  /// rather than throwing.
+  Map<String, String> getEpgIdOverrides(String playlistId) {
+    final raw =
+        _prefs.getString('${AppConstants.keyEpgIdOverrides}_$playlistId');
+    if (raw == null) return {};
+    try {
+      return (jsonDecode(raw) as Map<String, dynamic>)
+          .map((k, v) => MapEntry(k, v as String));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> setEpgIdOverrides(
+          String playlistId, Map<String, String> overrides) =>
+      _prefs.setString('${AppConstants.keyEpgIdOverrides}_$playlistId',
+          jsonEncode(overrides));
+
   Set<String> getFavoritedGroups(String playlistId) =>
       (_prefs.getStringList('${AppConstants.keyFavoritedGroups}_$playlistId') ??
               [])

@@ -79,6 +79,12 @@ class PlaylistSession {
   /// [Channel.rawId].
   Set<String> hiddenChannels = {};
 
+  /// See [AppConstants.keyEpgIdOverrides]'s doc comment. Keyed by
+  /// [Channel.rawId] -> the assigned EPG id; stamped onto each matching
+  /// `Channel.epgIdOverride` wherever this session (re)builds its channel
+  /// lists (the same loops that stamp `isFavorite`).
+  Map<String, String> epgIdOverrides = {};
+
   // --- M3U-mode state ---------------------------------------------------
   List<Channel> channels = [];
 
@@ -180,6 +186,7 @@ class PlaylistSession {
     hiddenGroups = storage.getHiddenGroups(profile.id);
     favoritedGroups = storage.getFavoritedGroups(profile.id);
     hiddenChannels = storage.getHiddenChannels(profile.id);
+    epgIdOverrides = storage.getEpgIdOverrides(profile.id);
 
     if (isXtream) {
       final username = profile.xtreamUsername;
@@ -222,6 +229,7 @@ class PlaylistSession {
       final loaded = await compute(_readChannelsFile, path);
       for (final channel in loaded) {
         channel.isFavorite = favoriteIds().contains(channel.id);
+        channel.epgIdOverride = epgIdOverrides[channel.rawId];
       }
       channels = loaded;
       return true;
@@ -243,6 +251,7 @@ class PlaylistSession {
       final parsed = await M3uParser.fetchAndParse(url, playlistId: profile.id);
       for (final channel in parsed) {
         channel.isFavorite = favoriteIds().contains(channel.id);
+        channel.epgIdOverride = epgIdOverrides[channel.rawId];
       }
 
       final counts = <String, int>{'tv': 0, 'vod': 0, 'series': 0};
@@ -444,6 +453,7 @@ class PlaylistSession {
       }
       for (final channel in loaded) {
         channel.isFavorite = favoriteIds().contains(channel.id);
+        channel.epgIdOverride = epgIdOverrides[channel.rawId];
       }
       liveChannels = loaded;
       lastLoadSummary = {...?lastLoadSummary, 'tv': liveChannels.length};
@@ -484,7 +494,8 @@ class PlaylistSession {
       final server = candidates[i];
       final label = _hostLabel(server);
       if (candidates.length > 1) {
-        loadingPhase = 'Connecting to $label (${i + 1}/${candidates.length})...';
+        loadingPhase =
+            'Connecting to $label (${i + 1}/${candidates.length})...';
         onNotify();
       }
       final api = XtreamApiService(
@@ -572,6 +583,7 @@ class PlaylistSession {
           await api.getLiveStreams(categoryNames: liveCategoryNames);
       for (final channel in loadedLive) {
         channel.isFavorite = favoriteIds().contains(channel.id);
+        channel.epgIdOverride = epgIdOverrides[channel.rawId];
       }
       liveChannels = loadedLive;
       await storage.writeCacheFile(
@@ -680,6 +692,7 @@ class PlaylistSession {
         final items = await api.getVodStreams(categoryId, categoryName);
         for (final channel in items) {
           channel.isFavorite = favoriteIds().contains(channel.id);
+          channel.epgIdOverride = epgIdOverrides[channel.rawId];
         }
         await _persistVodCategory(categoryName, items);
         vodByCategoryName[categoryName] =
@@ -775,6 +788,7 @@ class PlaylistSession {
       final items = await api.getVodStreams(cat.id, cat.name);
       for (final channel in items) {
         channel.isFavorite = favoriteIds().contains(channel.id);
+        channel.epgIdOverride = epgIdOverrides[channel.rawId];
       }
       await _persistVodCategory(cat.name, items);
       vodByCategoryName[cat.name] = items.take(_maxItemsPerCategory).toList();
@@ -946,6 +960,7 @@ class PlaylistSession {
     for (final list in result.episodes.values) {
       for (final channel in list) {
         channel.isFavorite = favoriteIds().contains(channel.id);
+        channel.epgIdOverride = epgIdOverrides[channel.rawId];
         channel.seriesId = series.seriesId;
         channel.seriesName = series.name;
         channel.seriesCoverUrl = series.coverUrl;
@@ -1017,9 +1032,7 @@ class PlaylistSession {
           // hiddenGroups above) — a hidden channel is usually a
           // duplicate *within* an otherwise-wanted group, so hiding the
           // whole group isn't the option the user actually wants.
-          return list
-              .where((c) => !hiddenChannels.contains(c.rawId))
-              .toList();
+          return list.where((c) => !hiddenChannels.contains(c.rawId)).toList();
         case 'vod':
           return groupTitle != null
               ? (vodByCategoryName[groupTitle] ?? const [])
@@ -1054,6 +1067,28 @@ class PlaylistSession {
       hiddenChannels.add(rawId);
     }
     await storage.setHiddenChannels(profile.id, hiddenChannels);
+    onNotify();
+  }
+
+  /// [epgId] null clears the override (back to this channel's own rawId).
+  /// Patches every already-loaded `Channel` with this [rawId] in place
+  /// (both `channels` and `liveChannels` — one of them is always empty
+  /// depending on mode, so this is safe to run unconditionally on both
+  /// rather than needing to know which mode this session is in) rather
+  /// than requiring a full reload for the change to show up anywhere.
+  Future<void> setEpgIdOverride(String rawId, String? epgId) async {
+    if (epgId == null || epgId.isEmpty) {
+      epgIdOverrides.remove(rawId);
+    } else {
+      epgIdOverrides[rawId] = epgId;
+    }
+    await storage.setEpgIdOverrides(profile.id, epgIdOverrides);
+    for (final channel in channels) {
+      if (channel.rawId == rawId) channel.epgIdOverride = epgIdOverrides[rawId];
+    }
+    for (final channel in liveChannels) {
+      if (channel.rawId == rawId) channel.epgIdOverride = epgIdOverrides[rawId];
+    }
     onNotify();
   }
 

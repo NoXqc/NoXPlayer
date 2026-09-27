@@ -16,6 +16,7 @@ class Channel {
     this.seriesId,
     this.seriesName,
     this.seriesCoverUrl,
+    this.epgIdOverride,
   });
 
   /// Stable identifier: the M3U `tvg-id` when present (used to match EPG
@@ -71,6 +72,27 @@ class Channel {
   String? seriesName;
   String? seriesCoverUrl;
 
+  /// A manually-assigned EPG channel id (see
+  /// `PlaylistManager.setEpgIdOverride`), replacing [rawId] as the key an
+  /// EPG lookup uses for this channel — set on the already-loaded
+  /// `Channel` in place, the same "mutate in place, no full reload"
+  /// pattern [isFavorite] already uses, and reapplied from
+  /// [PlaylistSession.epgIdOverrides] every time this channel's list is
+  /// (re)built (see the `favoriteIds()` stamping loops in
+  /// `playlist_session.dart`, right next to where this is stamped
+  /// alongside them). Exists because a provider's own `epg_channel_id`/
+  /// `tvg-id` for a channel can be missing, wrong, or simply not covered
+  /// by whatever third-party XMLTV source is configured — reported
+  /// directly (Trex channels with no EPG match at all in a third-party
+  /// feed that otherwise parses fine). Null means "use rawId", not "no
+  /// EPG" — every existing channel keeps working exactly as before.
+  String? epgIdOverride;
+
+  /// The id every EPG lookup call site uses — see [epgIdOverride]'s doc
+  /// comment. Never [rawId] directly from an EPG-lookup call site; that
+  /// would bypass a manual assignment.
+  String get epgId => epgIdOverride ?? rawId;
+
   Channel copyWith({bool? isFavorite}) => Channel(
         id: id,
         rawId: rawId,
@@ -86,6 +108,7 @@ class Channel {
         seriesId: seriesId,
         seriesName: seriesName,
         seriesCoverUrl: seriesCoverUrl,
+        epgIdOverride: epgIdOverride,
       );
 
   Map<String, dynamic> toJson() => {

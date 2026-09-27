@@ -10,6 +10,7 @@ import '../../utils/constants.dart';
 import '../../utils/tv_theme.dart';
 import '../../widgets/settings_scaffold.dart';
 import '../catalog_sync_screen.dart';
+import 'epg_channel_matching_screen.dart';
 
 /// No custom D-pad handling — see SettingsMenuScreen's doc comment for
 /// why: plain Flutter default focus traversal is what actually works
@@ -132,6 +133,23 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen> {
                         : const Icon(Icons.calendar_month),
                     label: const Text('Update EPG Now'),
                     onPressed: epg.isLoading ? null : _updateNow,
+                  ),
+                  const Divider(height: 32),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.compare_arrows),
+                    label: const Text('Channel Matching'),
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const EpgChannelMatchingScreen()),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Fix a channel with no program data by manually '
+                    'assigning it to an entry in the loaded EPG feed — '
+                    'useful when a provider\'s own id doesn\'t match a '
+                    'third-party source.',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const Divider(height: 32),
                   OutlinedButton(
