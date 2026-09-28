@@ -229,11 +229,51 @@ class _PosterCardState extends State<PosterCard> {
                               bottomLeft: Radius.circular(10),
                               bottomRight: Radius.circular(10),
                             ),
-                            child: LinearProgressIndicator(
-                              value: widget.progressFraction,
-                              minHeight: 4,
-                              backgroundColor: Colors.black45,
-                              color: scheme.primary,
+                            // Was a plain 4px `scheme.primary` bar directly
+                            // on the poster — reported directly as barely
+                            // visible, and on a focused card actively
+                            // blending into the focus border/glow above it
+                            // (also `scheme.primary`, by design, so the two
+                            // were never going to read as separate things).
+                            // An opaque backing strip plus a percentage
+                            // label fixes both at once: legible against any
+                            // poster art regardless of focus state, and a
+                            // real number reads at a glance without having
+                            // to notice a thin bar's fill length at all.
+                            // `scheme.secondary` for the fill — this app's
+                            // whole duo-tone design already guarantees that
+                            // reads as a distinct hue from whatever
+                            // `scheme.primary` the focus glow is using.
+                            child: ColoredBox(
+                              color: Colors.black.withValues(alpha: 0.78),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(4, 2, 4, 3),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${(widget.progressFraction! * 100).round()}%',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.bold,
+                                        height: 1.0,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(2),
+                                      child: LinearProgressIndicator(
+                                        value: widget.progressFraction,
+                                        minHeight: 4,
+                                        backgroundColor: Colors.white24,
+                                        color: scheme.secondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ),
                         ),
