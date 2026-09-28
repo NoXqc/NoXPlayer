@@ -350,8 +350,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// A GlobalKey (not a plain field reference) because [_buildLiveRegion]
   /// creates a fresh [_TimelineGuide] widget on every rebuild — the key
   /// is what keeps Flutter reusing the same underlying State instead of
-  /// a new one each time.
-  final GlobalKey<_TimelineGuideState> _timelineGuideKey = GlobalKey();
+  /// a new one each time. Not `final`: swapped out for a brand new
+  /// `GlobalKey` (in a `setState`) when that State's own
+  /// `onWindowStale` fires — the one deliberate exception to "keeps
+  /// reusing the same State", forcing exactly the fresh remount that
+  /// call is asking for. See `_TimelineGuideState._windowStart`'s doc
+  /// comment for why that's ever needed at all.
+  GlobalKey<_TimelineGuideState> _timelineGuideKey = GlobalKey();
 
   /// A starting estimate only — rows can grow to two lines for a long
   /// channel name — refined by `Scrollable.ensureVisible` once the target
@@ -1959,6 +1964,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
               onOpen: _selectChannel,
               onFocusChanged: _onGuideFocusChanged,
               onShowOptions: _showChannelOptions,
+              onWindowStale: () =>
+                  setState(() => _timelineGuideKey = GlobalKey()),
             ),
           ),
         ],
@@ -3895,7 +3902,8 @@ class _TimelineGuide extends StatefulWidget {
       required this.epg,
       required this.onOpen,
       required this.onFocusChanged,
-      required this.onShowOptions});
+      required this.onShowOptions,
+      this.onWindowStale});
 
   final List<Channel> channels;
   final EpgService epg;
@@ -3904,6 +3912,13 @@ class _TimelineGuide extends StatefulWidget {
 
   /// Hold-Select on a block — see [_TvHomeScreenState._showChannelOptions].
   final void Function(Channel channel) onShowOptions;
+
+  /// This instance's fixed [_TimelineGuideState._windowStart]/`_windowEnd`
+  /// has gone (or is about to go) stale — see that field's own doc
+  /// comment for why. The parent's only real fix is discarding this whole
+  /// widget/State and mounting a fresh one (a new key), which is outside
+  /// what this State can do to itself.
+  final VoidCallback? onWindowStale;
 
   @override
   State<_TimelineGuide> createState() => _TimelineGuideState();
@@ -3925,9 +3940,27 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   /// screen nobody can see" principle as [_WhatsNewCarouselState].
   static const Duration _nowTickInterval = Duration(seconds: 30);
 
+  /// Fixed for this State's whole lifetime, computed once in [initState]
+  /// from whatever "now" was at that moment — every pixel offset, scroll
+  /// position, and registered block's start/end in this whole class is
+  /// relative to this. That's fine for how long a *typical* visit to the
+  /// guide lasts, but this screen can legitimately be left open/playing
+  /// for hours (reported directly: left the TV running, came back to the
+  /// guide showing a "now" position hours in the past — the red "now"
+  /// line had run clean off the right edge of this fixed window, with
+  /// nothing re-deriving it because [_startNowTimer]'s own tick only
+  /// ever `setState`s this same State, never rebuilds these `late final`
+  /// fields). [_checkWindowStale] is this class's own half of the fix —
+  /// it can't re-window itself in place (every scroll position, focused
+  /// block, and cursor slot is keyed to the old one), so it just tells
+  /// [_TimelineGuide.onWindowStale] to throw this whole widget away and
+  /// mount a fresh one instead (the parent does that by swapping in a new
+  /// `GlobalKey` for it), which gets a correctly fresh window for free
+  /// through the exact same [initState] path a first-ever open takes.
   late final DateTime _windowStart;
   late final DateTime _windowEnd;
   late final double _totalWidth;
+  bool _staleReported = false;
 
   // Two independent controller pairs (ruler mirrors the grid horizontally,
   // the channel-label column mirrors it vertically) rather than sharing
@@ -3978,8 +4011,27 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   void _startNowTimer() {
     _nowTimer?.cancel();
     _nowTimer = Timer.periodic(_nowTickInterval, (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      _checkWindowStale();
+      setState(() {});
     });
+  }
+
+  /// See [_windowStart]'s doc comment. Triggered with an hour of margin
+  /// before "now" would actually leave the window — not right at the
+  /// edge — so the remount happens while everything still looks fine,
+  /// never as a visible jump cutting off whatever's on screen. Reports
+  /// once per State (guarded by [_staleReported]): the parent's remount
+  /// destroys this whole State shortly after anyway, and without the
+  /// guard every 30s tick between here and that remount actually landing
+  /// would call it again for nothing.
+  void _checkWindowStale() {
+    if (_staleReported) return;
+    if (!DateTime.now()
+        .isBefore(_windowEnd.subtract(const Duration(hours: 1)))) {
+      _staleReported = true;
+      widget.onWindowStale?.call();
+    }
   }
 
   @override
@@ -3993,7 +4045,13 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   void didPushNext() => _nowTimer?.cancel();
 
   @override
-  void didPopNext() => _startNowTimer();
+  void didPopNext() {
+    // Checked immediately, not just left to the next 30s tick — covering
+    // fullscreen (this guide sitting covered, hence this timer paused)
+    // for long enough to go stale itself.
+    _checkWindowStale();
+    _startNowTimer();
+  }
 
   @override
   void dispose() {
