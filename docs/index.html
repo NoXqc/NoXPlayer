@@ -203,7 +203,7 @@ code,kbd,.mono{
 }
 
 /* ============================ Hero ============================ */
-.hero{ position:relative; isolation:isolate; overflow:hidden; padding:clamp(48px,9vw,104px) 0 0; }
+.hero{ position:relative; isolation:isolate; overflow:hidden; padding:clamp(48px,9vw,104px) 0 clamp(56px,9vw,96px); }
 .hero::before{
   content:"";
   position:absolute; z-index:-1;
@@ -332,7 +332,6 @@ h1 .grad{
 .shot figcaption::before{
   content:""; width:16px; height:1px; background:var(--hair-2); flex:none;
 }
-.hero-shot{ padding-bottom:clamp(56px,9vw,96px); }
 
 /* ============================ Sections ============================ */
 section{ position:relative; }
@@ -656,16 +655,6 @@ details .ans p + p{ margin-top:12px; }
       </div>
 
       <div class="ruler" role="presentation"></div>
-    </div>
-
-    <div class="wrap hero-shot">
-      <figure class="shot">
-        <div class="shot-frame">
-          <img src="assets/shot-live.png" width="1600" height="900" fetchpriority="high" decoding="async"
-               alt="NoXPlayer live TV screen: a channel list on the left beside a scrolling programme guide grid, with the current programme previewed at the top.">
-        </div>
-        <figcaption>Live TV with the XMLTV guide</figcaption>
-      </figure>
     </div>
   </section>
 
