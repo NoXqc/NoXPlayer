@@ -5,7 +5,9 @@ import '../models/channel.dart';
 import '../models/m3u_group.dart';
 import '../models/playlist_profile.dart';
 import '../models/xtream_series.dart';
+import '../utils/channel_name_matching.dart';
 import 'catalog_database.dart';
+import 'epg_service.dart';
 import 'playlist_session.dart';
 import 'storage_service.dart';
 
@@ -464,6 +466,213 @@ class PlaylistManager extends ChangeNotifier {
   Future<void> setEpgIdOverride(Channel channel, String? epgId) =>
       _sessionFor(channel.playlistId)?.setEpgIdOverride(channel.rawId, epgId) ??
       Future.value();
+
+  /// Every channel whose current EPG assignment was set by "Auto-Pair
+  /// Channels" rather than picked by hand, across every enabled playlist
+  /// — feeds "Unpair Channels"' confirmation count before it actually
+  /// runs. See [PlaylistSession.autoPairedEpgOverrides]'s doc comment.
+  int get autoPairedEpgOverrideCount => _enabledSessionsSorted.fold(
+      0, (sum, s) => sum + s.autoPairedEpgOverrides.length);
+
+  /// Undoes every EPG assignment "Auto-Pair Channels" made (not anything
+  /// picked by hand, before or since) — the opt-out for anyone who finds
+  /// auto-pairing gets something wrong, requested directly. Returns how
+  /// many were actually cleared.
+  Future<int> unpairAutoEpgOverrides() async {
+    var count = 0;
+    for (final session in _enabledSessionsSorted) {
+      for (final rawId in session.autoPairedEpgOverrides.toList()) {
+        await session.setEpgIdOverride(rawId, null);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// The manually-linked equivalent channel on another playlist, if this
+  /// one has been given one — see [AppConstants.keyChannelLinks]'s doc
+  /// comment. Null for the overwhelming majority of channels (no link
+  /// set). Callers that want the actual live [Channel] this points at,
+  /// not just the raw (playlistId, rawId) pair, use [resolveChannelLink].
+  ChannelLink? channelLinkFor(Channel channel) =>
+      _sessionFor(channel.playlistId)?.channelLinks[channel.rawId];
+
+  /// [link] null clears it. Also points the *target* channel back at
+  /// [channel] — a pairing is a mutual relationship (requested directly:
+  /// "if I manually swap Trex RDS HD to Ott RDS HD, can I swap back from
+  /// Ott to Trex"), not the one-way pointer a single [PlaylistSession
+  /// .setChannelLink] call on its own would leave it as. Never overwrites
+  /// an existing link already on the target's own side, whatever set
+  /// it — the reciprocal fill-in only happens when that side is
+  /// genuinely unset. Clearing (`link: null`) only clears this one
+  /// direction; the target's own reciprocal link (if any) is left alone,
+  /// since there's no single unambiguous "other side" to identify once
+  /// the forward pointer is gone.
+  Future<void> setChannelLink(Channel channel, ChannelLink? link) async {
+    final session = _sessionFor(channel.playlistId);
+    if (session == null) return;
+    await session.setChannelLink(channel.rawId, link);
+    if (link == null) return;
+    final targetSession = _sessionFor(link.playlistId);
+    if (targetSession != null &&
+        !targetSession.channelLinks.containsKey(link.rawId)) {
+      await targetSession.setChannelLink(
+          link.rawId, (playlistId: channel.playlistId, rawId: channel.rawId));
+    }
+  }
+
+  /// See [autoPairedEpgOverrideCount]'s doc comment — same idea, for
+  /// cross-playlist channel links instead of EPG assignments.
+  int get autoPairedChannelLinkCount => _enabledSessionsSorted.fold(
+      0, (sum, s) => sum + s.autoPairedChannelLinks.length);
+
+  /// See [unpairAutoEpgOverrides]'s doc comment — same idea, for
+  /// cross-playlist channel links instead of EPG assignments.
+  Future<int> unpairAutoChannelLinks() async {
+    var count = 0;
+    for (final session in _enabledSessionsSorted) {
+      for (final rawId in session.autoPairedChannelLinks.toList()) {
+        await session.setChannelLink(rawId, null);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// Resolves a [ChannelLink] to the actual live [Channel] it points at —
+  /// null if that playlist's since been removed/disabled, or that
+  /// specific channel's since disappeared from a refreshed catalog (a
+  /// provider dropping/renaming a channel). Searches `liveChannels`/
+  /// `channels` directly (bypassing [visibleChannels]'s hidden-channel
+  /// filtering, [Channel.epgId] resolution, etc.) — a link should still
+  /// resolve to a channel the user has deliberately hidden, since hiding
+  /// it from normal browsing isn't the same as wanting it excluded from
+  /// failover.
+  Channel? resolveChannelLink(ChannelLink link) {
+    final session = _sessionFor(link.playlistId);
+    if (session == null) return null;
+    final all = session.isXtream ? session.liveChannels : session.channels;
+    for (final c in all) {
+      if (c.rawId == link.rawId) return c;
+    }
+    return null;
+  }
+
+  /// Buckets every channel in [source] by [canonicalChannelKey] — built
+  /// once per source and reused across every candidate channel it's
+  /// compared against, rather than recomputing/comparing token sets
+  /// pairwise for every single pair (quadratic — noticeable on a real
+  /// multi-thousand-channel catalog, not just in theory).
+  Map<String, List<Channel>> _channelsByKey(Iterable<Channel> source) {
+    final map = <String, List<Channel>>{};
+    for (final c in source) {
+      final key = canonicalChannelKey(c.name);
+      if (key.isEmpty) continue;
+      (map[key] ??= []).add(c);
+    }
+    return map;
+  }
+
+  /// "Auto-Pair Channels" for cross-playlist links — see
+  /// `ChannelLinkingScreen`'s own doc comment and
+  /// [channelNamesMatch]'s doc comment for why this only ever assigns an
+  /// *unambiguous* exact match (found in exactly one other playlist,
+  /// never more) and leaves everything else for the manual picker.
+  /// Skips any channel that already has a link — running this again only
+  /// fills in gaps, it never revisits a previous pairing (auto or
+  /// manual). Returns every channel's composite `id` this pass actually
+  /// linked, so the caller can offer to review just those.
+  Future<Set<String>> autoPairChannelLinks() async {
+    final sessions = _enabledSessionsSorted;
+    // Visible (non-hidden-group, non-hidden-channel) live channels only —
+    // pairing something the user has deliberately hidden serves no
+    // purpose, and it's also most of why this was slow: reported
+    // directly as still running after 5 minutes against a playlist with
+    // only a handful of *active* groups but many more hidden ones,
+    // meaning most of what this was matching (and, before the fix right
+    // below, separately disk-writing for) was never going to be looked
+    // at anyway. Same list `ChannelLinkingScreen`'s own rows already
+    // show, so nothing pairs here that the review step can't explain.
+    final visibleBySession = <PlaylistSession, List<Channel>>{
+      for (final s in sessions)
+        s: visibleChannels(playlistId: s.profile.id, category: 'tv'),
+    };
+    final byKeyPerSession = <PlaylistSession, Map<String, List<Channel>>>{
+      for (final s in sessions) s: _channelsByKey(visibleBySession[s]!),
+    };
+
+    final paired = <String>{};
+    for (final session in sessions) {
+      // Accumulated in memory and written once via setChannelLinksBulk
+      // after this session's whole pass, not once per match — see that
+      // method's own doc comment for why calling setChannelLink here
+      // instead (this code's first version did exactly that) was the
+      // other, larger half of the same "still running after 5 minutes"
+      // report: every single match was a full disk write of the entire
+      // accumulated map, an O(size) cost that grows with every match
+      // added.
+      final newLinks = <String, ChannelLink>{};
+      for (final source in visibleBySession[session]!) {
+        if (session.channelLinks.containsKey(source.rawId)) continue;
+        final key = canonicalChannelKey(source.name);
+        if (key.isEmpty) continue;
+        Channel? found;
+        var ambiguous = false;
+        for (final other in sessions) {
+          if (identical(other, session)) continue;
+          final candidates = byKeyPerSession[other]?[key];
+          if (candidates == null || candidates.isEmpty) continue;
+          if (found != null || candidates.length > 1) {
+            ambiguous = true;
+            break;
+          }
+          found = candidates.first;
+        }
+        if (found != null && !ambiguous) {
+          newLinks[source.rawId] =
+              (playlistId: found.playlistId, rawId: found.rawId);
+          paired.add(source.id);
+        }
+      }
+      await session.setChannelLinksBulk(newLinks);
+    }
+    return paired;
+  }
+
+  /// "Auto-Pair Channels" for EPG assignment — see
+  /// `EpgChannelMatchingScreen`'s own doc comment. Same unambiguous-
+  /// exact-match-only rule as [autoPairChannelLinks]; also skips a
+  /// channel that's already showing real programme data (an exact-id
+  /// automatic match, or a previous assignment) — nothing to fix there.
+  Future<Set<String>> autoPairEpgIds(EpgService epg) async {
+    final byKey = <String, List<String>>{};
+    for (final entry in epg.channelCatalog.entries) {
+      final key = canonicalChannelKey(entry.value);
+      if (key.isEmpty) continue;
+      (byKey[key] ??= []).add(entry.key);
+    }
+
+    final paired = <String>{};
+    for (final session in _enabledSessionsSorted) {
+      // Same two fixes as autoPairChannelLinks (visible channels only,
+      // one bulk write per session instead of one per match) — see that
+      // method's own doc comments for why both matter.
+      final newOverrides = <String, String>{};
+      for (final channel
+          in visibleChannels(playlistId: session.profile.id, category: 'tv')) {
+        if (channel.epgIdOverride != null) continue;
+        if (epg.getPrograms(channel.epgId).isNotEmpty) continue;
+        final key = canonicalChannelKey(channel.name);
+        if (key.isEmpty) continue;
+        final candidates = byKey[key];
+        if (candidates == null || candidates.length != 1) continue;
+        newOverrides[channel.rawId] = candidates.first;
+        paired.add(channel.id);
+      }
+      await session.setEpgIdOverridesBulk(newOverrides);
+    }
+    return paired;
+  }
 
   /// Every hidden channel across [playlistId] — used by the "Hidden
   /// channels" section in Group Management to list and unhide them.

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../services/epg_service.dart';
 import '../../services/playlist_manager.dart';
+import '../../widgets/auto_pair_flow.dart';
 import '../../widgets/settings_scaffold.dart';
 
 /// Lets the user fix a channel whose EPG programme data is missing or
@@ -14,6 +16,12 @@ import '../../widgets/settings_scaffold.dart';
 /// handling here — see `EpgSettingsScreen`'s own doc comment for why
 /// plain Flutter default focus traversal is the right call for a
 /// Settings-family screen like this one.
+///
+/// Embedded as the "EPG Matching" tab of [EpgSettingsScreen] — not a
+/// screen of its own (no `SettingsScaffold` here; the parent already
+/// provides one, shared across all its tabs) despite the name and the
+/// `State`/`Screen` naming left as-is from when it was one, to keep the
+/// rename contained to what's actually user-visible.
 ///
 /// Lists every visible live channel with its current match state; tapping
 /// one opens [_AssignEpgScreen] to search the loaded feed's own channel
@@ -29,10 +37,89 @@ class EpgChannelMatchingScreen extends StatefulWidget {
 
 class _EpgChannelMatchingScreenState extends State<EpgChannelMatchingScreen> {
   final _searchController = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: 'epg-matching-search');
+  final _autoPairFocus = FocusNode(debugLabel: 'epg-matching-auto-pair');
+
+  /// The currently-first row's own node — retargeted to whichever channel
+  /// is actually first after every filter/search change (see [build]) so
+  /// Down from the search field always has a real, live node to jump to.
+  final _firstResultFocus = FocusNode(debugLabel: 'epg-matching-first-result');
+
+  /// See `ChannelLinkingScreen._reviewFilter`'s doc comment — same idea,
+  /// for this screen's own "Auto-Pair Channels".
+  Set<String>? _reviewFilter;
+
+  /// Escapes the search field in either direction — plain default arrow-
+  /// key traversal doesn't reliably escape a focused `TextField` at all
+  /// on real remote hardware, the exact same root cause
+  /// `AddPlaylistScreen._handleFieldEscapeKey` already documents and
+  /// fixes for its own fields. Reported directly here too: stuck in the
+  /// search field either way, unable to reach the buttons above *or* the
+  /// list below it (an Up-only version of this fix shipped first, on the
+  /// assumption Down was already reaching the list fine on its own —
+  /// confirmed wrong, it needs the exact same explicit handling as Up).
+  bool _handleSearchEscape(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.arrowUp &&
+        event.logicalKey != LogicalKeyboardKey.arrowDown) {
+      return false;
+    }
+    if (FocusManager.instance.primaryFocus != _searchFocus) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      _autoPairFocus.requestFocus();
+    } else {
+      _firstResultFocus.requestFocus();
+    }
+    return true;
+  }
+
+  Future<void> _autoPair(PlaylistManager playlist, EpgService epg) async {
+    if (epg.channelCatalog.isEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Auto-Pair Channels'),
+          content:
+              const Text('No EPG feed has been loaded yet this session — run '
+                  '"Update EPG Now" first so there\'s a channel directory to '
+                  'match against.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK')),
+          ],
+        ),
+      );
+      return;
+    }
+    final result = await runAutoPairFlow(context,
+        autoPair: () => playlist.autoPairEpgIds(epg));
+    if (!mounted) return;
+    setState(() => _reviewFilter = result.review ? result.paired : null);
+  }
+
+  Future<void> _unpair(PlaylistManager playlist) async {
+    final didUnpair = await confirmAndUnpair(context,
+        autoPairedCount: playlist.autoPairedEpgOverrideCount,
+        unpair: playlist.unpairAutoEpgOverrides);
+    if (!mounted || !didUnpair) return;
+    setState(() => _reviewFilter = null);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_handleSearchEscape);
+  }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleSearchEscape);
     _searchController.dispose();
+    _searchFocus.dispose();
+    _autoPairFocus.dispose();
+    _firstResultFocus.dispose();
     super.dispose();
   }
 
@@ -45,93 +132,122 @@ class _EpgChannelMatchingScreenState extends State<EpgChannelMatchingScreen> {
     // otherwise see and wouldn't recognize.
     final channels = playlist.visibleChannels(category: 'tv');
     final query = _searchController.text.trim().toLowerCase();
-    final filtered = query.isEmpty
-        ? channels
-        : channels.where((c) => c.name.toLowerCase().contains(query)).toList();
+    final reviewFilter = _reviewFilter;
+    final filtered = (query.isEmpty
+            ? channels
+            : channels.where((c) => c.name.toLowerCase().contains(query)))
+        .where((c) => reviewFilter == null || reviewFilter.contains(c.id))
+        .toList();
 
-    return SettingsScaffold(
-      title: 'Channel Matching',
-      body: Column(
-        children: [
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  focusNode: _autoPairFocus,
+                  icon: const Icon(Icons.auto_fix_high),
+                  label: const Text('Auto-Pair Channels'),
+                  onPressed: () => _autoPair(playlist, epg),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.undo),
+                  label: const Text('Unpair Channels'),
+                  onPressed: () => _unpair(playlist),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: TextField(
+            controller: _searchController,
+            focusNode: _searchFocus,
+            decoration: InputDecoration(
+              labelText: reviewFilter != null
+                  ? 'Reviewing ${reviewFilter.length} auto-paired channel${reviewFilter.length == 1 ? '' : 's'} — type to search all instead'
+                  : 'Search your channels',
+              prefixIcon: const Icon(Icons.search),
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (value) => setState(() {
+              if (value.isNotEmpty) _reviewFilter = null;
+            }),
+          ),
+        ),
+        if (epg.channelCatalog.isEmpty)
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: TextField(
-              controller: _searchController,
-              decoration: const InputDecoration(
-                labelText: 'Search your channels',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (_) => setState(() {}),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Text(
+              'No EPG feed has been loaded yet this session — run '
+              '"Update EPG Now" above first so there\'s a channel '
+              'directory to search.',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(color: Theme.of(context).colorScheme.error),
             ),
           ),
-          if (epg.channelCatalog.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Text(
-                'No EPG feed has been loaded yet this session — run '
-                '"Update EPG Now" above first so there\'s a channel '
-                'directory to search.',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Theme.of(context).colorScheme.error),
-              ),
-            ),
-          Expanded(
-            child: filtered.isEmpty
-                ? const Center(child: Text('No channels found.'))
-                : ListView.builder(
-                    itemCount: filtered.length,
-                    itemBuilder: (context, i) {
-                      final channel = filtered[i];
-                      final overrideId = channel.epgIdOverride;
-                      final hasPrograms =
-                          epg.getPrograms(channel.epgId).isNotEmpty;
-                      final String status;
-                      final bool ok;
-                      if (overrideId != null) {
-                        status =
-                            'Assigned: ${epg.channelCatalog[overrideId] ?? overrideId}';
-                        ok = true;
-                      } else if (hasPrograms) {
-                        status = 'Matched automatically';
-                        ok = true;
-                      } else {
-                        status = 'No program data';
-                        ok = false;
-                      }
-                      return ListTile(
-                        title: Text(channel.name,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        subtitle: Text(status,
-                            style: TextStyle(
-                                color: ok
-                                    ? null
-                                    : Theme.of(context).colorScheme.error)),
-                        trailing: overrideId != null
-                            ? IconButton(
-                                icon: const Icon(Icons.clear),
-                                tooltip: 'Clear assignment',
-                                onPressed: () =>
-                                    playlist.setEpgIdOverride(channel, null),
-                              )
-                            : const Icon(Icons.chevron_right),
-                        onTap: () async {
-                          final picked = await Navigator.of(context)
-                              .push<String>(MaterialPageRoute(
-                                  builder: (_) => _AssignEpgScreen(
-                                      channelName: channel.name)));
-                          if (picked != null) {
-                            await playlist.setEpgIdOverride(channel, picked);
-                          }
-                        },
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
+        Expanded(
+          child: filtered.isEmpty
+              ? const Center(child: Text('No channels found.'))
+              : ListView.builder(
+                  itemCount: filtered.length,
+                  itemBuilder: (context, i) {
+                    final channel = filtered[i];
+                    final overrideId = channel.epgIdOverride;
+                    final hasPrograms =
+                        epg.getPrograms(channel.epgId).isNotEmpty;
+                    final String status;
+                    final bool ok;
+                    if (overrideId != null) {
+                      status =
+                          'Assigned: ${epg.channelCatalog[overrideId] ?? overrideId}';
+                      ok = true;
+                    } else if (hasPrograms) {
+                      status = 'Matched automatically';
+                      ok = true;
+                    } else {
+                      status = 'No program data';
+                      ok = false;
+                    }
+                    return ListTile(
+                      focusNode: i == 0 ? _firstResultFocus : null,
+                      title: Text(channel.name,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(status,
+                          style: TextStyle(
+                              color: ok
+                                  ? null
+                                  : Theme.of(context).colorScheme.error)),
+                      trailing: overrideId != null
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              tooltip: 'Clear assignment',
+                              onPressed: () =>
+                                  playlist.setEpgIdOverride(channel, null),
+                            )
+                          : const Icon(Icons.chevron_right),
+                      onTap: () async {
+                        final picked = await Navigator.of(context).push<String>(
+                            MaterialPageRoute(
+                                builder: (_) => _AssignEpgScreen(
+                                    channelName: channel.name)));
+                        if (picked != null) {
+                          await playlist.setEpgIdOverride(channel, picked);
+                        }
+                      },
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }

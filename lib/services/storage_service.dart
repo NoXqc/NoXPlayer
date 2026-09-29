@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/channel.dart';
 import '../models/playlist_profile.dart';
 import '../utils/constants.dart';
 
@@ -219,6 +220,57 @@ class StorageService {
           String playlistId, Map<String, String> overrides) =>
       _prefs.setString('${AppConstants.keyEpgIdOverrides}_$playlistId',
           jsonEncode(overrides));
+
+  /// Keyed by `Channel.rawId` -> the linked channel's own (playlistId,
+  /// rawId) — see [AppConstants.keyChannelLinks]'s doc comment. Same
+  /// "corrupt/missing reads back empty" tolerance as [getEpgIdOverrides].
+  Map<String, ChannelLink> getChannelLinks(String playlistId) {
+    final raw = _prefs.getString('${AppConstants.keyChannelLinks}_$playlistId');
+    if (raw == null) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return decoded.map((k, v) {
+        final m = v as Map<String, dynamic>;
+        return MapEntry(k, (
+          playlistId: m['playlistId'] as String,
+          rawId: m['rawId'] as String
+        ));
+      });
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> setChannelLinks(
+          String playlistId, Map<String, ChannelLink> links) =>
+      _prefs.setString(
+          '${AppConstants.keyChannelLinks}_$playlistId',
+          jsonEncode(links.map((k, v) =>
+              MapEntry(k, {'playlistId': v.playlistId, 'rawId': v.rawId}))));
+
+  /// See [AppConstants.keyAutoPairedChannelLinks]'s doc comment.
+  Set<String> getAutoPairedChannelLinks(String playlistId) =>
+      (_prefs.getStringList(
+                  '${AppConstants.keyAutoPairedChannelLinks}_$playlistId') ??
+              [])
+          .toSet();
+  Future<void> setAutoPairedChannelLinks(
+          String playlistId, Set<String> rawIds) =>
+      _prefs.setStringList(
+          '${AppConstants.keyAutoPairedChannelLinks}_$playlistId',
+          rawIds.toList());
+
+  /// See [AppConstants.keyAutoPairedEpgOverrides]'s doc comment.
+  Set<String> getAutoPairedEpgOverrides(String playlistId) =>
+      (_prefs.getStringList(
+                  '${AppConstants.keyAutoPairedEpgOverrides}_$playlistId') ??
+              [])
+          .toSet();
+  Future<void> setAutoPairedEpgOverrides(
+          String playlistId, Set<String> rawIds) =>
+      _prefs.setStringList(
+          '${AppConstants.keyAutoPairedEpgOverrides}_$playlistId',
+          rawIds.toList());
 
   Set<String> getFavoritedGroups(String playlistId) =>
       (_prefs.getStringList('${AppConstants.keyFavoritedGroups}_$playlistId') ??

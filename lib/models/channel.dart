@@ -1,3 +1,10 @@
+/// A manual cross-playlist link — see
+/// `AppConstants.keyChannelLinks`'s doc comment. Identifies another
+/// [Channel] by its own (playlistId, rawId), the same pair
+/// `PlaylistManager.resolveChannelLink` looks a live [Channel] back up
+/// from.
+typedef ChannelLink = ({String playlistId, String rawId});
+
 /// A single playable entry parsed from an M3U playlist (a live TV channel
 /// or a VOD/movie item — the app treats both the same way at this level).
 class Channel {

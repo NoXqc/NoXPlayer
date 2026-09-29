@@ -264,6 +264,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     // popped/re-pushed — everything below reflects whatever's *actually*
     // playing, not just the episode this screen was originally opened for.
     final channel = playback.currentChannel ?? widget.channel;
+    // See PlayerControls.linkedChannel's doc comment. Resolved fresh on
+    // every build (not cached) — a link the user just set in Settings, or
+    // a channel that's disappeared from a refreshed catalog, should show
+    // up/go away here without needing to reopen this screen.
+    final channelLink = playlist.channelLinkFor(channel);
+    final linkedChannel =
+        channelLink == null ? null : playlist.resolveChannelLink(channelLink);
     _isTvLayout = prefs.layoutMode == 'tv' ||
         (prefs.layoutMode == 'auto' &&
             (prefs.isTelevision ||
@@ -460,6 +467,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                               .play(playback.nextUpChannel!)
                                           : null,
                                       onActivity: _resetHideTimer,
+                                      linkedChannel: linkedChannel,
                                     ),
                                   ),
                                 ),

@@ -9,6 +9,7 @@ import '../models/channel.dart';
 import '../services/app_preferences.dart';
 import '../services/epg_service.dart';
 import '../services/playback_service.dart';
+import '../services/playlist_manager.dart';
 import 'epg_guide.dart';
 
 /// Renders whatever [PlaybackService] is currently playing.
@@ -62,6 +63,17 @@ class VideoPlayerPane extends StatelessWidget {
     }
 
     if (playback.error != null) {
+      // Reached only once this playlist's own connection attempt *and*
+      // its backup servers (see PlaylistProfile.backupServers) have both
+      // already failed — a manually-linked channel on another playlist
+      // (see PlayerControls.linkedChannel's doc comment) is offered here
+      // front-and-center, since at this point this playlist genuinely has
+      // nothing left to try on its own.
+      final channelLink =
+          context.watch<PlaylistManager>().channelLinkFor(channel);
+      final linkedChannel = channelLink == null
+          ? null
+          : context.read<PlaylistManager>().resolveChannelLink(channelLink);
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -70,6 +82,16 @@ class VideoPlayerPane extends StatelessWidget {
             children: [
               Text(_friendlyPlaybackError(playback.error!),
                   textAlign: TextAlign.center),
+              if (linkedChannel != null) ...[
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  icon: const Icon(Icons.swap_horiz),
+                  label: Text(
+                      'Switch to ${context.read<PlaylistManager>().playlistNameFor(linkedChannel.playlistId)}: ${linkedChannel.name}'),
+                  onPressed: () =>
+                      context.read<PlaybackService>().play(linkedChannel),
+                ),
+              ],
               const SizedBox(height: 12),
               ExpansionTile(
                 title: const Text('Technical details',
@@ -200,6 +222,7 @@ class PlayerControls extends StatelessWidget {
     this.onPrevious,
     this.onNext,
     this.onActivity,
+    this.linkedChannel,
   });
 
   final VideoPlayerHdrController controller;
@@ -250,6 +273,17 @@ class PlayerControls extends StatelessWidget {
   /// over. [PlayerScreen] wires this to the same reset its own Up/Down
   /// handling already calls.
   final VoidCallback? onActivity;
+
+  /// Null hides the button entirely — see [Channel.epgIdOverride]'s
+  /// sibling concept, `PlaylistManager.channelLinkFor`: a manually-linked
+  /// equivalent channel on another playlist, always offered here
+  /// (whether or not anything's currently wrong) as a one-press manual
+  /// failover, requested directly for exactly the case a shared/rebranded
+  /// provider outage takes one playlist down but not another. Deliberately
+  /// not automatic — see [VideoPlayerPane]'s own error-state version of
+  /// this same button for why the app can't yet tell a genuine outage
+  /// apart from an ordinary rebuffer on its own.
+  final Channel? linkedChannel;
 
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -377,6 +411,8 @@ class PlayerControls extends StatelessWidget {
                       onPressed: onNext,
                     ),
                   _AudioTrackButton(controller: controller),
+                  if (linkedChannel != null)
+                    _LinkedChannelButton(linkedChannel: linkedChannel!),
                 ],
               ),
             ],
@@ -522,6 +558,29 @@ class _AudioTrackButtonState extends State<_AudioTrackButton> {
       icon: const Icon(Icons.multitrack_audio, color: Colors.white),
       tooltip: 'Audio track',
       onPressed: _openPicker,
+    );
+  }
+}
+
+/// Manual one-press failover to a linked channel on another playlist —
+/// see [PlayerControls.linkedChannel]'s doc comment. Always shown (not
+/// conditional on anything actually being wrong right now), same
+/// "there whether you need it or not" shape as the skip/next-episode
+/// buttons either side of it.
+class _LinkedChannelButton extends StatelessWidget {
+  const _LinkedChannelButton({required this.linkedChannel});
+
+  final Channel linkedChannel;
+
+  @override
+  Widget build(BuildContext context) {
+    final playlistName = context
+        .watch<PlaylistManager>()
+        .playlistNameFor(linkedChannel.playlistId);
+    return IconButton(
+      icon: const Icon(Icons.swap_horiz, color: Colors.white),
+      tooltip: 'Switch to $playlistName: ${linkedChannel.name}',
+      onPressed: () => context.read<PlaybackService>().play(linkedChannel),
     );
   }
 }

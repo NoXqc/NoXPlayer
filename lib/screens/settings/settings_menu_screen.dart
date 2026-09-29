@@ -61,7 +61,8 @@ class SettingsMenuScreen extends StatelessWidget {
                   _MenuTile(
                     icon: Icons.calendar_month_outlined,
                     title: 'EPG',
-                    subtitle: 'Auto-refresh, update now, clear cache',
+                    subtitle:
+                        'Auto-refresh, channel matching & pairing, clear cache',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const EpgSettingsScreen())),
                   ),

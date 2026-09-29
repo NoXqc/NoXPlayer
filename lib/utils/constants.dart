@@ -61,6 +61,30 @@ class AppConstants {
   /// `getStringList`/`setStringList`. Namespaced per playlist exactly
   /// like [keyHiddenChannels].
   static const String keyEpgIdOverrides = 'nox_epg_id_overrides';
+
+  /// Manual cross-playlist "same real-world channel" link (see
+  /// `PlaylistManager.channelLinkFor`) — lets a live channel on one
+  /// playlist name its equivalent on another, for manual failover when
+  /// this playlist's own server (and its own backup servers) are down.
+  /// One-to-one only: a channel links to at most one other channel, not
+  /// a chain across three+ playlists. `Channel.rawId` -> the target
+  /// channel's own (playlistId, rawId) — JSON-encoded for the same reason
+  /// as [keyEpgIdOverrides]. Namespaced per playlist like every other key
+  /// here.
+  static const String keyChannelLinks = 'nox_channel_links';
+
+  /// Which `Channel.rawId`s' current [keyChannelLinks]/[keyEpgIdOverrides]
+  /// entry was set by "Auto-Pair Channels" rather than picked by hand —
+  /// lets "Unpair Channels" undo exactly what auto-pairing did, and
+  /// nothing a manual pick has since confirmed (requested directly:
+  /// an opt-out for anyone who finds auto-pairing gets something wrong).
+  /// A rawId is removed from here the moment its link/override is set
+  /// through the ordinary manual picker, or cleared outright — either
+  /// one means it's no longer "just an auto guess". Namespaced per
+  /// playlist and per feature (two separate keys, `_links`/`_epg`
+  /// suffixed) like everything else here.
+  static const String keyAutoPairedChannelLinks = 'nox_auto_paired_links';
+  static const String keyAutoPairedEpgOverrides = 'nox_auto_paired_epg';
   static const String keyFavoritedGroups = 'nox_favorited_groups';
   static const String keyRecentSearches = 'nox_recent_searches';
 

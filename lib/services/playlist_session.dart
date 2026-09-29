@@ -85,6 +85,22 @@ class PlaylistSession {
   /// lists (the same loops that stamp `isFavorite`).
   Map<String, String> epgIdOverrides = {};
 
+  /// See [AppConstants.keyChannelLinks]'s doc comment. Keyed by
+  /// [Channel.rawId] -> the linked channel elsewhere. Unlike
+  /// [epgIdOverrides]/[hiddenChannels], not stamped onto the `Channel`
+  /// objects themselves — nothing reads a link off a `Channel` directly,
+  /// every lookup goes through `PlaylistManager.channelLinkFor` instead,
+  /// so there's no per-channel field to keep in sync on every rebuild.
+  Map<String, ChannelLink> channelLinks = {};
+
+  /// See [AppConstants.keyAutoPairedChannelLinks]/
+  /// [AppConstants.keyAutoPairedEpgOverrides]'s doc comment — which
+  /// entries in [channelLinks]/[epgIdOverrides] were set by "Auto-Pair
+  /// Channels" rather than picked by hand, so "Unpair Channels" knows
+  /// exactly what it's allowed to undo.
+  Set<String> autoPairedChannelLinks = {};
+  Set<String> autoPairedEpgOverrides = {};
+
   // --- M3U-mode state ---------------------------------------------------
   List<Channel> channels = [];
 
@@ -187,6 +203,9 @@ class PlaylistSession {
     favoritedGroups = storage.getFavoritedGroups(profile.id);
     hiddenChannels = storage.getHiddenChannels(profile.id);
     epgIdOverrides = storage.getEpgIdOverrides(profile.id);
+    channelLinks = storage.getChannelLinks(profile.id);
+    autoPairedChannelLinks = storage.getAutoPairedChannelLinks(profile.id);
+    autoPairedEpgOverrides = storage.getAutoPairedEpgOverrides(profile.id);
 
     if (isXtream) {
       final username = profile.xtreamUsername;
@@ -1076,19 +1095,96 @@ class PlaylistSession {
   /// depending on mode, so this is safe to run unconditionally on both
   /// rather than needing to know which mode this session is in) rather
   /// than requiring a full reload for the change to show up anywhere.
-  Future<void> setEpgIdOverride(String rawId, String? epgId) async {
+  /// [isAuto] marks this as "Auto-Pair Channels"' own doing rather than a
+  /// manual pick — see [autoPairedEpgOverrides]'s doc comment. A manual
+  /// call (the ordinary picker screen's own default) always clears that
+  /// mark, whether it's setting a fresh value or clearing one outright —
+  /// either way this rawId is no longer "just an auto guess" once a
+  /// person has looked at it.
+  Future<void> setEpgIdOverride(String rawId, String? epgId,
+      {bool isAuto = false}) async {
     if (epgId == null || epgId.isEmpty) {
       epgIdOverrides.remove(rawId);
     } else {
       epgIdOverrides[rawId] = epgId;
     }
+    if (isAuto && epgId != null && epgId.isNotEmpty) {
+      autoPairedEpgOverrides.add(rawId);
+    } else {
+      autoPairedEpgOverrides.remove(rawId);
+    }
     await storage.setEpgIdOverrides(profile.id, epgIdOverrides);
+    await storage.setAutoPairedEpgOverrides(profile.id, autoPairedEpgOverrides);
     for (final channel in channels) {
       if (channel.rawId == rawId) channel.epgIdOverride = epgIdOverrides[rawId];
     }
     for (final channel in liveChannels) {
       if (channel.rawId == rawId) channel.epgIdOverride = epgIdOverrides[rawId];
     }
+    onNotify();
+  }
+
+  /// See [setChannelLinksBulk]'s doc comment — same fix, for EPG
+  /// assignments instead of cross-playlist links. Also patches every
+  /// affected `Channel.epgIdOverride` in one pass over each list (not
+  /// once per entry in [newOverrides] — the same quadratic trap
+  /// [setChannelLinksBulk] describes applies here just as much, since
+  /// [setEpgIdOverride] above re-scans the *entire* channel list on
+  /// every single call).
+  Future<void> setEpgIdOverridesBulk(Map<String, String> newOverrides) async {
+    if (newOverrides.isEmpty) return;
+    epgIdOverrides.addAll(newOverrides);
+    autoPairedEpgOverrides.addAll(newOverrides.keys);
+    await storage.setEpgIdOverrides(profile.id, epgIdOverrides);
+    await storage.setAutoPairedEpgOverrides(profile.id, autoPairedEpgOverrides);
+    for (final channel in channels) {
+      final id = newOverrides[channel.rawId];
+      if (id != null) channel.epgIdOverride = id;
+    }
+    for (final channel in liveChannels) {
+      final id = newOverrides[channel.rawId];
+      if (id != null) channel.epgIdOverride = id;
+    }
+    onNotify();
+  }
+
+  /// [link] null clears it. No per-`Channel` field to patch afterward —
+  /// see [channelLinks]'s own doc comment for why this is simpler than
+  /// [setEpgIdOverride] just above it. [isAuto]: see that same method's
+  /// own doc comment.
+  Future<void> setChannelLink(String rawId, ChannelLink? link,
+      {bool isAuto = false}) async {
+    if (link == null) {
+      channelLinks.remove(rawId);
+    } else {
+      channelLinks[rawId] = link;
+    }
+    if (isAuto && link != null) {
+      autoPairedChannelLinks.add(rawId);
+    } else {
+      autoPairedChannelLinks.remove(rawId);
+    }
+    await storage.setChannelLinks(profile.id, channelLinks);
+    await storage.setAutoPairedChannelLinks(profile.id, autoPairedChannelLinks);
+    onNotify();
+  }
+
+  /// "Auto-Pair Channels"' own way of applying many links at once — see
+  /// [PlaylistManager.autoPairChannelLinks]. [setChannelLink] above is
+  /// exactly right for a single manual pick, but was also (wrongly) being
+  /// called once per match from that bulk pass: each call there does a
+  /// full disk write of the *entire* accumulated map, an O(size) cost
+  /// that grows with every match added — reported directly as "still
+  /// running after 5 minutes" against a catalog with a few thousand
+  /// channels. This does the same update, but writes to disk and patches
+  /// every affected `Channel` exactly once, regardless of how many
+  /// [newLinks] there are.
+  Future<void> setChannelLinksBulk(Map<String, ChannelLink> newLinks) async {
+    if (newLinks.isEmpty) return;
+    channelLinks.addAll(newLinks);
+    autoPairedChannelLinks.addAll(newLinks.keys);
+    await storage.setChannelLinks(profile.id, channelLinks);
+    await storage.setAutoPairedChannelLinks(profile.id, autoPairedChannelLinks);
     onNotify();
   }
 
