@@ -167,6 +167,40 @@ code,kbd,.mono{
 .nav a:hover{ color:var(--ink); background:var(--panel-2); }
 @media (min-width:900px){ .nav{ display:flex; } }
 
+/* ---- Mobile menu toggle — the .nav links above simply vanish below
+   900px with nothing to replace them; this is that replacement. ---- */
+.nav-toggle{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:44px; height:44px; flex:none;
+  background:var(--panel); border:1px solid var(--hair-2); border-radius:var(--r-sm);
+  color:var(--ink); cursor:pointer;
+}
+.nav-toggle:hover{ background:var(--panel-2); }
+.nav-toggle svg{ display:block; }
+.nav-toggle .i-close{ display:none; }
+.nav-toggle[aria-expanded="true"] .i-open{ display:none; }
+.nav-toggle[aria-expanded="true"] .i-close{ display:block; }
+@media (min-width:900px){ .nav-toggle{ display:none; } }
+
+.nav-mobile{
+  display:none;
+  position:fixed; top:73px; left:0; right:0; z-index:19;
+  height:100vh; height:100dvh;
+  max-height:calc(100vh - 73px); max-height:calc(100dvh - 73px);
+  background:color-mix(in srgb, var(--bg) 97%, transparent);
+  -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px);
+  overflow-y:auto;
+}
+.nav-mobile.is-open{ display:block; }
+.nav-mobile .wrap{ padding-top:10px; padding-bottom:28px; display:grid; }
+.nav-mobile a{
+  display:block; color:var(--ink); text-decoration:none;
+  font-size:1.14rem; font-weight:600; letter-spacing:-.01em;
+  padding:17px 2px; border-bottom:1px solid var(--hair);
+}
+.nav-mobile a:hover, .nav-mobile a:focus-visible{ color:var(--pink-lift); }
+@media (min-width:900px){ .nav-mobile{ display:none !important; } }
+
 /* ============================ Buttons ============================ */
 .btn{
   display:inline-flex; align-items:center; justify-content:center; gap:10px;
@@ -485,8 +519,14 @@ h3{ font-size:1.22rem; letter-spacing:-.015em; font-stretch:92%; margin-bottom:9
 .motto p{ color:var(--ink-2); max-width:58ch; margin-inline:auto; font-size:1.05rem; }
 .motto .cta-row{ justify-content:center; }
 
-/* ---- FAQ ---- */
+/* ---- FAQ / How-To (same details/summary component, shared styling) ---- */
 .faq{ display:grid; gap:12px; max-width:880px; }
+.faq-group-title{
+  font-size:.86rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--violet-lift);
+  margin:38px 0 14px;
+}
+.faq-group-title:first-child{ margin-top:0; }
 details{
   background:var(--panel);
   border:1px solid var(--hair);
@@ -583,6 +623,7 @@ details .ans p + p{ margin-top:12px; }
       <a href="#features">Features</a>
       <a href="#tv">On the TV</a>
       <a href="#install">Install</a>
+      <a href="#howto">How to use it</a>
       <a href="#faq">FAQ</a>
       <a href="https://github.com/NoXqc/NoXPlayer">GitHub</a>
       <a href="https://discord.gg/DDeGDHvFY">Discord</a>
@@ -592,7 +633,25 @@ details .ans p + p{ margin-top:12px; }
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 20h16"/></svg>
       Download
     </a>
+
+    <button class="nav-toggle" type="button" id="navToggle" aria-expanded="false" aria-controls="navMobile" aria-label="Menu">
+      <svg class="i-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg>
+      <svg class="i-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></svg>
+    </button>
   </div>
+
+  <nav class="nav-mobile" id="navMobile" aria-label="Mobile">
+    <div class="wrap">
+      <a href="#requirements">What you need</a>
+      <a href="#features">Features</a>
+      <a href="#tv">On the TV</a>
+      <a href="#install">Install</a>
+      <a href="#howto">How to use it</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/NoXqc/NoXPlayer">GitHub</a>
+      <a href="https://discord.gg/DDeGDHvFY">Discord</a>
+    </div>
+  </nav>
 </header>
 
 <main id="main">
@@ -634,7 +693,7 @@ details .ans p + p{ margin-top:12px; }
       </div>
 
       <div class="codebox compact">
-        <span class="lbl" id="hero-dl-label">Fire Stick &middot; Downloader code</span>
+        <span class="lbl" id="hero-dl-label">Downloader Code</span>
         <span class="val mono" aria-labelledby="hero-dl-label">1760256</span>
         <button class="copy" type="button" data-copy="1760256">Copy</button>
         <span class="copy-status" role="status" aria-live="polite"></span>
@@ -1028,6 +1087,357 @@ details .ans p + p{ margin-top:12px; }
     </div>
   </section>
 
+  <hr class="rule">
+
+  <!-- ==================== HOW TO USE IT ==================== -->
+  <section class="sec" id="howto">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">New here? Start here</span>
+        <h2>How everything works, in plain language</h2>
+        <p>
+          Written for someone who has never touched an app like this before — no jargon
+          left unexplained. Tap any question to open it. If you're helping someone less
+          comfortable with tech get started, this is the page to send them.
+        </p>
+      </div>
+
+      <div class="faq reveal">
+
+        <p class="faq-group-title">The remote — the basics</p>
+
+        <details>
+          <summary>What do the remote buttons actually do?</summary>
+          <div class="ans">
+            <p>
+              The <b>arrow buttons</b> move a highlight around the screen — that highlight
+              shows you where you are. Press <b>OK</b> (sometimes labelled Select, or it's
+              the button in the middle of the arrows) to open or play whatever's
+              highlighted. Press <b>Back</b> to leave the current screen and go up one
+              level — pressing it enough times always gets you back to the very start.
+            </p>
+            <p>
+              On a channel or a movie poster, try <b>holding OK down</b> for a second
+              instead of just tapping it. On several screens that opens a small extra menu
+              — adding something to Favourites, or hiding a channel you never watch — that
+              a quick tap doesn't show.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>I'm lost. How do I always get back to a safe place?</summary>
+          <div class="ans">
+            <p>
+              Press <b>Back</b> repeatedly. Each press backs out one step — out of a
+              settings screen, out of a menu, out of a channel list — until you land on the
+              main screen with the tabs (Live, Movies, TV Shows) across the top or side.
+              You cannot break anything by pressing it too many times.
+            </p>
+          </div>
+        </details>
+
+        <p class="faq-group-title">Playlists — connecting your subscription</p>
+
+        <details>
+          <summary>What is a "playlist"? It's not a music playlist, right?</summary>
+          <div class="ans">
+            <p>
+              Right — inside NoXPlayer, a <b>playlist</b> just means one connection to one
+              IPTV subscription: either an Xtream Codes login (a server address, username
+              and password your provider gave you) or a direct link to an M3U file. It's
+              the thing that actually supplies the channels. NoXPlayer itself has none
+              built in.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Can I add more than one subscription?</summary>
+          <div class="ans">
+            <p>
+              Yes — go to <b>Settings → Add Playlist</b> and add as many as you have. Every
+              playlist you turn on gets merged together into one combined set of channels,
+              movies and shows, so you're not switching apps to use a second subscription.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>What does the "disable playlist" switch do, and why would I use it?</summary>
+          <div class="ans">
+            <p>
+              Most IPTV subscriptions only allow <b>one device</b> to watch at a time. If
+              you want to watch on a different device — your phone, say, while the living
+              room box is technically still "connected" — turning that playlist's switch
+              <b>off</b> here first releases the one connection your subscription allows,
+              so the other device can use it. Nothing about the playlist itself is deleted;
+              flipping the switch back on brings it right back.
+            </p>
+            <p>
+              You'll find this switch on the playlist's own settings screen, usually near
+              the top, labelled something like <b>"Playlist enabled."</b>
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>What are "backup servers" for?</summary>
+          <div class="ans">
+            <p>
+              Some providers give you more than one server address for the exact same
+              account. If you add those extra addresses as backup servers on a playlist,
+              NoXPlayer will automatically try them, in order, whenever the main one won't
+              answer — including mid-stream, if a channel you're actively watching drops.
+              You don't have to do anything when that happens; it happens on its own.
+            </p>
+          </div>
+        </details>
+
+        <p class="faq-group-title">Organizing your channels</p>
+
+        <details>
+          <summary>There are too many categories/groups. How do I clean that up?</summary>
+          <div class="ans">
+            <p>
+              Open a playlist's own settings and look for <b>Group Management</b>. It lists
+              every category your provider sends — sports, movies, international channels,
+              whatever they are — with a switch next to each one. Turn off anything you'll
+              never watch, and it disappears from your channel list entirely (and NoXPlayer
+              stops even downloading information about it, so it's not slowing anything
+              down in the background either).
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Can I hide just one or two channels, without hiding the whole group?</summary>
+          <div class="ans">
+            <p>
+              Yes — that's what <b>Hidden Channels</b> is for, found under
+              <b>Settings → Playlist Manager → Hidden Channels</b>. It's separate from
+              Group Management above: Group Management hides an entire category, Hidden
+              Channels hides individual channels one at a time, without touching the rest
+              of that category. Anything hidden this way can always be found again and
+              switched back on from that same screen.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>How do Favourites work?</summary>
+          <div class="ans">
+            <p>
+              Highlight a channel, movie or show and <b>hold OK down</b> for a second — a
+              small menu appears with an option to favourite it. Favourited channels and
+              groups are pinned together in their own spot for quick access, and they stay
+              favourited even if you switch which playlist is active, since favourites
+              aren't tied to any one provider.
+            </p>
+          </div>
+        </details>
+
+        <p class="faq-group-title">The TV guide (EPG)</p>
+
+        <details>
+          <summary>What does "EPG" mean?</summary>
+          <div class="ans">
+            <p>
+              <b>EPG</b> stands for Electronic Programme Guide — it's just the schedule
+              data: what's airing right now on each channel, what's on next, and (in the
+              fuller guide) what's on for the rest of the day. Your provider usually
+              supplies this automatically alongside your channels.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>There are two different guide layouts — what's the difference?</summary>
+          <div class="ans">
+            <p>
+              <b>Now/Next</b> is a simple list: each channel with what's playing right now
+              underneath it, one programme at a time. <b>Timeline</b> is a fuller schedule
+              grid — channels down the left, hours of programming laid out across the top,
+              so you can see what's on later this evening at a glance. Switch between them
+              in <b>Settings → Theme → Live TV guide</b>. Pick whichever one you find
+              easier to read; they show the same information.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>My guide is missing or wrong for some channels. Can I fix it?</summary>
+          <div class="ans">
+            <p>
+              Two options, depending on the problem. If your provider's schedule data is
+              incomplete, you can point NoXPlayer at a different, more complete guide
+              source yourself: when adding or editing a playlist, there's an optional
+              <b>Custom EPG (XMLTV) URL</b> field — paste a guide URL there (your provider
+              or a public XMLTV source can supply one) and leave it blank otherwise to use
+              the provider's own.
+            </p>
+            <p>
+              If the guide data exists but is showing up on the <em>wrong</em> channel,
+              that's a matching problem, not a missing-data problem — see the next
+              question.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>What is "EPG Matching"?</summary>
+          <div class="ans">
+            <p>
+              A guide source identifies channels by an internal code, and sometimes that
+              code doesn't line up with what your provider calls the same channel —
+              resulting in a channel with no schedule showing at all, or someone else's
+              schedule. <b>EPG Matching</b>, under <b>Settings → EPG → EPG Matching</b>,
+              lets you manually tell NoXPlayer "this channel's schedule actually comes from
+              that guide entry." There's also an <b>Auto-Match</b> button that tries to pair
+              everything up automatically first, so you're usually only fixing a handful of
+              leftovers by hand, not doing the whole list yourself.
+            </p>
+          </div>
+        </details>
+
+        <p class="faq-group-title">Channel pairing (backups across providers)</p>
+
+        <details>
+          <summary>What is Channel Pairing, and why would I need it?</summary>
+          <div class="ans">
+            <p>
+              If you have more than one playlist active, Channel Pairing lets you link a
+              channel on one to its equivalent on another — for example, the same sports
+              channel offered by two different providers you're subscribed to. Under
+              <b>Settings → EPG → Channel Pairing</b>, an <b>Auto-Pair</b> button matches
+              channels with matching names automatically; anything it can't confidently
+              match, you can link by hand instead.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>How do I actually use a pairing once it's set up?</summary>
+          <div class="ans">
+            <p>
+              While watching a paired channel, a small swap icon in the player controls
+              lets you switch straight to its paired equivalent with one press — useful the
+              moment a channel starts buffering badly or drops out entirely on the provider
+              you're currently using. If a channel fails to load in the first place and it
+              has a pairing set up, NoXPlayer will also offer that same switch right on the
+              error screen.
+            </p>
+          </div>
+        </details>
+
+        <p class="faq-group-title">Recall — jump back to a channel you just left</p>
+
+        <details>
+          <summary>What does the Recall button do?</summary>
+          <div class="ans">
+            <p>
+              Think of it like the "Last channel" or "Recall" button on an old cable
+              remote. While watching live TV, a clock-icon button in the player controls
+              (furthest to the left, since it's about going <em>backward</em>) shows the
+              last few channels you were watching before this one — say you went from ESPN
+              to RDS to LCN to TVA Sports, Recall shows exactly that list, and picking one
+              switches straight back to it. No need to dig back through the whole channel
+              list to find where you just were.
+            </p>
+          </div>
+        </details>
+
+        <p class="faq-group-title">Movies &amp; TV Shows</p>
+
+        <details>
+          <summary>How is browsing movies and shows different from live TV?</summary>
+          <div class="ans">
+            <p>
+              Movies and TV Shows are browsed as a grid of poster artwork, organized into
+              rows by category — much like Netflix. Arrow left and right to move along a
+              row, up and down to jump between categories. Picking a show takes you into
+              its list of seasons and episodes rather than playing something directly.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>What's "Continue Watching"?</summary>
+          <div class="ans">
+            <p>
+              NoXPlayer remembers exactly where you stopped in any movie or episode. A
+              "Continue Watching" row appears at the top of the Movies and TV Shows tabs
+              with anything you're partway through, so picking up tonight where you left
+              off last night is one press, not a search.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>How do I search for something specific?</summary>
+          <div class="ans">
+            <p>
+              There's a Search option (usually reachable from the top of the screen, or via
+              a dedicated Search button on the tabs) that searches live channels, movies or
+              TV shows — switch between which of the three you're searching with a single
+              press once you're in there.
+            </p>
+          </div>
+        </details>
+
+        <p class="faq-group-title">Making it your own</p>
+
+        <details>
+          <summary>Can I change how the app looks?</summary>
+          <div class="ans">
+            <p>
+              Yes — <b>Settings → Theme</b> has a set of colour palettes to pick from, plus
+              the Live TV guide layout choice mentioned above. Purely cosmetic; nothing
+              about how the app works changes based on which one you pick, so feel free to
+              try a few.
+            </p>
+          </div>
+        </details>
+
+        <p class="faq-group-title">When something isn't working</p>
+
+        <details>
+          <summary>A channel won't play, or the app shows a connection error. Now what?</summary>
+          <div class="ans">
+            <p>
+              The error screen names what failed and offers a <b>Retry</b> button — try
+              that first, since providers do have brief hiccups. If the playlist has backup
+              servers configured, NoXPlayer is likely already trying those automatically
+              behind the scenes. If you've set up a Channel Pairing for that channel, you'll
+              also see an option right there to switch to its paired equivalent on another
+              playlist instead of waiting.
+            </p>
+            <p>
+              If none of that helps, the problem is almost always on the provider's side,
+              not the app's — the same channel failing everywhere for everyone using that
+              provider is the usual sign of that.
+            </p>
+          </div>
+        </details>
+
+        <details>
+          <summary>None of this covers my problem. Where do I actually ask for help?</summary>
+          <div class="ans">
+            <p>
+              Join the <a href="https://discord.gg/DDeGDHvFY">Discord server</a> — that's
+              the fastest way to ask a real person. Mention what device you're on (phone,
+              Formuler box, Fire Stick), what you were trying to do, and what happened
+              instead. You can also open an issue on
+              <a href="https://github.com/NoXqc/NoXPlayer">GitHub</a> if you're comfortable
+              there.
+            </p>
+          </div>
+        </details>
+
+      </div>
+    </div>
+  </section>
+
   <!-- ==================== MOTTO ==================== -->
   <section class="motto">
     <div class="wrap">
@@ -1222,6 +1632,26 @@ details .ans p + p{ margin-top:12px; }
       }
     });
   });
+
+  /* Mobile menu toggle. */
+  var navToggle = document.getElementById("navToggle");
+  var navMobile = document.getElementById("navMobile");
+  if (navToggle && navMobile) {
+    var setOpen = function (open) {
+      navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      navMobile.classList.toggle("is-open", open);
+      document.body.style.overflow = open ? "hidden" : "";
+    };
+    navToggle.addEventListener("click", function () {
+      setOpen(navToggle.getAttribute("aria-expanded") !== "true");
+    });
+    navMobile.querySelectorAll("a").forEach(function (a) {
+      a.addEventListener("click", function () { setOpen(false); });
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") setOpen(false);
+    });
+  }
 
   /* Hairline under the header once the page has moved. Passive, cheap. */
   var head = document.getElementById("head");
