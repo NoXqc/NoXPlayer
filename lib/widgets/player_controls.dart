@@ -20,7 +20,10 @@ import 'epg_guide.dart';
 /// screen, mini-player) reflects the same live video.
 class VideoPlayerPane extends StatelessWidget {
   const VideoPlayerPane(
-      {super.key, this.showEpgBar = true, this.showControls = true});
+      {super.key,
+      this.showEpgBar = true,
+      this.showControls = true,
+      this.switchButtonFocusNode});
 
   final bool showEpgBar;
 
@@ -28,6 +31,20 @@ class VideoPlayerPane extends StatelessWidget {
   /// seek bar can't permanently steal D-pad focus) and just wants the bare
   /// video here — pass false there.
   final bool showControls;
+
+  /// [PlayerScreen] needs to know when this button has focus (and be able
+  /// to move focus onto/off of it itself) so its own D-pad handling can
+  /// treat it as a third explicit zone alongside its top/bottom bars,
+  /// rather than leaving it to Flutter's directional focus search — that
+  /// search isn't bounded to "the bar you're currently in" the way you'd
+  /// expect, and was confirmed to jump straight from the bottom bar to the
+  /// top bar, skipping this button entirely, once it existed as a third
+  /// focusable thing geometrically between two very differently-shaped
+  /// full-width bars. Null (this pane's small inline preview instances,
+  /// tv_home_screen.dart/home_screen.dart) just falls back to an internal,
+  /// non-autofocusing node — those have no such handling and shouldn't
+  /// steal focus for an errored preview tile anyway.
+  final FocusNode? switchButtonFocusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -84,10 +101,10 @@ class VideoPlayerPane extends StatelessWidget {
                   textAlign: TextAlign.center),
               if (linkedChannel != null) ...[
                 const SizedBox(height: 16),
-                FilledButton.icon(
-                  icon: const Icon(Icons.swap_horiz),
-                  label: Text(
-                      'Switch to ${context.read<PlaylistManager>().playlistNameFor(linkedChannel.playlistId)}: ${linkedChannel.name}'),
+                _SwitchToLinkedChannelButton(
+                  focusNode: switchButtonFocusNode,
+                  label:
+                      'Switch to ${context.read<PlaylistManager>().playlistNameFor(linkedChannel.playlistId)}: ${linkedChannel.name}',
                   onPressed: () =>
                       context.read<PlaybackService>().play(linkedChannel),
                 ),
@@ -185,6 +202,62 @@ class VideoPlayerPane extends StatelessWidget {
   }
 }
 
+/// Takes an externally-owned [FocusNode] when the caller needs to drive/
+/// observe this button's focus itself (see
+/// [VideoPlayerPane.switchButtonFocusNode]'s doc comment — [PlayerScreen]
+/// is the only such caller) and requests focus for it once this widget is
+/// actually built. A plain `autofocus: true` isn't reliable here: whoever
+/// hosts this pane typically claims focus for its own key handling well
+/// before a stream error (and this button) can exist, so an ambient
+/// autofocus flag has nothing to preempt at that point. Falls back to an
+/// owned, non-autofocusing node when none is supplied, for this pane's
+/// small inline preview instances that have no need for any of this.
+class _SwitchToLinkedChannelButton extends StatefulWidget {
+  const _SwitchToLinkedChannelButton(
+      {required this.label, required this.onPressed, this.focusNode});
+
+  final String label;
+  final VoidCallback onPressed;
+  final FocusNode? focusNode;
+
+  @override
+  State<_SwitchToLinkedChannelButton> createState() =>
+      _SwitchToLinkedChannelButtonState();
+}
+
+class _SwitchToLinkedChannelButtonState
+    extends State<_SwitchToLinkedChannelButton> {
+  FocusNode? _ownedFocusNode;
+  FocusNode get _focusNode =>
+      widget.focusNode ??
+      (_ownedFocusNode ??= FocusNode(debugLabel: 'switch-to-linked-channel'));
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.focusNode != null) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => widget.focusNode!.requestFocus());
+    }
+  }
+
+  @override
+  void dispose() {
+    _ownedFocusNode?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      focusNode: _focusNode,
+      icon: const Icon(Icons.swap_horiz),
+      label: Text(widget.label),
+      onPressed: widget.onPressed,
+    );
+  }
+}
+
 /// Translates the handful of raw platform exceptions actually seen in the
 /// wild into something a viewer can act on. Confirmed on real hardware
 /// (a Formuler box) via a `MediaCodecVideoRenderer` error dumping a 4K
@@ -223,6 +296,7 @@ class PlayerControls extends StatelessWidget {
     this.onNext,
     this.onActivity,
     this.linkedChannel,
+    this.channel,
   });
 
   final VideoPlayerHdrController controller;
@@ -284,6 +358,12 @@ class PlayerControls extends StatelessWidget {
   /// this same button for why the app can't yet tell a genuine outage
   /// apart from an ordinary rebuffer on its own.
   final Channel? linkedChannel;
+
+  /// The live channel actually playing — only used to exclude it from its
+  /// own Recall history below. Null hides that button entirely, same
+  /// convention as [onToggleFavorite]/[linkedChannel] — the shared inline
+  /// preview panes don't pass it.
+  final Channel? channel;
 
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -354,6 +434,20 @@ class PlayerControls extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  // Recall goes furthest left, ahead of even favorites/
+                  // pause — placed there deliberately, per direct
+                  // feedback: recall means *backward*, so left is where
+                  // it reads correctly, mirroring how rewind conventionally
+                  // sits left of a play head.
+                  if (isLive && channel != null)
+                    IconButton(
+                      icon: const Icon(Icons.history, color: Colors.white),
+                      tooltip: 'Recall — go back to a recent channel',
+                      onPressed: () {
+                        onActivity?.call();
+                        showRecallPicker(context, channel!);
+                      },
+                    ),
                   if (onToggleFavorite != null)
                     IconButton(
                       icon: Icon(
@@ -418,6 +512,100 @@ class PlayerControls extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// Opens the Recall picker — a bottom sheet listing the last few *live*
+/// channels actually watched before this one (not a program guide, not
+/// catchup/timeshift — a plain "go back to what I was just watching"
+/// shortcut, the same concept as a cable remote's dedicated Recall/Last
+/// button). Built entirely from [PlaybackService.recentlyPlayed], which
+/// every [PlaybackService.play] call already records — no new tracking
+/// needed. Filtered to live entries only ([Channel.isLiveId]) and deduped
+/// by id, since the same underlying list also carries VOD/episode history
+/// for the "Continue Watching" row.
+Future<void> showRecallPicker(BuildContext context, Channel current) async {
+  final playback = context.read<PlaybackService>();
+  final seen = <String>{current.id};
+  final history = <Channel>[];
+  for (final c in playback.recentlyPlayed) {
+    if (!Channel.isLiveId(c.rawId)) continue;
+    if (!seen.add(c.id)) continue;
+    history.add(c);
+    if (history.length >= 4) break;
+  }
+
+  await showModalBottomSheet<void>(
+    context: context,
+    // Transparent sheet chrome + transparent barrier — the actual visible
+    // panel is the translucent scrim inside _RecallPickerSheet, matching
+    // the Live TV channel list's own floating-over-the-video look
+    // (Colors.black.withValues(alpha: 0.62), see tv_home_screen.dart)
+    // rather than the default opaque modal sheet dimming everything
+    // behind it.
+    backgroundColor: Colors.transparent,
+    barrierColor: Colors.transparent,
+    builder: (sheetContext) => _RecallPickerSheet(channels: history),
+  );
+}
+
+class _RecallPickerSheet extends StatelessWidget {
+  const _RecallPickerSheet({required this.channels});
+
+  final List<Channel> channels;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.62),
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+        ),
+        child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text(
+              'Recall — recently watched',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold),
+            ),
+          ),
+          if (channels.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text(
+                'No other live channels watched yet this session.',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+            )
+          else
+            ...channels.map((c) => ListTile(
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16),
+                  leading: const Icon(Icons.tv,
+                      color: Colors.white54, size: 20),
+                  title: Text(c.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontSize: 14)),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    context.read<PlaybackService>().play(c);
+                  },
+                )),
+        ],
+        ),
       ),
     );
   }
@@ -567,20 +755,110 @@ class _AudioTrackButtonState extends State<_AudioTrackButton> {
 /// conditional on anything actually being wrong right now), same
 /// "there whether you need it or not" shape as the skip/next-episode
 /// buttons either side of it.
-class _LinkedChannelButton extends StatelessWidget {
+///
+/// The bare swap icon means nothing on its own — there's no established
+/// icon convention for "cross-playlist failover" the way there is for
+/// play/pause or skip, and unlike those, this button is entirely absent
+/// for every channel that isn't paired, so it's easy to land on days
+/// after setting one up with no memory of what it does. [IconButton]'s
+/// own `tooltip` doesn't help on a D-pad remote — there's no hover, no
+/// long-press-for-tooltip gesture, so that text was never actually
+/// reaching anyone driving by remote, only screen readers. This shows
+/// the same text as a real on-screen label instead, but only while the
+/// button is actually focused, the same "explain it right where the
+/// selector lands" shape requested directly for this exact button.
+class _LinkedChannelButton extends StatefulWidget {
   const _LinkedChannelButton({required this.linkedChannel});
 
   final Channel linkedChannel;
 
   @override
+  State<_LinkedChannelButton> createState() => _LinkedChannelButtonState();
+}
+
+class _LinkedChannelButtonState extends State<_LinkedChannelButton> {
+  // IconButton has no onFocusChange of its own to hook — an explicit
+  // FocusNode passed to it, listened to directly, is the reliable way to
+  // track its real D-pad focus state regardless of that (a second, outer
+  // Focus wrapper risks not being the node the D-pad actually lands on,
+  // since IconButton manages its own internally when none is given).
+  final FocusNode _focusNode = FocusNode(debugLabel: 'linked-channel-swap');
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() {
+    if (mounted) setState(() => _focused = _focusNode.hasFocus);
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final playlistName = context
         .watch<PlaylistManager>()
-        .playlistNameFor(linkedChannel.playlistId);
-    return IconButton(
-      icon: const Icon(Icons.swap_horiz, color: Colors.white),
-      tooltip: 'Switch to $playlistName: ${linkedChannel.name}',
-      onPressed: () => context.read<PlaybackService>().play(linkedChannel),
+        .playlistNameFor(widget.linkedChannel.playlistId);
+    final label = 'Switch to $playlistName: ${widget.linkedChannel.name}';
+    // Stack, not the Column this started as — reported directly on real
+    // hardware: a Column made the label a real sibling of the icon, so
+    // the whole row of controls grew taller and visibly shifted every
+    // time it appeared. Clip.none plus Positioned here means only the
+    // IconButton itself (the sole non-positioned child) sizes this
+    // Stack — the label floats up over the video above the toolbar
+    // without the toolbar's own layout ever knowing it's there.
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.bottomCenter,
+      children: [
+        IconButton(
+          focusNode: _focusNode,
+          icon: const Icon(Icons.swap_horiz, color: Colors.white),
+          tooltip: label,
+          onPressed: () =>
+              context.read<PlaybackService>().play(widget.linkedChannel),
+        ),
+        // A negative `bottom` (not just stacked above via normal flow)
+        // is what actually lets this float free of the button's own
+        // footprint — paired with the Stack's own Clip.none above, so it
+        // renders over the video rather than being clipped at the
+        // button's edge. Deliberately quieter than the request's first
+        // pass at this (no border, lower opacity, smaller text) — a
+        // "ghost" hint reads as unfocused decoration, not another solid
+        // control competing with the real button underneath it.
+        if (_focused)
+          Positioned(
+            bottom: 44,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                constraints: const BoxConstraints(maxWidth: 220),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.7),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

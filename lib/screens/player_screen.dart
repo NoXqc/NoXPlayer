@@ -69,6 +69,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
   final FocusScopeNode _bottomScope =
       FocusScopeNode(debugLabel: 'player-bottom');
 
+  /// The "Switch to linked channel" button VideoPlayerPane shows on a
+  /// playback error — owned here (not by that button itself) so Up/Down can
+  /// treat it as a third explicit zone. See
+  /// [VideoPlayerPane.switchButtonFocusNode]'s doc comment for why.
+  final FocusNode _switchButtonFocus =
+      FocusNode(debugLabel: 'player-switch-button');
+
+  /// Refreshed on every build, same pattern as [_isTvLayout] — read from
+  /// [_handleUp]/[_handleDown], which don't run during a build themselves.
+  bool _hasSwitchButton = false;
+
   bool get _focusInBar => _topScope.hasFocus || _bottomScope.hasFocus;
 
   /// Search from the player should land on the tab that matches what's
@@ -104,6 +115,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
     _topScope.addListener(_onBarFocusChange);
     _bottomScope.addListener(_onBarFocusChange);
+    _switchButtonFocus.addListener(_onBarFocusChange);
     _resetHideTimer();
   }
 
@@ -131,13 +143,51 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// to have. Try the normal move first, same fallback pattern used
   /// elsewhere this session; only fall back to the reveal/jump behavior
   /// once there's nowhere further to go.
+  ///
+  /// [FocusNode.focusInDirection]'s geometric search isn't bounded to "the
+  /// bar you started in" the way that comment assumes, though — confirmed
+  /// directly, once the switch-to-linked-channel button existed as a third
+  /// focusable thing sitting between the two bars, as it jumping straight
+  /// from the bottom bar to the (differently-shaped, full-width) top bar
+  /// and skipping the button entirely. [_tryIntraBarMove] below keeps the
+  /// legitimate star→play/pause case working while rejecting exactly that:
+  /// a move is only accepted if it lands back inside the same bar it
+  /// started in, so escaping to somewhere else on screen is never mistaken
+  /// for "nothing further to move to in this bar".
+  bool _tryIntraBarMove(FocusScopeNode scope, TraversalDirection direction) {
+    final previous = FocusManager.instance.primaryFocus;
+    final moved = previous?.focusInDirection(direction) ?? false;
+    if (moved && scope.hasFocus) return true;
+    if (moved) previous?.requestFocus();
+    return false;
+  }
+
   void _handleUp() {
     _resetHideTimer();
-    if (_focusInBar) {
-      final moved = FocusManager.instance.primaryFocus
-              ?.focusInDirection(TraversalDirection.up) ??
-          false;
-      if (moved) return;
+    if (_switchButtonFocus.hasFocus) {
+      if (!_topVisible) {
+        setState(() => _topVisible = true);
+        return;
+      }
+      _topScope.requestFocus();
+      return;
+    }
+    if (_bottomScope.hasFocus) {
+      if (_tryIntraBarMove(_bottomScope, TraversalDirection.up)) return;
+      if (_hasSwitchButton) {
+        _switchButtonFocus.requestFocus();
+        return;
+      }
+      if (!_topVisible) {
+        setState(() => _topVisible = true);
+        return;
+      }
+      _topScope.requestFocus();
+      return;
+    }
+    if (_topScope.hasFocus) {
+      _tryIntraBarMove(_topScope, TraversalDirection.up);
+      return;
     }
     if (!_topVisible) {
       setState(() => _topVisible = true);
@@ -148,11 +198,30 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   void _handleDown() {
     _resetHideTimer();
-    if (_focusInBar) {
-      final moved = FocusManager.instance.primaryFocus
-              ?.focusInDirection(TraversalDirection.down) ??
-          false;
-      if (moved) return;
+    if (_switchButtonFocus.hasFocus) {
+      if (!_bottomVisible) {
+        setState(() => _bottomVisible = true);
+        return;
+      }
+      _bottomScope.requestFocus();
+      return;
+    }
+    if (_topScope.hasFocus) {
+      if (_tryIntraBarMove(_topScope, TraversalDirection.down)) return;
+      if (_hasSwitchButton) {
+        _switchButtonFocus.requestFocus();
+        return;
+      }
+      if (!_bottomVisible) {
+        setState(() => _bottomVisible = true);
+        return;
+      }
+      _bottomScope.requestFocus();
+      return;
+    }
+    if (_bottomScope.hasFocus) {
+      _tryIntraBarMove(_bottomScope, TraversalDirection.down);
+      return;
     }
     if (!_bottomVisible) {
       setState(() => _bottomVisible = true);
@@ -242,8 +311,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hideTimer?.cancel();
     _topScope.removeListener(_onBarFocusChange);
     _bottomScope.removeListener(_onBarFocusChange);
+    _switchButtonFocus.removeListener(_onBarFocusChange);
     _topScope.dispose();
     _bottomScope.dispose();
+    _switchButtonFocus.dispose();
     // Defensive: never leave the whole app stuck in landscape/immersive
     // mode if this screen is popped while _immersive was still on.
     if (_immersive) _restoreChrome();
@@ -271,6 +342,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final channelLink = playlist.channelLinkFor(channel);
     final linkedChannel =
         channelLink == null ? null : playlist.resolveChannelLink(channelLink);
+    // Read by [_handleUp]/[_handleDown] — kept in sync with whatever
+    // VideoPlayerPane below actually decides to show (playback.error != null
+    // && a linkedChannel to offer), same caching pattern as [_isTvLayout].
+    _hasSwitchButton = playback.error != null && linkedChannel != null;
     _isTvLayout = prefs.layoutMode == 'tv' ||
         (prefs.layoutMode == 'auto' &&
             (prefs.isTelevision ||
@@ -346,6 +421,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                             key: ValueKey(channel.id),
                             showControls: false,
                             showEpgBar: false,
+                            switchButtonFocusNode: _switchButtonFocus,
                           ),
                         ),
 
@@ -468,6 +544,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                           : null,
                                       onActivity: _resetHideTimer,
                                       linkedChannel: linkedChannel,
+                                      channel: channel,
                                     ),
                                   ),
                                 ),

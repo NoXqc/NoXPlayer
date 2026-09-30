@@ -156,6 +156,28 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   final GlobalKey _continueWatchingRowKey = GlobalKey();
   final ScrollController _browseScrollController = ScrollController();
 
+  /// Row identities in on-screen order for whichever browse tab last
+  /// built (see [_buildMoviesBrowse]/[_buildShowsBrowse]) — null for the
+  /// Continue Watching row when present, `(playlistId, title)` for each
+  /// category row after it. Rebuilt on every call (cheap: a list of
+  /// tuples), consumed by [_moveBrowseRowFocus] so Up/Down between rows is
+  /// an explicit jump to the target row's known first-poster node instead
+  /// of relying on Flutter's default directional search across every
+  /// poster in every currently-built row. That default search is exactly
+  /// what [_handleBrowseLeft] and the groups-column quick-jump
+  /// deliberately avoid for the same reason — reported directly as the
+  /// whole browse view becoming unresponsive to Up/Down (Back still
+  /// worked) once a provider's real catalog — hundreds of categories,
+  /// each its own row — replaced far smaller test data.
+  List<({String playlistId, String title})?> _browseRowKeys = [];
+
+  /// Index into [_browseRowKeys] for whichever row currently has D-pad
+  /// focus — kept up to date by every poster's `onFocusGained` in
+  /// [_buildMoviesBrowse]/[_buildShowsBrowse], not just each row's first
+  /// card, so Up/Down still resolves correctly after moving right within
+  /// a row.
+  int? _focusedBrowseRowIndex;
+
   /// Whether Movies/TV Shows is currently showing the "What's New"
   /// carousel instead of the normal poster catalog. Opt-in, not the
   /// default — always false on entering either tab (see [_onTabChanged]),
@@ -819,6 +841,33 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     if (_focusDepth != depth) setState(() => _focusDepth = depth);
   }
 
+  /// Records which browse row currently has focus — see
+  /// [_browseRowKeys]'s doc comment. Deliberately not wrapped in
+  /// `setState`: nothing on screen depends on this value directly, it's
+  /// only read later by [_moveBrowseRowFocus].
+  void _setFocusedBrowseRow(int index) => _focusedBrowseRowIndex = index;
+
+  /// Explicit Up/Down between browse rows — see [_browseRowKeys]'s doc
+  /// comment for why this exists instead of leaving it to default
+  /// traversal. Always lands on the target row's first poster, same
+  /// convention already established by the groups-column quick-jump
+  /// ([_scrollToBrowseGroup]/[_enterBrowseColumn]) rather than trying to
+  /// preserve column position — scrolling the target into view is handled
+  /// by the existing `onFocusGained` → `_ensureRowVisible` path once that
+  /// node actually takes focus, same as it already does for every other
+  /// way of landing on a row.
+  void _moveBrowseRowFocus(int delta) {
+    final current = _focusedBrowseRowIndex ?? 0;
+    final target = current + delta;
+    if (target < 0 || target >= _browseRowKeys.length) return;
+    final key = _browseRowKeys[target];
+    if (key == null) {
+      _continueWatchingFirstFocusNode.requestFocus();
+    } else {
+      _firstPosterFocusNodeForGroup(key.playlistId, key.title).requestFocus();
+    }
+  }
+
   /// Explicitly jumps D-pad focus one column left/right, clamped to
   /// [maxDepth]. Bound to the arrow keys via [CallbackShortcuts] in
   /// [build] instead of relying on default directional traversal — see the
@@ -1377,6 +1426,19 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                                           const SingleActivator(
                                                   LogicalKeyboardKey.arrowLeft):
                                               _handleBrowseLeft,
+                                          // See _browseRowKeys'/
+                                          // _moveBrowseRowFocus's doc
+                                          // comments — explicit row-to-row
+                                          // jump instead of default
+                                          // traversal's expensive search
+                                          // across every cached row's
+                                          // posters.
+                                          const SingleActivator(
+                                                  LogicalKeyboardKey.arrowDown):
+                                              () => _moveBrowseRowFocus(1),
+                                          const SingleActivator(
+                                                  LogicalKeyboardKey.arrowUp):
+                                              () => _moveBrowseRowFocus(-1),
                                         },
                                     }
                                   : <ShortcutActivator, VoidCallback>{
@@ -2484,6 +2546,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 );
               }
               _ensureRowVisible(_continueWatchingRowKey);
+              // Always row 0 when present — see _browseRowKeys' doc
+              // comment, it's always inserted first.
+              _setFocusedBrowseRow(0);
             },
           );
         },
@@ -2537,10 +2602,18 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         visibleGroups.where((g) => g.channels.isNotEmpty).toList();
     final continueRow =
         _buildContinueWatchingRow(idPrefix: 'xt_vod_', onTap: _openMovie);
+    // See _browseRowKeys' doc comment — parallel to `rows` below, same
+    // order (Continue Watching first when present, then one entry per
+    // category), rebuilt fresh on every call.
+    _browseRowKeys = [
+      if (continueRow != null) null,
+      for (final group in groupsWithItems)
+        (playlistId: group.playlistId, title: group.title),
+    ];
     return _buildBrowseScaffold(
       rows: [
         if (continueRow != null) continueRow,
-        for (final group in groupsWithItems)
+        for (final (groupIndex, group) in groupsWithItems.indexed)
           KeyedSubtree(
             key: _keyForGroup(group.playlistId, group.title),
             child: _CategoryRow<Channel>(
@@ -2574,6 +2647,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                   );
                   _ensureRowVisible(
                       _keyForGroup(group.playlistId, group.title));
+                  _setFocusedBrowseRow(
+                      (continueRow != null ? 1 : 0) + groupIndex);
                 },
               ),
             ),
@@ -2607,6 +2682,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     final continueRow =
         _buildContinueWatchingRow(idPrefix: 'xt_ep_', onTap: _selectChannel);
     if (continueRow != null) rows.add(continueRow);
+    // See _browseRowKeys' doc comment — parallel to `rows`, same order.
+    // Built imperatively alongside it (not derived from `groups` by
+    // index) because empty groups are skipped below via `continue`, so a
+    // group's position in `groups` doesn't match its actual row index.
+    final rowKeys = <({String playlistId, String title})?>[
+      if (continueRow != null) null,
+    ];
     // See the identical kick-off in _buildMoviesBrowse (concurrency-capped
     // via ensureCategoriesLoaded — a plain per-category loop here fired
     // every category's network fetch at once on a brand-new provider,
@@ -2633,6 +2715,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       final items = playlist.visibleSeries(
           playlistId: group.playlistId, categoryName: group.title);
       if (items.isEmpty) continue;
+      final rowIndex = rowKeys.length;
+      rowKeys.add((playlistId: group.playlistId, title: group.title));
       rows.add(KeyedSubtree(
         key: _keyForGroup(group.playlistId, group.title),
         child: _CategoryRow<XtreamSeries>(
@@ -2661,11 +2745,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 fetchDescription: () => playlist.getHeroSeriesDescription(s),
               );
               _ensureRowVisible(_keyForGroup(group.playlistId, group.title));
+              _setFocusedBrowseRow(rowIndex);
             },
           ),
         ),
       ));
     }
+    _browseRowKeys = rowKeys;
     return _buildBrowseScaffold(
       rows: rows,
       emptyText: rows.isEmpty ? 'Loading TV show categories...' : null,
