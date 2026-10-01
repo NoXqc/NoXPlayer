@@ -321,6 +321,73 @@ class PlaybackService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// True while a manual [reloadCurrentChannel] is in flight — guards
+  /// against mashing the button mid-reload starting a second overlapping
+  /// swap.
+  bool _reloadingCurrentChannel = false;
+
+  /// Manually relaunches the current live channel against the exact same
+  /// URL — the "Reload" button in [PlayerControls], for a channel that's
+  /// silently stalled (frozen frame, no spinner, no error — see
+  /// `_checkStall`'s removal from this file in git history for why that
+  /// can't be detected and fixed automatically). A fresh connection is a
+  /// new "initial open" as far as a reverse-proxying relay is concerned,
+  /// which is what actually recovers a stream stuck on a dead connection
+  /// the relay never retries mid-session on its own.
+  ///
+  /// Deliberately manual rather than automatic: an automatic watchdog
+  /// tried this and made things worse — relaunching within seconds of a
+  /// detected stall raced the relay's own per-user connection limit (the
+  /// dead connection wasn't reaped on the relay's side yet, so the new one
+  /// got rejected outright). A human noticing and pressing a button
+  /// naturally takes longer than that race window, which is the entire
+  /// reason this is safe as a manual action when the automatic version
+  /// wasn't.
+  Future<void> reloadCurrentChannel() async {
+    final channel = currentChannel;
+    if (channel == null ||
+        controller == null ||
+        !Channel.isLiveId(channel.rawId) ||
+        _reloadingCurrentChannel) {
+      return;
+    }
+    _reloadingCurrentChannel = true;
+    reconnectStatus = 'Reconnecting...';
+    error = null;
+    notifyListeners();
+
+    final newController =
+        VideoPlayerHdrController.networkUrl(Uri.parse(channel.url));
+    try {
+      final future =
+          newController.initialize(viewType: VideoViewType.platformView);
+      initFuture = future;
+      await future;
+      if (currentChannel?.id != channel.id) {
+        unawaited(newController.dispose());
+        return;
+      }
+      // Same "build the replacement fully before touching the old one"
+      // technique as [_retryOnBackupServers] — disposing the dead
+      // controller before the new one is proven just guarantees a black
+      // screen if this attempt fails too.
+      final previous = controller;
+      controller = newController;
+      await newController.play();
+      unawaited(previous?.dispose());
+      reconnectStatus = null;
+      error = null;
+      notifyListeners();
+    } catch (e) {
+      unawaited(newController.dispose());
+      reconnectStatus = null;
+      error = e.toString();
+      notifyListeners();
+    } finally {
+      _reloadingCurrentChannel = false;
+    }
+  }
+
   /// Same spacing as `PlaylistSession`'s catalog-side fallback, for the
   /// same reason — don't fire every one of a provider's hostnames at once.
   static const _backupServerDelay = Duration(seconds: 3);

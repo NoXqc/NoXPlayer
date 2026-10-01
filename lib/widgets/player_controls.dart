@@ -56,29 +56,6 @@ class VideoPlayerPane extends StatelessWidget {
       return const Center(child: Text('Select a channel to start watching'));
     }
 
-    // Takes precedence over [PlaybackService.error]: while a failed live
-    // stream is being retried against this playlist's backup servers,
-    // what's on screen should say so rather than showing the failure
-    // that's actively being worked around.
-    if (playback.reconnectStatus != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(strokeWidth: 2)),
-              const SizedBox(height: 16),
-              Text(playback.reconnectStatus!, textAlign: TextAlign.center),
-            ],
-          ),
-        ),
-      );
-    }
-
     if (playback.error != null) {
       // Reached only once this playlist's own connection attempt *and*
       // its backup servers (see PlaylistProfile.backupServers) have both
@@ -176,6 +153,40 @@ class VideoPlayerPane extends StatelessWidget {
                           key: ObjectKey(controller)),
                     ),
                   ),
+                  // A reconnect (either a manual Reload or an automatic
+                  // backup-server retry) used to replace this whole pane
+                  // with a plain `Center` — the frozen last frame has no
+                  // reason to disappear while a fresh connection comes up
+                  // behind it, and a full black takeover read as a crash,
+                  // not a recovery in progress (reported directly: "looks
+                  // less like Windows restart"). A small floating card is
+                  // the same translucent-scrim look the Recall picker
+                  // already uses, just centered over the video instead of
+                  // anchored to the controls bar.
+                  if (playback.reconnectStatus != null)
+                    Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 28, vertical: 22),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.62),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                                width: 28,
+                                height: 28,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2)),
+                            const SizedBox(height: 16),
+                            Text(playback.reconnectStatus!,
+                                textAlign: TextAlign.center),
+                          ],
+                        ),
+                      ),
+                    ),
                   if (showControls)
                     Positioned(
                       left: 0,
@@ -458,6 +469,20 @@ class PlayerControls extends StatelessWidget {
                           ? 'Remove from favorites'
                           : 'Add to favorites',
                       onPressed: onToggleFavorite,
+                    ),
+                  // Manual recovery for a channel that's silently stalled
+                  // (frozen frame, no spinner, no error) — see
+                  // PlaybackService.reloadCurrentChannel's doc comment for
+                  // why this is a manual button rather than an automatic
+                  // watchdog. Live only, same gating as Recall above.
+                  if (isLive && channel != null)
+                    IconButton(
+                      icon: const Icon(Icons.refresh, color: Colors.white),
+                      tooltip: 'Reload channel',
+                      onPressed: () {
+                        onActivity?.call();
+                        context.read<PlaybackService>().reloadCurrentChannel();
+                      },
                     ),
                   // Episode nav — distinct icon shape (skip_previous/next,
                   // not replay_10/forward_10) so it doesn't read as "seek

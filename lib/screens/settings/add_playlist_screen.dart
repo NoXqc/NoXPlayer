@@ -296,23 +296,6 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
     // that fallback covers).
     final current = FocusManager.instance.primaryFocus;
 
-    // Up from any mode button back to Name — the mirror image of escaping
-    // DOWN out of Name into the mode row below (just above). Reported
-    // directly: once Name has been typed into and left, there was no way
-    // back to it at all — this screen only ever handled leaving a tracked
-    // field, never the one real neighbor on the *other* side of the mode
-    // row, so Up here fell through to plain default traversal, which is
-    // exactly as unreliable here as it is everywhere else in this app.
-    if (current == _modeM3uFocus ||
-        current == _modeXtreamFocus ||
-        current == _modeSmartFocus) {
-      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-        _nameFocus.requestFocus();
-        return true;
-      }
-      return false;
-    }
-
     final effective =
         (current == _nameFocus || _allTrackedFields.contains(current))
             ? current
@@ -743,38 +726,60 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
                         // doesn't reliably follow this screen's simple top-to-bottom
                         // document order. Two plain single-target buttons behave
                         // exactly like every other row on this screen.
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ModeButton(
-                                focusNode: _modeM3uFocus,
-                                icon: Icons.link,
-                                label: 'M3U URL',
-                                selected: _mode == 'm3u',
-                                onTap: () => setState(() => _mode = 'm3u'),
+                        //
+                        // Up back to Name is wrapped in `CallbackShortcuts` rather
+                        // than handled in [_handleFieldEscapeKey] (which covers every
+                        // other field-escape case on this screen) — confirmed on real
+                        // hardware that a raw `HardwareKeyboard` handler loses the
+                        // race against Flutter's own default directional traversal
+                        // for a plain focusable widget like `ModeButton`: a tracked
+                        // *text field* has no such competition ([EditableText]
+                        // swallows arrow keys internally, so there's nothing for
+                        // default traversal to even run), which is exactly why that
+                        // approach works everywhere else on this screen but silently
+                        // lost here, overridden a moment later by default traversal
+                        // jumping straight past Name to the app bar. `CallbackShortcuts`
+                        // intercepts the key *before* default traversal gets a turn at
+                        // all, the same pattern already proven reliable for this exact
+                        // class of problem in `tv_home_screen.dart`.
+                        CallbackShortcuts(
+                          bindings: {
+                            const SingleActivator(LogicalKeyboardKey.arrowUp):
+                                () => _nameFocus.requestFocus(),
+                          },
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: ModeButton(
+                                  focusNode: _modeM3uFocus,
+                                  icon: Icons.link,
+                                  label: 'M3U URL',
+                                  selected: _mode == 'm3u',
+                                  onTap: () => setState(() => _mode = 'm3u'),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: ModeButton(
-                                focusNode: _modeXtreamFocus,
-                                icon: Icons.dns,
-                                label: 'Xtream Codes',
-                                selected: _mode == 'xtream',
-                                onTap: () => setState(() => _mode = 'xtream'),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ModeButton(
+                                  focusNode: _modeXtreamFocus,
+                                  icon: Icons.dns,
+                                  label: 'Xtream Codes',
+                                  selected: _mode == 'xtream',
+                                  onTap: () => setState(() => _mode = 'xtream'),
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: ModeButton(
-                                focusNode: _modeSmartFocus,
-                                icon: Icons.auto_fix_high,
-                                label: 'Smart Add',
-                                selected: _mode == 'smart',
-                                onTap: () => setState(() => _mode = 'smart'),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ModeButton(
+                                  focusNode: _modeSmartFocus,
+                                  icon: Icons.auto_fix_high,
+                                  label: 'Smart Add',
+                                  selected: _mode == 'smart',
+                                  onTap: () => setState(() => _mode = 'smart'),
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 16),
                         if (_mode == 'm3u') ...[
