@@ -192,6 +192,15 @@ Widget withTvThemeIfNeeded(BuildContext context, WidgetBuilder builder) {
           style: _tvButtonStyle(scheme, isMinimal: palette.isMinimal)),
       textButtonTheme: TextButtonThemeData(
           style: _tvButtonStyle(scheme, isMinimal: palette.isMinimal)),
+      // Plain `IconButton`s (player bar: Recall, Favorite, Reload,
+      // Pause/skip) had no theme of their own, so they fell back to
+      // Flutter's stock `IconButton` focus treatment — the same weak
+      // translucent `focusColor` overlay already fixed for every other
+      // button type above, for the exact same reported reason. Reusing
+      // `_tvButtonStyle` directly keeps this consistent with the rest of
+      // the app rather than inventing a second "obvious focus" look.
+      iconButtonTheme: IconButtonThemeData(
+          style: _tvButtonStyle(scheme, isMinimal: palette.isMinimal)),
     ),
     child: Builder(builder: builder),
   );
