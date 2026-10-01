@@ -142,9 +142,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _promptForSettings();
       return;
     }
-    for (final source in sources) {
-      await epg.refresh(source.url, knownChannelIds: source.knownChannelIds);
-    }
+    // refreshAll() persists the combined cache once at the end, not once
+    // per playlist — see EpgService.refreshAll's doc comment.
+    await epg.refreshAll();
   }
 
   void _promptForSettings() {

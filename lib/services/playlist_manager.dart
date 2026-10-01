@@ -754,7 +754,19 @@ class PlaylistManager extends ChangeNotifier {
   Set<String> knownChannelIdsFor(String playlistId) {
     final session = _sessionFor(playlistId);
     if (session == null) return const {};
+    // Skip hidden groups/channels — a catalog with thousands of live
+    // channels but only a handful of groups actually kept visible (a real
+    // 8kStrong setup: 1,747 groups, ~15-20 active) was retaining EPG
+    // programme data for every single one regardless, since this filter
+    // used to return the whole catalog unconditionally. That's tens of
+    // thousands of discarded-by-the-UI-but-still-parsed programmes held in
+    // memory for nothing, which is real pressure on a Fire Stick's tight
+    // heap during an EPG refresh — confirmed as a contributing factor in a
+    // real low-memory kill on real hardware.
     return (session.isXtream ? session.liveChannels : session.channels)
+        .where((c) =>
+            !session.hiddenGroups.contains(c.group) &&
+            !session.hiddenChannels.contains(c.rawId))
         .map((c) => c.epgId)
         .toSet();
   }

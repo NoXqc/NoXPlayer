@@ -295,6 +295,24 @@ class _AddPlaylistScreenState extends State<AddPlaylistScreen> {
     // [_lastFocusedTextField]'s own doc comment for the real-hardware case
     // that fallback covers).
     final current = FocusManager.instance.primaryFocus;
+
+    // Up from any mode button back to Name — the mirror image of escaping
+    // DOWN out of Name into the mode row below (just above). Reported
+    // directly: once Name has been typed into and left, there was no way
+    // back to it at all — this screen only ever handled leaving a tracked
+    // field, never the one real neighbor on the *other* side of the mode
+    // row, so Up here fell through to plain default traversal, which is
+    // exactly as unreliable here as it is everywhere else in this app.
+    if (current == _modeM3uFocus ||
+        current == _modeXtreamFocus ||
+        current == _modeSmartFocus) {
+      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        _nameFocus.requestFocus();
+        return true;
+      }
+      return false;
+    }
+
     final effective =
         (current == _nameFocus || _allTrackedFields.contains(current))
             ? current

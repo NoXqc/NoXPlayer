@@ -314,8 +314,18 @@ List<Channel> _buildLiveChannels(_LiveStreamsArgs args) {
       playlistId: args.playlistId,
       name: item['name']?.toString() ?? 'Unnamed Channel',
       group: args.categoryNames[categoryId] ?? 'Uncategorized',
+      // .ts, not .m3u8: HLS needs the player to keep re-fetching a
+      // manifest file every few seconds for the whole time a channel is
+      // playing, and a reverse-proxying relay (tuliprox) only retries a
+      // failed fetch during that *first* connection — a follow-up
+      // manifest refresh that fails mid-session just fails outright, with
+      // nothing on either side reconnecting it (confirmed directly:
+      // "back out and back in, plays fine for a while, stops again").
+      // Plain TS is one continuous connection with no periodic refetch to
+      // fail in the first place, and a dropped TS connection is treated
+      // as a fresh stream open by the relay — which *does* get retried.
       url:
-          '${args.server}/live/${args.username}/${args.password}/$streamId.m3u8',
+          '${args.server}/live/${args.username}/${args.password}/$streamId.ts',
       logoUrl: item['stream_icon']?.toString(),
     );
   }).toList();

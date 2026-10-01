@@ -123,10 +123,10 @@ class _EpgSettingsScreenState extends State<EpgSettingsScreen>
       );
       return;
     }
-    final epg = context.read<EpgService>();
-    for (final source in sources) {
-      await epg.refresh(source.url, knownChannelIds: source.knownChannelIds);
-    }
+    // refreshAll() persists the combined cache once at the end — looping
+    // this screen's own calls to refresh() here would persist (re-encode
+    // the whole, ever-growing _programs map) once per playlist instead.
+    await context.read<EpgService>().refreshAll();
   }
 
   Future<void> _clearCache() async {

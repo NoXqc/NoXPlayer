@@ -32,11 +32,27 @@ String normalizeEpgId(String id) => id.trim().toLowerCase();
 /// noticeable, janky stretch.
 /// Isolate entry point: reads the EPG cache straight from disk so the file
 /// read and UTF-8 decode happen off the main thread too.
-Map<String, List<EpgProgram>> _readEpgCacheFile(String path) =>
-    _decodeEpgCache(File(path).readAsStringSync());
+///
+/// Streams the file through the decoder rather than `readAsStringSync()` +
+/// `jsonDecode()` on the whole thing — the same class of problem as
+/// [_writeEpgCacheFile]'s doc comment describes for the write side: the
+/// old approach meant the full raw JSON text and the full decoded object
+/// tree were both resident at once, and this read happens unconditionally
+/// on *every* cold start (not just a manual "Update EPG Now"), so a stale,
+/// pre-fix cache file left over from before this change could still hit
+/// the same low-memory kill on launch alone. `Stream<String>.transform`ing
+/// through `JsonDecoder` consumes the text incrementally as it's decoded
+/// instead of needing it all pre-loaded.
+Future<Map<String, List<EpgProgram>>> _readEpgCacheFile(String path) async {
+  final decoded = await File(path)
+      .openRead()
+      .transform(const Utf8Decoder())
+      .transform(const JsonDecoder())
+      .single as Map<String, dynamic>;
+  return _decodeEpgCache(decoded);
+}
 
-Map<String, List<EpgProgram>> _decodeEpgCache(String json) {
-  final decoded = jsonDecode(json) as Map<String, dynamic>;
+Map<String, List<EpgProgram>> _decodeEpgCache(Map<String, dynamic> decoded) {
   final result = <String, List<EpgProgram>>{};
   decoded.forEach((channelId, list) {
     result[channelId] = (list as List)
@@ -46,12 +62,32 @@ Map<String, List<EpgProgram>> _decodeEpgCache(String json) {
   return result;
 }
 
-String _encodeEpgCache(Map<String, List<EpgProgram>> programs) {
-  final map = <String, dynamic>{};
-  programs.forEach((channelId, list) {
-    map[channelId] = list.map((p) => p.toJson()).toList();
-  });
-  return jsonEncode(map);
+/// Isolate entry point for [EpgService._persistCache] — writes straight to
+/// disk one channel's programme list at a time instead of building one
+/// `jsonEncode` `String` for the *entire* combined cache first. Confirmed
+/// on real hardware (Fire Stick) as a real OOM cause: a full-catalog EPG
+/// cache is tens of MB, and the old approach meant a full copy of every
+/// [EpgProgram] object *plus* the complete JSON `String` *plus* its
+/// UTF-8-encoded byte buffer were all alive simultaneously at the exact
+/// moment the app's own working set was already at its peak from parsing —
+/// confirmed by a live memory trace showing the crash landing right after
+/// "update complete", during this exact step. Streaming keeps only one
+/// channel's small JSON fragment in memory at a time.
+Future<void> _writeEpgCacheFile(
+    ({Map<String, List<EpgProgram>> programs, String path}) args) async {
+  final sink = File(args.path).openWrite();
+  sink.write('{');
+  var first = true;
+  for (final entry in args.programs.entries) {
+    if (!first) sink.write(',');
+    first = false;
+    sink.write(jsonEncode(entry.key));
+    sink.write(':');
+    sink.write(jsonEncode(entry.value.map((p) => p.toJson()).toList()));
+  }
+  sink.write('}');
+  await sink.flush();
+  await sink.close();
 }
 
 /// Fetches, parses, caches, and serves XMLTV EPG data.
@@ -152,28 +188,85 @@ class EpgService extends ChangeNotifier {
   /// correctness reason these need to run concurrently, and running them
   /// one at a time keeps `isLoading`/`error` meaningful for whichever one
   /// is actually in flight).
+  /// Refreshes every source, persisting the combined cache to disk exactly
+  /// once at the end — not once per source. Each individual source's data
+  /// can be tens of MB once parsed (a real 8kStrong feed: 3,080 channels,
+  /// ~216,000 programmes), and [_persistCache] re-encodes the *entire*
+  /// combined `_programs` map from scratch every time it runs. Calling it
+  /// after every single source in a multi-playlist setup meant a 3-4
+  /// playlist refresh cycle re-serialized the whole, ever-growing dataset
+  /// 3-4 times over — full JSON string plus full object graph alive at
+  /// once in the compute isolate, repeatedly, for no benefit over doing it
+  /// once at the end.
   Future<void> refreshAll() async {
     final sources = _sourcesProvider?.call() ?? const [];
-    for (final source in sources) {
-      await refresh(source.url, knownChannelIds: source.knownChannelIds);
+    isLoading = true;
+    notifyListeners();
+    try {
+      for (final source in sources) {
+        await _refreshOne(source.url, knownChannelIds: source.knownChannelIds);
+      }
+      await _persistCache();
+    } finally {
+      isLoading = false;
+      notifyListeners();
     }
   }
 
-  /// Refreshes one EPG source. [knownChannelIds] scopes both the parse
-  /// filter (see [_parseXmltvStream]'s doc comment) *and* which existing
-  /// entries in [_programs] get replaced — a shared multi-provider EPG
-  /// source can cover vastly more channels than one playlist actually
-  /// has, and refreshing one playlist's source must never wipe another
-  /// playlist's already-cached programmes (the previous single-playlist-
-  /// only version of this method unconditionally cleared the whole map on
-  /// every call, which is exactly wrong once there's more than one
-  /// source). Empty [knownChannelIds] disables filtering entirely rather
-  /// than risking an empty guide if this ever races ahead of the
-  /// playlist's own channels finishing their load.
+  /// Refreshes one EPG source and immediately persists the result — the
+  /// entry point for every *single*-playlist caller (adding a playlist,
+  /// "Update EPG Now" on one playlist). [refreshAll] above uses
+  /// [_refreshOne] directly instead, so a multi-playlist refresh persists
+  /// once at the end rather than once per source.
+  ///
+  /// [isLoading] spans the persist step too, not just [_refreshOne] — that
+  /// used to flip back to false the moment parsing finished, so the UI
+  /// reported "done" while the (heaviest) disk-write step was still
+  /// actively running in the background. Confirmed on real hardware as
+  /// genuinely misleading: a low-memory kill landed *after* the on-screen
+  /// "EPG update completed" moment, during exactly that still-running
+  /// write.
   Future<void> refresh(String url,
       {required Set<String> knownChannelIds}) async {
-    if (url.isEmpty) return;
     isLoading = true;
+    notifyListeners();
+    try {
+      await _refreshOne(url, knownChannelIds: knownChannelIds);
+      await _persistCache();
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _persistCache() async {
+    final path = await _storage
+        .cacheFilePathForWrite(AppConstants.cacheFileEpgPrograms);
+    await compute(_writeEpgCacheFile, (programs: _programs, path: path));
+    await _storage.setEpgLastUpdated(lastUpdated ?? DateTime.now());
+  }
+
+  /// Refreshes one EPG source's data into [_programs]/[_channelCatalog]/
+  /// [_nowPlayingCatalog] without persisting anything to disk — see
+  /// [refresh] and [refreshAll] for the two callers that each handle
+  /// persistence at the point that actually makes sense for them.
+  /// [knownChannelIds] scopes both the parse filter (see
+  /// [_parseXmltvStream]'s doc comment) *and* which existing entries in
+  /// [_programs] get replaced — a shared multi-provider EPG source can
+  /// cover vastly more channels than one playlist actually has, and
+  /// refreshing one playlist's source must never wipe another playlist's
+  /// already-cached programmes (an earlier single-playlist-only version of
+  /// this unconditionally cleared the whole map on every call, which is
+  /// exactly wrong once there's more than one source). Empty
+  /// [knownChannelIds] disables filtering entirely rather than risking an
+  /// empty guide if this ever races ahead of the playlist's own channels
+  /// finishing their load.
+  Future<void> _refreshOne(String url,
+      {required Set<String> knownChannelIds}) async {
+    if (url.isEmpty) return;
+    // isLoading is the caller's responsibility (see [refresh]/[refreshAll])
+    // — it needs to stay true across the persist step that follows this,
+    // not just this one source's parse.
     error = null;
     notifyListeners();
 
@@ -227,15 +320,11 @@ class EpgService extends ChangeNotifier {
       _programs.addAll(parsed);
 
       lastUpdated = DateTime.now();
-      final encoded = await compute(_encodeEpgCache, _programs);
-      await _storage.writeCacheFile(AppConstants.cacheFileEpgPrograms, encoded);
-      await _storage.setEpgLastUpdated(lastUpdated!);
     } catch (e) {
       error = e.toString();
       debugPrint('EpgService error: $e');
     } finally {
       client.close();
-      isLoading = false;
       notifyListeners();
     }
   }

@@ -40,6 +40,16 @@ class StorageService {
     await File('${dir.path}/$name.json').writeAsString(content);
   }
 
+  /// The path a cache file should be written to, creating the cache dir
+  /// if needed — for a caller that streams its own content straight to
+  /// disk (an [IOSink]) rather than building one full `String` and handing
+  /// it to [writeCacheFile]. See `EpgService._persistCache`'s doc comment
+  /// for why that distinction matters for a large payload.
+  Future<String> cacheFilePathForWrite(String name) async {
+    final dir = await _ensureCacheDir();
+    return '${dir.path}/$name.json';
+  }
+
   /// Path of a cache file if it exists, for callers that read *and*
   /// decode it on a background isolate. [readCacheFile] reads on the
   /// calling isolate, and `File.readAsString` does its whole UTF-8 decode
