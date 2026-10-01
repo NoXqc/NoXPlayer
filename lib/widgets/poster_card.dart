@@ -22,6 +22,9 @@ class PosterCard extends StatefulWidget {
     this.focusNode,
     this.isFavorite = false,
     this.onToggleFavorite,
+    this.cardWidth = PosterCard.width,
+    this.cardPosterHeight = PosterCard.posterHeight,
+    this.fit = BoxFit.cover,
   });
 
   /// Was 120x168 with the title overlaid on the poster (and only shown at
@@ -66,6 +69,21 @@ class PosterCard extends StatefulWidget {
   final bool isFavorite;
   final VoidCallback? onToggleFavorite;
 
+  /// Override [PosterCard.width]/[PosterCard.posterHeight] per instance —
+  /// a search result's channel-logo row sits in the same row shape as
+  /// Movies/TV Shows results but reads better noticeably smaller, since a
+  /// broadcast logo carries far less detail than a movie poster. Every
+  /// existing call site keeps the original static sizing unchanged.
+  final double cardWidth;
+  final double cardPosterHeight;
+
+  /// `BoxFit.cover` (the default) is right for a movie/show poster
+  /// designed to fill its whole rectangle — a broadcast logo is usually a
+  /// transparent-background mark meant to be seen whole, so search's
+  /// channel row passes `BoxFit.contain` instead, same convention
+  /// `ChannelListTile` already uses for the same kind of image.
+  final BoxFit fit;
+
   @override
   State<PosterCard> createState() => _PosterCardState();
 }
@@ -97,14 +115,14 @@ class _PosterCardState extends State<PosterCard> {
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
           child: SizedBox(
-            width: PosterCard.width,
-            height: PosterCard.height,
+            width: widget.cardWidth,
+            height: widget.cardPosterHeight + PosterCard.titleHeight,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  width: PosterCard.width,
-                  height: PosterCard.posterHeight,
+                  width: widget.cardWidth,
+                  height: widget.cardPosterHeight,
                   decoration: BoxDecoration(
                     color: Colors.grey.shade900,
                     borderRadius: BorderRadius.circular(10),
@@ -137,7 +155,7 @@ class _PosterCardState extends State<PosterCard> {
                         Positioned.fill(
                           child: CachedNetworkImage(
                             imageUrl: widget.imageUrl!,
-                            fit: BoxFit.cover,
+                            fit: widget.fit,
                             // Provider posters commonly come in well above
                             // this card's on-screen size; without this,
                             // Flutter decodes and caches each one at full
@@ -150,10 +168,10 @@ class _PosterCardState extends State<PosterCard> {
                             // roughly the card's physical size cuts each
                             // cached image's memory footprint by an order
                             // of magnitude or more.
-                            memCacheWidth: (PosterCard.width *
+                            memCacheWidth: (widget.cardWidth *
                                     MediaQuery.of(context).devicePixelRatio)
                                 .round(),
-                            memCacheHeight: (PosterCard.posterHeight *
+                            memCacheHeight: (widget.cardPosterHeight *
                                     MediaQuery.of(context).devicePixelRatio)
                                 .round(),
                             // A poster popping in instantly from the grey

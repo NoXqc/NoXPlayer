@@ -1,7 +1,7 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/channel.dart';
@@ -11,30 +11,53 @@ import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
 import '../services/storage_service.dart';
 import '../utils/tv_theme.dart';
-import '../widgets/channel_list_tile.dart';
-import '../widgets/hold_to_activate.dart';
+import '../widgets/poster_card.dart';
 import '../widgets/settings_scaffold.dart';
 import 'player_screen.dart';
 import 'series_detail_screen.dart';
 
-/// Full-screen search — a proper input and result list instead of the
-/// cramped app-bar field. Defaults to searching whichever tab (Live TV /
-/// Movies / TV Shows) was active when it was opened, with pills to switch
-/// scope to a different one — "search in a different one if needed, like a
-/// second layer" rather than always dumping every content type together.
+/// Full-screen search — a search bar plus every matching result grouped
+/// into its own horizontally-scrolling poster row (Live TV, Movies, TV
+/// Shows — in that order, each shown only when it actually has matches),
+/// instead of the old single flat list gated behind a scope switch. Every
+/// content type is visible at once now, the same way a modern TV app's
+/// search results page reads.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key, required this.initialScope});
 
-  /// One of 'TV', 'Movies', 'TV Shows' — matches [HomeScreen]'s tab names.
+  /// Kept for call-site compatibility (callers still pass the tab the user
+  /// was on) but no longer used to gate results — every type now shows
+  /// together regardless of where search was opened from.
   final String initialScope;
 
   @override
   State<SearchScreen> createState() => _SearchScreenState();
 }
 
+/// One row's worth of built poster cards plus its first card's focus node
+/// — the latter is what [_SearchScreenState._moveRowFocus] jumps to
+/// explicitly, the same "never rely on default directional search across
+/// an arbitrary number of posters" principle `tv_home_screen.dart`'s own
+/// browse rows already established (see that file's `_browseRowKeys` doc
+/// comment) — this screen builds the same shape of problem (an unknown,
+/// potentially large number of focusable tiles across several rows) and
+/// gets the same fix.
+class _ResultRow {
+  _ResultRow(this.label, this.rowKey, this.firstFocusNode, this.children);
+  final String label;
+  /// Wraps this row's header + horizontal list — see
+  /// [_SearchScreenState._ensureRowVisible]'s doc comment for why this
+  /// needs to be the whole row, not just whichever card is focused. Built
+  /// before the row's children (not inside this constructor) since the
+  /// children's own `onFocusGained` closures need to reference it too.
+  final GlobalKey rowKey;
+  final FocusNode firstFocusNode;
+  final List<Widget> children;
+}
+
 class _SearchScreenState extends State<SearchScreen> {
-  late String _scope;
   final _controller = TextEditingController();
+  final _searchFieldFocus = FocusNode();
   String _query = '';
   List<String> _recentSearches = [];
 
@@ -50,22 +73,17 @@ class _SearchScreenState extends State<SearchScreen> {
   List<XtreamSeries>? _dbSeriesResults;
   Timer? _searchDebounce;
 
-  static const _scopes = ['TV', 'Movies', 'TV Shows'];
-  static const _scopeLabels = {
-    'TV': 'Live TV',
-    'Movies': 'Movies',
-    'TV Shows': 'TV Shows'
-  };
+  /// -1 means the search field/suggestion pills, otherwise an index into
+  /// whichever `_ResultRow` list [build] most recently produced — see
+  /// [_moveRowFocus].
+  int _focusedZone = -1;
 
   @override
   void initState() {
     super.initState();
-    _scope = widget.initialScope == 'Favorites' ? 'TV' : widget.initialScope;
     _recentSearches = context.read<StorageService>().getRecentSearches();
     // Needed for a live-channel search to find anything at all — see
-    // PlaylistManager.ensureLiveChannelsLoaded's doc comment. Kicked off
-    // regardless of initial scope (cheap/no-op once loaded) since the user
-    // can switch to TV scope with the pills at any point.
+    // PlaylistManager.ensureLiveChannelsLoaded's doc comment.
     unawaited(context.read<PlaylistManager>().ensureLiveChannelsLoaded());
   }
 
@@ -73,6 +91,7 @@ class _SearchScreenState extends State<SearchScreen> {
   void dispose() {
     _searchDebounce?.cancel();
     _controller.dispose();
+    _searchFieldFocus.dispose();
     super.dispose();
   }
 
@@ -119,7 +138,7 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   /// Records a completed search (explicit submit, or picking a result) for
-  /// the quick-access list shown while the field is empty — not on every
+  /// the quick-access pills shown while the field is empty — not on every
   /// keystroke, which would just fill history with partial fragments.
   void _recordSearch(String query) {
     if (query.trim().isEmpty) return;
@@ -158,19 +177,61 @@ class _SearchScreenState extends State<SearchScreen> {
         MaterialPageRoute(builder: (_) => SeriesDetailScreen(series: series)));
   }
 
-  void _toggleSeriesFavorite(BuildContext context, XtreamSeries series) {
+  void _toggleSeriesFavorite(XtreamSeries series) {
     context.read<PlaylistManager>().toggleSeriesFavorite(series);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(
-          series.isFavorite ? 'Added to Favorites' : 'Removed from Favorites'),
-      duration: const Duration(seconds: 2),
-    ));
+  }
+
+  /// Explicit Up/Down between the search field and each result row — see
+  /// [_ResultRow]'s doc comment for why this can't be left to default
+  /// traversal. `-1` (the search field) is one end of the range, the last
+  /// built row is the other; a plain `setState`-free field assignment
+  /// (`_focusedZone`) tracks whichever currently has focus, updated by
+  /// every row's first poster *and* the search field's own focus change.
+  void _moveRowFocus(int delta, List<_ResultRow> rows) {
+    final target = _focusedZone + delta;
+    if (target < -1 || target >= rows.length) return;
+    // Set directly rather than relying on a focus-change callback to do
+    // it as a side effect — `TextField` only exposes `onTap`, which never
+    // fires for a `requestFocus()` triggered programmatically from here,
+    // so without this the search field's zone would never actually
+    // update and the very next Down press would skip row 0 entirely.
+    _focusedZone = target;
+    if (target == -1) {
+      _searchFieldFocus.requestFocus();
+    } else {
+      rows[target].firstFocusNode.requestFocus();
+    }
+  }
+
+  /// Keeps a whole row's header visible when D-pad focus lands on (or
+  /// moves within) one of its cards — Flutter's own default "scroll the
+  /// focused widget into view" only guarantees the *card* is visible,
+  /// which for a row near the bottom of the viewport means it can scroll
+  /// just far enough to reveal that one card while pushing an earlier
+  /// row's header out of frame above. Reported directly: reaching TV
+  /// Shows didn't "roll up" to show it properly, and moving right within
+  /// a row made Live TV disappear. Same fix `tv_home_screen.dart`'s own
+  /// browse rows already use for this exact problem — `addPostFrameCallback`
+  /// so this runs *after* Flutter's own minimal scroll, overriding it
+  /// rather than racing it.
+  void _ensureRowVisible(GlobalKey rowKey) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = rowKey.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(ctx,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            alignment: 0);
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final playlist = context.watch<PlaylistManager>();
+    final scheme = Theme.of(context).colorScheme;
     final q = _query.trim().toLowerCase();
+    final rows = q.isEmpty ? const <_ResultRow>[] : _buildRows(playlist, q);
 
     // Missed in the original Settings-family gradient redesign — Search
     // isn't a Settings screen, it's reached straight from the main tabs,
@@ -183,6 +244,29 @@ class _SearchScreenState extends State<SearchScreen> {
         (context) => Stack(
               children: [
                 const Positioned.fill(child: SettingsGradientBackground()),
+                // A subtle purple wash distinct from whichever palette is
+                // active elsewhere — this screen gets its own quiet
+                // identity (per direct feedback wanting it to look more
+                // like a modern TV search page) without touching the
+                // app-wide theme system every other screen relies on.
+                // Low alpha + a soft radial falloff keeps it a hint, not
+                // a takeover.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          center: Alignment.topRight,
+                          radius: 1.4,
+                          colors: [
+                            Colors.deepPurple.withValues(alpha: 0.16),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
                 Scaffold(
                   backgroundColor: Colors.transparent,
                   appBar: AppBar(
@@ -190,10 +274,11 @@ class _SearchScreenState extends State<SearchScreen> {
                     elevation: 0,
                     title: TextField(
                       controller: _controller,
+                      focusNode: _searchFieldFocus,
                       autofocus: true,
                       textInputAction: TextInputAction.search,
                       decoration: InputDecoration(
-                        hintText: 'Search ${_scopeLabels[_scope]}...',
+                        hintText: 'Search everything...',
                         border: InputBorder.none,
                         hintStyle: TextStyle(
                             color: Theme.of(context)
@@ -207,6 +292,7 @@ class _SearchScreenState extends State<SearchScreen> {
                       ),
                       onChanged: _onQueryChanged,
                       onSubmitted: _recordSearch,
+                      onTap: () => _focusedZone = -1,
                     ),
                     actions: [
                       if (_query.isNotEmpty)
@@ -224,219 +310,249 @@ class _SearchScreenState extends State<SearchScreen> {
                         ),
                     ],
                   ),
-                  body: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        child: Row(
-                          children: [
-                            for (final scope in _scopes) ...[
-                              ChoiceChip(
-                                label: Text(_scopeLabels[scope]!),
-                                selected: _scope == scope,
-                                onSelected: (_) =>
-                                    setState(() => _scope = scope),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
-                          ],
-                        ),
-                      ),
-                      if (playlist.isXtream &&
-                          playlist.isWarmingCatalog &&
-                          _scope != 'TV')
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 4),
-                          child: Row(
-                            children: [
-                              const SizedBox(
-                                  width: 14,
-                                  height: 14,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2)),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  'Still loading the full catalog in the background '
-                                  '(${playlist.warmCatalogDone}/${playlist.warmCatalogTotal} categories) — '
-                                  'some results may not show up yet.',
-                                  style: Theme.of(context).textTheme.bodySmall,
+                  body: CallbackShortcuts(
+                    bindings: {
+                      const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+                          _moveRowFocus(-1, rows),
+                      const SingleActivator(LogicalKeyboardKey.arrowDown):
+                          () => _moveRowFocus(1, rows),
+                    },
+                    child: Column(
+                      children: [
+                        if (q.isEmpty) _buildSuggestionPills(scheme),
+                        if (playlist.isXtream && playlist.isWarmingCatalog)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 4),
+                            child: Row(
+                              children: [
+                                const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2)),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'Still loading the full catalog in the background '
+                                    '(${playlist.warmCatalogDone}/${playlist.warmCatalogTotal} categories) — '
+                                    'some results may not show up yet.',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
+                        Expanded(
+                          child: q.isEmpty
+                              ? (_recentSearches.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                          'Search Live TV, Movies & TV Shows'))
+                                  : const SizedBox())
+                              : _buildResultRows(rows),
                         ),
-                      const Divider(height: 1),
-                      Expanded(child: _buildResults(context, playlist, q)),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ],
             ));
   }
 
-  Widget _buildResults(
-      BuildContext context, PlaylistManager playlist, String q) {
-    if (q.isEmpty) {
-      if (_recentSearches.isEmpty) {
-        return Center(child: Text('Search ${_scopeLabels[_scope]}'));
-      }
-      return ListView(
+  Widget _buildSuggestionPills(ColorScheme scheme) {
+    if (_recentSearches.isEmpty) return const SizedBox();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text('Recent searches',
-                      style: Theme.of(context).textTheme.labelLarge),
-                ),
-                TextButton(
-                  onPressed: () {
-                    context.read<StorageService>().clearRecentSearches();
-                    setState(() => _recentSearches = []);
-                  },
-                  child: const Text('Clear'),
-                ),
-              ],
-            ),
-          ),
-          for (final term in _recentSearches)
-            ListTile(
-              leading: const Icon(Icons.history),
-              title: Text(term),
-              onTap: () => _runSearch(term),
-            ),
-        ],
-      );
-    }
-
-    if (_scope == 'TV') {
-      final matches = playlist.channels
-          .where((c) => c.name.toLowerCase().contains(q))
-          .toList();
-      if (matches.isEmpty) return const _NothingFound();
-      return ListView.builder(
-        itemCount: matches.length,
-        itemBuilder: (context, i) => ChannelListTile(
-          channel: matches[i],
-          selected: false,
-          onTap: () => _openChannel(matches[i]),
-        ),
-      );
-    }
-
-    if (_scope == 'Movies') {
-      // Xtream: queried straight from the database (see [_runDbSearch]) —
-      // covers the *entire* synced catalog, not just whatever's paged
-      // into memory and the 300-per-category cap that implies. M3U mode
-      // never had that cap (no lazy per-category loading at all), so it
-      // keeps scanning the in-memory list directly.
-      if (playlist.isXtream) {
-        final matches = _dbVodResults;
-        if (matches == null)
-          return const Center(child: CircularProgressIndicator());
-        if (matches.isEmpty) return const _NothingFound();
-        return ListView.builder(
-          itemCount: matches.length,
-          itemBuilder: (context, i) => ChannelListTile(
-            channel: matches[i],
-            selected: false,
-            showEpg: false,
-            onTap: () => _openChannel(matches[i]),
-          ),
-        );
-      }
-      final matches = playlist
-          .visibleChannels(category: 'vod')
-          .where((c) => c.name.toLowerCase().contains(q))
-          .toList();
-      if (matches.isEmpty) return const _NothingFound();
-      return ListView.builder(
-        itemCount: matches.length,
-        itemBuilder: (context, i) => ChannelListTile(
-          channel: matches[i],
-          selected: false,
-          showEpg: false,
-          onTap: () => _openChannel(matches[i]),
-        ),
-      );
-    }
-
-    // TV Shows
-    if (playlist.isXtream) {
-      final matches = _dbSeriesResults;
-      if (matches == null)
-        return const Center(child: CircularProgressIndicator());
-      if (matches.isEmpty) return const _NothingFound();
-      return ListView.builder(
-        itemCount: matches.length,
-        itemBuilder: (context, i) {
-          final s = matches[i];
-          return HoldToActivate(
-            onTap: () => _openSeries(s),
-            onHold: () => _toggleSeriesFavorite(context, s),
-            child: ListTile(
-              leading: SizedBox(
-                width: 48,
-                height: 48,
-                child: (s.coverUrl != null && s.coverUrl!.isNotEmpty)
-                    ? CachedNetworkImage(
-                        imageUrl: s.coverUrl!,
-                        fit: BoxFit.contain,
-                        errorWidget: (_, __, ___) =>
-                            const Icon(Icons.video_library),
-                      )
-                    : const Icon(Icons.video_library),
+          Row(
+            children: [
+              Expanded(
+                child: Text('Recent searches',
+                    style: Theme.of(context).textTheme.labelLarge),
               ),
-              title: Text(s.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-              trailing: s.isFavorite
-                  ? const Icon(Icons.star, color: Colors.amber)
-                  : const Icon(Icons.chevron_right),
-              onTap: () => _openSeries(s),
+              TextButton(
+                onPressed: () {
+                  context.read<StorageService>().clearRecentSearches();
+                  setState(() => _recentSearches = []);
+                },
+                child: const Text('Clear'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            height: 40,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _recentSearches.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, i) {
+                final term = _recentSearches[i];
+                return ActionChip(
+                  avatar: const Icon(Icons.history, size: 16),
+                  label: Text(term),
+                  onPressed: () => _runSearch(term),
+                );
+              },
             ),
-          );
-        },
-      );
-    }
-
-    final matches = playlist
-        .visibleChannels(category: 'series')
-        .where((c) => c.name.toLowerCase().contains(q))
-        .toList();
-    if (matches.isEmpty) return const _NothingFound();
-    return ListView.builder(
-      itemCount: matches.length,
-      itemBuilder: (context, i) => ChannelListTile(
-        channel: matches[i],
-        selected: false,
-        showEpg: false,
-        onTap: () => _openChannel(matches[i]),
+          ),
+        ],
       ),
     );
   }
-}
 
-class _NothingFound extends StatelessWidget {
-  const _NothingFound();
+  /// Builds every non-empty result row, Live TV first then Movies then TV
+  /// Shows — per direct feedback: channels read better smaller than a
+  /// movie/show poster, and should lead since that's most often what's
+  /// being looked for.
+  List<_ResultRow> _buildRows(PlaylistManager playlist, String q) {
+    final rows = <_ResultRow>[];
 
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.search_off,
-                size: 48, color: Theme.of(context).disabledColor),
-            const SizedBox(height: 12),
-            const Text('Nothing found'),
-          ],
+    final channelMatches =
+        playlist.channels.where((c) => c.name.toLowerCase().contains(q)).toList();
+    if (channelMatches.isNotEmpty) {
+      rows.add(_buildChannelRow(rows.length, 'Live TV', channelMatches));
+    }
+
+    final vodMatches = playlist.isXtream
+        ? _dbVodResults
+        : playlist
+            .visibleChannels(category: 'vod')
+            .where((c) => c.name.toLowerCase().contains(q))
+            .toList();
+    if (vodMatches != null && vodMatches.isNotEmpty) {
+      rows.add(_buildChannelRow(rows.length, 'Movies', vodMatches,
+          isPoster: true));
+    }
+
+    if (playlist.isXtream) {
+      final seriesMatches = _dbSeriesResults;
+      if (seriesMatches != null && seriesMatches.isNotEmpty) {
+        rows.add(_buildSeriesRow(rows.length, 'TV Shows', seriesMatches));
+      }
+    } else {
+      final seriesMatches = playlist
+          .visibleChannels(category: 'series')
+          .where((c) => c.name.toLowerCase().contains(q))
+          .toList();
+      if (seriesMatches.isNotEmpty) {
+        rows.add(_buildChannelRow(rows.length, 'TV Shows', seriesMatches,
+            isPoster: true));
+      }
+    }
+
+    return rows;
+  }
+
+  /// [rowIndex] is this row's final position in the list [_buildRows] is
+  /// assembling — known at build time (`rows.length` right before this
+  /// row is appended), so every poster's `onFocusGained` can close over
+  /// the correct, stable index directly instead of inferring it from
+  /// whatever `ListView.builder` happened to lay out most recently (which
+  /// doesn't reliably match the focused widget's actual row once lazy
+  /// building and scrolling are involved).
+  _ResultRow _buildChannelRow(
+      int rowIndex, String label, List<Channel> items,
+      {bool isPoster = false}) {
+    final rowKey = GlobalKey();
+    final firstFocusNode = FocusNode();
+    final children = <Widget>[
+      for (var i = 0; i < items.length; i++)
+        PosterCard(
+          key: ValueKey('${label}_${items[i].id}'),
+          focusNode: i == 0 ? firstFocusNode : null,
+          title: items[i].name,
+          imageUrl: items[i].logoUrl,
+          rating: isPoster ? items[i].rating : null,
+          cardWidth: isPoster ? PosterCard.width : 64,
+          cardPosterHeight: isPoster ? PosterCard.posterHeight : 64,
+          fit: isPoster ? BoxFit.cover : BoxFit.contain,
+          onTap: () => _openChannel(items[i]),
+          onFocusGained: () {
+            _focusedZone = rowIndex;
+            _ensureRowVisible(rowKey);
+          },
         ),
-      ),
+    ];
+    return _ResultRow(label, rowKey, firstFocusNode, children);
+  }
+
+  _ResultRow _buildSeriesRow(
+      int rowIndex, String label, List<XtreamSeries> items) {
+    final rowKey = GlobalKey();
+    final firstFocusNode = FocusNode();
+    final children = <Widget>[
+      for (var i = 0; i < items.length; i++)
+        PosterCard(
+          key: ValueKey('series_${items[i].id}'),
+          focusNode: i == 0 ? firstFocusNode : null,
+          title: items[i].name,
+          imageUrl: items[i].coverUrl,
+          isFavorite: items[i].isFavorite,
+          onToggleFavorite: () => _toggleSeriesFavorite(items[i]),
+          onTap: () => _openSeries(items[i]),
+          onFocusGained: () {
+            _focusedZone = rowIndex;
+            _ensureRowVisible(rowKey);
+          },
+        ),
+    ];
+    return _ResultRow(label, rowKey, firstFocusNode, children);
+  }
+
+  Widget _buildResultRows(List<_ResultRow> rows) {
+    if (rows.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.search_off,
+                  size: 48, color: Theme.of(context).disabledColor),
+              const SizedBox(height: 12),
+              const Text('Nothing found'),
+            ],
+          ),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      itemCount: rows.length,
+      itemBuilder: (context, rowIndex) {
+        final row = rows[rowIndex];
+        return Padding(
+          key: row.rowKey,
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(row.label,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: PosterCard.height + 12,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  children: row.children,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
