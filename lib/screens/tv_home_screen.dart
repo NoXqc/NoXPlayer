@@ -27,6 +27,7 @@ import '../widgets/poster_card.dart';
 import '../widgets/section_label.dart';
 import '../widgets/settings_scaffold.dart';
 import 'catalog_sync_screen.dart';
+import 'group_catalog_screen.dart';
 import 'movie_detail_screen.dart';
 import 'player_screen.dart';
 import 'search_screen.dart';
@@ -241,7 +242,12 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
   /// Long-press menu for a real category row — "add/remove favorites"
   /// (the whole group's channels, not one at a time) and hide/cancel-hide.
-  Future<void> _showGroupOptions(String playlistId, String title) async {
+  /// [category] is 'vod'/'series' for a Movies/TV Shows group (enables the
+  /// "Expand catalog" option — see [GroupCatalogScreen]'s doc comment) or
+  /// null for a Live TV group, which has no poster-grid concept to expand
+  /// into.
+  Future<void> _showGroupOptions(String playlistId, String title,
+      {String? category}) async {
     final playlist = context.read<PlaylistManager>();
     final isFavorited = playlist.isGroupFavorited(playlistId, title);
     final isPending = _pendingHideGroups.contains(_groupKey(playlistId, title));
@@ -251,6 +257,11 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       builder: (context) => SimpleDialog(
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         children: [
+          if (category != null)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop('expand'),
+              child: const Text('Expand catalog'),
+            ),
           SimpleDialogOption(
             onPressed: () => Navigator.of(context).pop('favorite'),
             child: Text(
@@ -268,8 +279,27 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         ],
       ),
     );
+    if (!mounted) return;
 
     switch (choice) {
+      case 'expand':
+        // Flutter's default "restore previous focus on pop" doesn't land
+        // back correctly here — reported directly: back from the catalog
+        // landed on the tabs column instead of staying on groups. Likely
+        // the SimpleDialog-then-push combination (unlike _openMovie/
+        // _openSeries, pushed directly from a tap with no dialog in
+        // between) confuses it. Explicit beats default, same as every
+        // other focus problem already fixed in this app: re-enter the
+        // groups column on return rather than trusting restoration.
+        Navigator.of(context)
+            .push(MaterialPageRoute(
+                builder: (_) => GroupCatalogScreen(
+                    category: category!, playlistId: playlistId, title: title)))
+            .then((_) {
+          if (!mounted) return;
+          setState(() => _focusDepth = 1);
+          _col1Scope.requestFocus();
+        });
       case 'favorite':
         playlist.setGroupFavorited(playlistId, title, !isFavorited);
       case 'hide':
@@ -1846,7 +1876,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 .contains(_groupKey(group.playlistId, group.title)),
             onTap: () => _leaveWhatsNewThen(
                 () => _scrollToBrowseGroup(group.playlistId, group.title)),
-            onLongPress: () => _showGroupOptions(group.playlistId, group.title),
+            onLongPress: () => _showGroupOptions(group.playlistId, group.title,
+                category: _tab == 'Movies' ? 'vod' : 'series'),
           ),
         ),
       ],
