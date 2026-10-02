@@ -53,7 +53,7 @@ class CatalogDatabase {
   Future<Database> _open(String path) async {
     final db = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE vod_channels (
@@ -69,7 +69,9 @@ class CatalogDatabase {
             added_at INTEGER,
             series_id INTEGER,
             series_name TEXT,
-            series_cover_url TEXT
+            series_cover_url TEXT,
+            tmdb_id TEXT,
+            release_date INTEGER
           )
         ''');
         await db.execute(
@@ -87,7 +89,9 @@ class CatalogDatabase {
             cover_url TEXT,
             is_favorite INTEGER NOT NULL DEFAULT 0,
             rating TEXT,
-            added_at INTEGER
+            added_at INTEGER,
+            tmdb_id TEXT,
+            release_date INTEGER
           )
         ''');
         await db.execute(
@@ -176,6 +180,20 @@ class CatalogDatabase {
           await _addColumnIfMissing(db, 'vod_channels', 'added_at', 'INTEGER');
           await _addColumnIfMissing(db, 'series_items', 'added_at', 'INTEGER');
         }
+        if (oldVersion < 5) {
+          // Channel.tmdbId/releaseDate — see their doc comments. Plain
+          // ALTER TABLE ADD COLUMN, same reasoning as v3 -> v4: no
+          // structural change, every existing row just gets these as
+          // NULL, which the enrichment lookup already treats as "hasn't
+          // run for this item yet" rather than anything needing a backfill
+          // migration of its own.
+          await _addColumnIfMissing(db, 'vod_channels', 'tmdb_id', 'TEXT');
+          await _addColumnIfMissing(
+              db, 'vod_channels', 'release_date', 'INTEGER');
+          await _addColumnIfMissing(db, 'series_items', 'tmdb_id', 'TEXT');
+          await _addColumnIfMissing(
+              db, 'series_items', 'release_date', 'INTEGER');
+        }
       },
     );
     return db;
@@ -206,6 +224,8 @@ class CatalogDatabase {
         'series_id': c.seriesId,
         'series_name': c.seriesName,
         'series_cover_url': c.seriesCoverUrl,
+        'tmdb_id': c.tmdbId,
+        'release_date': c.releaseDate?.millisecondsSinceEpoch,
       };
 
   Channel _rowToChannel(Map<String, Object?> row) {
@@ -218,6 +238,7 @@ class CatalogDatabase {
     final prefix = '$playlistId::';
     final rawId = id.startsWith(prefix) ? id.substring(prefix.length) : id;
     final addedAt = row['added_at'] as int?;
+    final releaseDate = row['release_date'] as int?;
     return Channel(
       id: id,
       rawId: rawId,
@@ -234,6 +255,10 @@ class CatalogDatabase {
       seriesId: row['series_id'] as int?,
       seriesName: row['series_name'] as String?,
       seriesCoverUrl: row['series_cover_url'] as String?,
+      tmdbId: row['tmdb_id'] as String?,
+      releaseDate: releaseDate != null
+          ? DateTime.fromMillisecondsSinceEpoch(releaseDate)
+          : null,
     );
   }
 
@@ -247,10 +272,13 @@ class CatalogDatabase {
         'is_favorite': s.isFavorite ? 1 : 0,
         'rating': s.rating,
         'added_at': s.addedAt?.millisecondsSinceEpoch,
+        'tmdb_id': s.tmdbId,
+        'release_date': s.releaseDate?.millisecondsSinceEpoch,
       };
 
   XtreamSeries _rowToSeries(Map<String, Object?> row) {
     final addedAt = row['added_at'] as int?;
+    final releaseDate = row['release_date'] as int?;
     return XtreamSeries(
       seriesId: row['series_id'] as int,
       playlistId: row['playlist_id'] as String,
@@ -261,6 +289,10 @@ class CatalogDatabase {
       rating: row['rating'] as String?,
       addedAt:
           addedAt != null ? DateTime.fromMillisecondsSinceEpoch(addedAt) : null,
+      tmdbId: row['tmdb_id'] as String?,
+      releaseDate: releaseDate != null
+          ? DateTime.fromMillisecondsSinceEpoch(releaseDate)
+          : null,
     );
   }
 
@@ -476,6 +508,25 @@ class CatalogDatabase {
         where: 'is_favorite = 1 AND playlist_id IN ($placeholders)',
         whereArgs: playlistIds);
     return rows.map(_rowToSeries).toList();
+  }
+
+  /// Caches one item's TMDB-fetched real release date — see
+  /// `Channel.releaseDate`'s doc comment. Written once per item (the
+  /// lookup never needs to repeat once cached), not folded into
+  /// [upsertVodCategory]'s wholesale replace, since enrichment runs as its
+  /// own separate, slower, network-bound pass well after the catalog sync
+  /// itself has already populated this row.
+  Future<void> setVodReleaseDate(String id, DateTime date) async {
+    final db = await _database;
+    await db.update('vod_channels', {'release_date': date.millisecondsSinceEpoch},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> setSeriesReleaseDate(String id, DateTime date) async {
+    final db = await _database;
+    await db.update(
+        'series_items', {'release_date': date.millisecondsSinceEpoch},
+        where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> setVodFavorite(String id, bool value) async {

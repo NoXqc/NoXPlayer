@@ -24,6 +24,8 @@ class Channel {
     this.seriesName,
     this.seriesCoverUrl,
     this.epgIdOverride,
+    this.tmdbId,
+    this.releaseDate,
   });
 
   /// Stable identifier: the M3U `tvg-id` when present (used to match EPG
@@ -95,6 +97,27 @@ class Channel {
   /// EPG" — every existing channel keeps working exactly as before.
   String? epgIdOverride;
 
+  /// The provider's own TMDB (The Movie Database) id for this title, when
+  /// it sends one — present on the same `get_vod_streams`/`get_series`
+  /// bulk list call [addedAt] already comes from, at zero extra network
+  /// cost. Exists purely as the lookup key [releaseDate] is fetched with;
+  /// nothing else in the app reads this directly.
+  final String? tmdbId;
+
+  /// The title's actual real-world release date — deliberately *not* the
+  /// same thing as [addedAt] (when the provider's own catalog first
+  /// listed it), which is often months or years off from when something
+  /// actually released. Reported directly: wanted to sort a category by
+  /// genuine release recency ("just came out Oct 1 2026" at the top), not
+  /// by provider ingestion date. Requires a separate TMDB API lookup per
+  /// [tmdbId] (see `TmdbEnrichmentService`) — not available from the bulk
+  /// catalog list the way [addedAt]/[rating] are, so this stays null until
+  /// that lookup has actually run and cached a result for this item.
+  /// Mutable (not `final`) — same "stamp it in place on the already-built
+  /// object" pattern [epgIdOverride]/[seriesId] use, since enrichment runs
+  /// *after* a category's [Channel] objects already exist in memory.
+  DateTime? releaseDate;
+
   /// The id every EPG lookup call site uses — see [epgIdOverride]'s doc
   /// comment. Never [rawId] directly from an EPG-lookup call site; that
   /// would bypass a manual assignment.
@@ -116,6 +139,8 @@ class Channel {
         seriesName: seriesName,
         seriesCoverUrl: seriesCoverUrl,
         epgIdOverride: epgIdOverride,
+        tmdbId: tmdbId,
+        releaseDate: releaseDate,
       );
 
   Map<String, dynamic> toJson() => {
@@ -133,6 +158,8 @@ class Channel {
         'seriesId': seriesId,
         'seriesName': seriesName,
         'seriesCoverUrl': seriesCoverUrl,
+        'tmdbId': tmdbId,
+        'releaseDate': releaseDate?.millisecondsSinceEpoch,
       };
 
   /// `playlistId` defaults to `'migrated_default'` and `rawId` to [id]
@@ -159,6 +186,10 @@ class Channel {
         seriesId: json['seriesId'] as int?,
         seriesName: json['seriesName'] as String?,
         seriesCoverUrl: json['seriesCoverUrl'] as String?,
+        tmdbId: json['tmdbId'] as String?,
+        releaseDate: json['releaseDate'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(json['releaseDate'] as int)
+            : null,
       );
 
   /// Best-effort "is this a live channel, not VOD/an episode" signal from

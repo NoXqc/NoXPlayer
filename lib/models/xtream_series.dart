@@ -11,6 +11,8 @@ class XtreamSeries {
     this.isFavorite = false,
     this.rating,
     this.addedAt,
+    this.tmdbId,
+    this.releaseDate,
   }) : id = '$playlistId::series_$seriesId';
 
   /// The raw per-provider integer Xtream itself uses — kept because
@@ -45,6 +47,14 @@ class XtreamSeries {
   /// meaning, different key per content type. Null when not reported.
   final DateTime? addedAt;
 
+  /// See `Channel.tmdbId`'s doc comment — same field, same source call
+  /// (`get_series`), same purpose.
+  final String? tmdbId;
+
+  /// See `Channel.releaseDate`'s doc comment — same reasoning and the same
+  /// mutable-in-place pattern, for the same reason.
+  DateTime? releaseDate;
+
   /// Mutable, flipped in place by `PlaylistManager.toggleSeriesFavorite` —
   /// same pattern as `Channel.isFavorite`.
   bool isFavorite;
@@ -58,6 +68,8 @@ class XtreamSeries {
         'isFavorite': isFavorite,
         'rating': rating,
         'addedAt': addedAt?.millisecondsSinceEpoch,
+        'tmdbId': tmdbId,
+        'releaseDate': releaseDate?.millisecondsSinceEpoch,
       };
 
   /// `playlistId` defaults to `'migrated_default'` for the same reason as
@@ -72,6 +84,10 @@ class XtreamSeries {
         rating: json['rating'] as String?,
         addedAt: json['addedAt'] is int
             ? DateTime.fromMillisecondsSinceEpoch(json['addedAt'] as int)
+            : null,
+        tmdbId: json['tmdbId'] as String?,
+        releaseDate: json['releaseDate'] is int
+            ? DateTime.fromMillisecondsSinceEpoch(json['releaseDate'] as int)
             : null,
       );
 }

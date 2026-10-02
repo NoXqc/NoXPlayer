@@ -354,6 +354,7 @@ List<Channel> _buildVodChannels(_VodStreamsArgs args) {
     final ext = item['container_extension']?.toString() ?? 'mp4';
     final rating = item['rating']?.toString();
     final added = int.tryParse(item['added']?.toString() ?? '');
+    final tmdbId = item['tmdb']?.toString();
     final rawId = 'xt_vod_$streamId';
     return Channel(
       id: '${args.playlistId}::$rawId',
@@ -369,6 +370,9 @@ List<Channel> _buildVodChannels(_VodStreamsArgs args) {
           : null,
       addedAt: (added != null && added > 0)
           ? DateTime.fromMillisecondsSinceEpoch(added * 1000)
+          : null,
+      tmdbId: (tmdbId != null && tmdbId.isNotEmpty && tmdbId != '0')
+          ? tmdbId
           : null,
     );
   }).toList();
@@ -387,6 +391,7 @@ List<XtreamSeries> _buildSeriesItems(_SeriesArgs args) {
     final rating = item['rating']?.toString();
     // `last_modified`, not `added` — see XtreamSeries.addedAt's doc comment.
     final lastModified = int.tryParse(item['last_modified']?.toString() ?? '');
+    final tmdbId = item['tmdb']?.toString();
     return XtreamSeries(
       seriesId: int.parse(item['series_id'].toString()),
       playlistId: args.playlistId,
@@ -398,6 +403,9 @@ List<XtreamSeries> _buildSeriesItems(_SeriesArgs args) {
           : null,
       addedAt: (lastModified != null && lastModified > 0)
           ? DateTime.fromMillisecondsSinceEpoch(lastModified * 1000)
+          : null,
+      tmdbId: (tmdbId != null && tmdbId.isNotEmpty && tmdbId != '0')
+          ? tmdbId
           : null,
     );
   }).toList();

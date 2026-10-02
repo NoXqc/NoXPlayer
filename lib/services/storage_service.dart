@@ -143,6 +143,14 @@ class StorageService {
 
   String getThemeMode() =>
       _prefs.getString(AppConstants.keyThemeMode) ?? 'dark';
+
+  /// Null/empty means "release-date sorting is off" — `TmdbEnrichmentService`
+  /// treats a missing key as a no-op rather than erroring, so a user who
+  /// never sets one just never sees that sort option do anything, instead
+  /// of a hard failure.
+  String? getTmdbApiKey() => _prefs.getString(AppConstants.keyTmdbApiKey);
+  Future<void> setTmdbApiKey(String key) =>
+      _prefs.setString(AppConstants.keyTmdbApiKey, key);
   Future<void> setThemeMode(String mode) =>
       _prefs.setString(AppConstants.keyThemeMode, mode);
 

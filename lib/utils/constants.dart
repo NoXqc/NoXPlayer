@@ -45,6 +45,7 @@ class AppConstants {
   static const String keyEpgUrl = 'nox_epg_url';
   static const String keyRefreshInterval = 'nox_refresh_interval_minutes';
   static const String keyThemeMode = 'nox_theme_mode';
+  static const String keyTmdbApiKey = 'nox_tmdb_api_key';
   static const String keyFavorites = 'nox_favorites';
   static const String keyFavoriteSeries = 'nox_favorite_series';
   static const String keyHiddenGroups = 'nox_hidden_groups';

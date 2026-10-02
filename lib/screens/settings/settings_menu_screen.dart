@@ -10,6 +10,7 @@ import 'check_updates_screen.dart';
 import 'epg_settings_screen.dart';
 import 'playlist_manager_screen.dart';
 import 'theme_screen.dart';
+import 'tmdb_settings_screen.dart';
 
 /// Settings entry point — a plain menu of destinations instead of one long
 /// scrollable form. Much easier to navigate with a D-pad (a handful of big
@@ -65,6 +66,13 @@ class SettingsMenuScreen extends StatelessWidget {
                         'Auto-refresh, channel matching & pairing, clear cache',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const EpgSettingsScreen())),
+                  ),
+                  _MenuTile(
+                    icon: Icons.movie_filter_outlined,
+                    title: 'TMDB (Release Dates)',
+                    subtitle: 'Optional key for sorting by real release date',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const TmdbSettingsScreen())),
                   ),
                   _MenuTile(
                     icon: Icons.system_update_outlined,
