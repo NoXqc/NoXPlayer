@@ -310,6 +310,11 @@ class _NoxIptvAppState extends State<NoxIptvApp>
         await _autoResumeLastChannel();
         await _epgService.init();
         _epgService.startAutoRefresh(_storage.getRefreshInterval(), _epgSources);
+        // No-op for most launches (no key set, or already refreshed this
+        // week) — see PlaylistManager.refreshWhatsNewTmdbIfDue's doc
+        // comment for why this is a launch-time due-check rather than an
+        // in-process weekly timer.
+        await _playlistManager.refreshWhatsNewTmdbIfDue();
       }());
     } catch (e) {
       // Surfaces any unexpected startup failure as a retryable screen

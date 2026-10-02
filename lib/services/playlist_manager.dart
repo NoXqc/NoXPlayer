@@ -10,6 +10,7 @@ import 'catalog_database.dart';
 import 'epg_service.dart';
 import 'playlist_session.dart';
 import 'storage_service.dart';
+import 'tmdb_enrichment_service.dart';
 
 /// Holds every playlist's parsed catalog, group visibility, and the
 /// (globally shared) favorites — a thin merge/dispatch layer over a
@@ -398,16 +399,72 @@ class PlaylistManager extends ChangeNotifier {
   /// additions lead), but anything whose title carries a release year
   /// older than the current one is dropped. A wider pool than [limit] is
   /// fetched because most of it gets filtered out.
+  /// Which *titles* lead "What's New" is still decided by [_thisYearOnly]
+  /// above — added-date order, same as always. A TMDB key only changes how
+  /// those already-chosen few are *ordered* against each other, by real
+  /// release date instead of added-date, when one's been set (see
+  /// [refreshWhatsNewTmdbIfDue] for where [Channel.releaseDate] actually
+  /// gets populated — never here, this is a plain, fast, no-network read).
   Future<List<Channel>> whatsNewVod({int limit = 5}) async {
     final rows = await _catalogDb.getRecentlyAddedVod(_enabledXtreamPlaylistIds,
         limit: limit * 40);
-    return _thisYearOnly(rows, (c) => c.name).take(limit).toList();
+    final picked = _thisYearOnly(rows, (c) => c.name).take(limit).toList();
+    if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
+      picked.sort((a, b) => _compareNullableDates(a.releaseDate, b.releaseDate));
+    }
+    return picked;
   }
 
   Future<List<XtreamSeries>> whatsNewSeries({int limit = 5}) async {
     final rows = await _catalogDb
         .getRecentlyAddedSeries(_enabledXtreamPlaylistIds, limit: limit * 40);
-    return _thisYearOnly(rows, (s) => s.name).take(limit).toList();
+    final picked = _thisYearOnly(rows, (s) => s.name).take(limit).toList();
+    if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
+      picked.sort((a, b) => _compareNullableDates(a.releaseDate, b.releaseDate));
+    }
+    return picked;
+  }
+
+  /// Newest first; a null date (never TMDB-enriched, or TMDB had nothing
+  /// for it) always sorts last rather than being treated as oldest — same
+  /// rule `GroupCatalogScreen`'s own TMDB sort uses.
+  static int _compareNullableDates(DateTime? a, DateTime? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return 1;
+    if (b == null) return -1;
+    return b.compareTo(a);
+  }
+
+  /// Keeps "What's New" sorted by real release date (once a TMDB key is
+  /// set) without ever making the carousel itself wait on a network call —
+  /// [whatsNewVod]/[whatsNewSeries] only ever *read* [Channel.releaseDate]/
+  /// [XtreamSeries.releaseDate], already persisted to [CatalogDatabase] by
+  /// whichever of this or `GroupCatalogScreen`'s own on-demand TMDB sort
+  /// ran last. Runs at most once a week, checked at each app launch rather
+  /// than via an in-process timer — a TV app routinely gets closed between
+  /// sessions, so a `Timer.periodic(Duration(days: 7))` would frequently
+  /// never fire at all; a persisted last-run timestamp, checked every cold
+  /// start, actually achieves "about once a week" for how this app is
+  /// really used. No interval to tune, deliberately — this exists to keep
+  /// the *existing, already-free* "What's New" carousel accurate for
+  /// anyone who happens to have added a key for `GroupCatalogScreen`'s
+  /// sort, not a feature of its own worth exposing a setting for. Scoped
+  /// to just the current ~10 "What's New" picks (never a whole catalog),
+  /// so even a cold cache-miss run is a handful of requests, not hundreds.
+  Future<void> refreshWhatsNewTmdbIfDue() async {
+    final key = _storage.getTmdbApiKey();
+    if (key == null || key.isEmpty) return;
+    final last = _storage.getWhatsNewTmdbLastRefreshed();
+    if (last != null && DateTime.now().difference(last) < const Duration(days: 7)) {
+      return;
+    }
+    final service = TmdbEnrichmentService(_storage, _catalogDb);
+    final vod = await whatsNewVod();
+    final series = await whatsNewSeries();
+    await service.enrichVod(vod);
+    await service.enrichSeries(series);
+    await _storage.setWhatsNewTmdbLastRefreshed(DateTime.now());
+    notifyListeners();
   }
 
   /// Keeps entries whose title states the current year, plus entries that

@@ -151,6 +151,17 @@ class StorageService {
   String? getTmdbApiKey() => _prefs.getString(AppConstants.keyTmdbApiKey);
   Future<void> setTmdbApiKey(String key) =>
       _prefs.setString(AppConstants.keyTmdbApiKey, key);
+
+  /// When "What's New" was last TMDB-enriched — see
+  /// `PlaylistManager.refreshWhatsNewTmdbIfDue`'s doc comment. Null means
+  /// never (a freshly-added key, or TMDB sorting never used at all).
+  DateTime? getWhatsNewTmdbLastRefreshed() {
+    final raw = _prefs.getString(AppConstants.keyWhatsNewTmdbLastRefreshed);
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
+
+  Future<void> setWhatsNewTmdbLastRefreshed(DateTime time) => _prefs.setString(
+      AppConstants.keyWhatsNewTmdbLastRefreshed, time.toIso8601String());
   Future<void> setThemeMode(String mode) =>
       _prefs.setString(AppConstants.keyThemeMode, mode);
 

@@ -11,7 +11,8 @@ import '../../widgets/settings_scaffold.dart';
 /// key — see `TmdbEnrichmentService`'s doc comment for why this can't
 /// just be a key baked into the app itself. Off by default: nothing here
 /// is required for the app to work, it only unlocks the "TMDB" sort
-/// option on a group's "Expand catalog" screen.
+/// option on a group's "Expand catalog" screen, and sharpens "What's New"
+/// (see `PlaylistManager.refreshWhatsNewTmdbIfDue`) once one's been set.
 class TmdbSettingsScreen extends StatefulWidget {
   const TmdbSettingsScreen({super.key});
 
@@ -85,16 +86,28 @@ class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
-            'Optional. Adding a free TMDB API key unlocks a "TMDB" sort '
-            'option on any group\'s "Expand catalog" screen, ordering '
-            'titles by their actual real-world release date instead of '
-            'when your provider added them to their own catalog.',
+            'TMDB (The Movie Database) is a free, independent movie and TV '
+            'database — not your IPTV provider. Adding your own free TMDB '
+            'key lets NoXPlayer look up a title\'s actual real-world '
+            'release date, which powers two things: a "TMDB" sort option '
+            'on any group\'s "Expand catalog" screen, and a more accurate '
+            '"What\'s New" row (ordered by real release date instead of '
+            'just when your provider added the title).',
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           const Text(
-            'Get a free key at themoviedb.org/settings/api (choose '
-            '"Personal use" when asked) — this app never collects or '
-            'shares it, it\'s stored only on this device.',
+            'This is completely optional and free — NoXPlayer works '
+            '100% without it. Without a key, sorting just falls back to '
+            'whenever your provider added or updated each title, which is '
+            'still available and works fine on its own.',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'To get one: create a free account at themoviedb.org, then '
+            'generate an API key under Settings > API (choose "Personal '
+            'use" when asked) and paste it below. NoXPlayer never collects '
+            'or shares it — it\'s stored only on this device.',
             style: TextStyle(fontSize: 12, color: Colors.white60),
           ),
           const SizedBox(height: 20),

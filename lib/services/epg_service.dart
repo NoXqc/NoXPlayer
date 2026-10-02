@@ -102,6 +102,29 @@ class EpgService extends ChangeNotifier {
 
   final Map<String, List<EpgProgram>> _programs = {};
 
+  /// Every URL's own most recently parsed set of channel ids — lets
+  /// [_refreshOne] clear only the ids *that exact URL* actually produced
+  /// last time, instead of every id the owning playlist happens to know
+  /// about (which used to include a channel's manually-assigned
+  /// [Channel.epgIdOverride] even when that id actually belongs to a
+  /// *different* playlist's own EPG source). Reported directly: assigning
+  /// Trex's channel to a candidate id from a different, already-loaded
+  /// feed worked at first (that id's cached programme data was already
+  /// there from the other feed's own refresh), then silently emptied out
+  /// the next time Trex's own source refreshed — its filter now included
+  /// that id (an override is still part of "my known ids" for parse-time
+  /// filtering, which is correct), so the stale-removal step deleted it
+  /// before Trex's own feed's parse, which never defined that id at all,
+  /// could put anything back. Scoping removal to what the URL itself last
+  /// contributed means a source only ever clears its *own* prior
+  /// contribution, never another source's. Not persisted to disk — same
+  /// "rebuilt fresh each launch" tradeoff as [_channelCatalog]: the first
+  /// refresh of a URL each session skips stale-removal entirely (nothing
+  /// recorded yet), so a channel genuinely dropped from a feed keeps
+  /// showing its last cached programme data until that URL's second
+  /// refresh this session, rather than risking any correctness issue.
+  final Map<String, Set<String>> _idsByUrl = {};
+
   /// Every `<channel id>` -> its first `<display-name>` this session has
   /// seen, across every source refreshed so far — *not* scoped to any one
   /// playlist's [EpgSource.knownChannelIds] the way [_programs] itself is
@@ -304,20 +327,19 @@ class EpgService extends ChangeNotifier {
       // should replace whatever an earlier one found.
       _nowPlayingCatalog.addAll(result.nowPlaying);
 
-      // Only ever removes *this source's own* stale entries (channels
-      // that had programmes before but don't appear in this fresh parse)
-      // before merging the new ones in — never a blanket clear. With more
-      // than one playlist sharing this same `_programs` map, a blanket
-      // clear here would wipe every other playlist's already-cached
-      // programmes on every single refresh. When `effectiveFilter` is
-      // null (this playlist's own channels haven't finished loading yet
-      // — see this method's doc comment), skip the stale-removal step
-      // entirely rather than guessing; `addAll` below still merges in
-      // whatever this unfiltered parse found.
-      if (effectiveFilter != null) {
-        _programs.removeWhere((id, _) => effectiveFilter.contains(id));
+      // Only ever removes *this URL's own* previously-seen ids (channels
+      // this exact source used to have programmes for but no longer does)
+      // before merging the new ones in — never the owning playlist's whole
+      // known-id set (see [_idsByUrl]'s doc comment for why that used to
+      // wrongly delete a different source's data when a channel's override
+      // pointed at it), and never a blanket clear, since more than one URL
+      // shares this same `_programs` map.
+      final previousIds = _idsByUrl[url];
+      if (previousIds != null) {
+        _programs.removeWhere((id, _) => previousIds.contains(id));
       }
       _programs.addAll(parsed);
+      _idsByUrl[url] = parsed.keys.toSet();
 
       lastUpdated = DateTime.now();
     } catch (e) {
