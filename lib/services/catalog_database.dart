@@ -53,7 +53,7 @@ class CatalogDatabase {
   Future<Database> _open(String path) async {
     final db = await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE vod_channels (
@@ -71,7 +71,8 @@ class CatalogDatabase {
             series_name TEXT,
             series_cover_url TEXT,
             tmdb_id TEXT,
-            release_date INTEGER
+            release_date INTEGER,
+            poster_url TEXT
           )
         ''');
         await db.execute(
@@ -91,7 +92,8 @@ class CatalogDatabase {
             rating TEXT,
             added_at INTEGER,
             tmdb_id TEXT,
-            release_date INTEGER
+            release_date INTEGER,
+            poster_url TEXT
           )
         ''');
         await db.execute(
@@ -194,6 +196,11 @@ class CatalogDatabase {
           await _addColumnIfMissing(
               db, 'series_items', 'release_date', 'INTEGER');
         }
+        if (oldVersion < 6) {
+          // Channel.posterUrl — same reasoning as v4 -> v5 just above.
+          await _addColumnIfMissing(db, 'vod_channels', 'poster_url', 'TEXT');
+          await _addColumnIfMissing(db, 'series_items', 'poster_url', 'TEXT');
+        }
       },
     );
     return db;
@@ -226,6 +233,7 @@ class CatalogDatabase {
         'series_cover_url': c.seriesCoverUrl,
         'tmdb_id': c.tmdbId,
         'release_date': c.releaseDate?.millisecondsSinceEpoch,
+        'poster_url': c.posterUrl,
       };
 
   Channel _rowToChannel(Map<String, Object?> row) {
@@ -259,6 +267,7 @@ class CatalogDatabase {
       releaseDate: releaseDate != null
           ? DateTime.fromMillisecondsSinceEpoch(releaseDate)
           : null,
+      posterUrl: row['poster_url'] as String?,
     );
   }
 
@@ -274,6 +283,7 @@ class CatalogDatabase {
         'added_at': s.addedAt?.millisecondsSinceEpoch,
         'tmdb_id': s.tmdbId,
         'release_date': s.releaseDate?.millisecondsSinceEpoch,
+        'poster_url': s.posterUrl,
       };
 
   XtreamSeries _rowToSeries(Map<String, Object?> row) {
@@ -293,6 +303,7 @@ class CatalogDatabase {
       releaseDate: releaseDate != null
           ? DateTime.fromMillisecondsSinceEpoch(releaseDate)
           : null,
+      posterUrl: row['poster_url'] as String?,
     );
   }
 
@@ -526,6 +537,18 @@ class CatalogDatabase {
     final db = await _database;
     await db.update(
         'series_items', {'release_date': date.millisecondsSinceEpoch},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> setVodPosterUrl(String id, String url) async {
+    final db = await _database;
+    await db.update('vod_channels', {'poster_url': url},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> setSeriesPosterUrl(String id, String url) async {
+    final db = await _database;
+    await db.update('series_items', {'poster_url': url},
         where: 'id = ?', whereArgs: [id]);
   }
 

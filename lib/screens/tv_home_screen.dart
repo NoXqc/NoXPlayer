@@ -2623,7 +2623,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       return _WhatsNewCarousel<Channel>(
         loadItems: playlist.whatsNewVod,
         titleOf: (c) => c.name,
-        imageUrlOf: (c) => c.logoUrl,
+        imageUrlOf: (c) => c.posterUrl ?? c.logoUrl,
         onOpen: _openMovie,
         playFocusNode: _moviesWhatsNewPlayFocusNode,
         emptyText: 'No recently added movies yet',
@@ -2736,7 +2736,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       return _WhatsNewCarousel<XtreamSeries>(
         loadItems: playlist.whatsNewSeries,
         titleOf: (s) => s.name,
-        imageUrlOf: (s) => s.coverUrl,
+        imageUrlOf: (s) => s.posterUrl ?? s.coverUrl,
         onOpen: _openSeries,
         playFocusNode: _showsWhatsNewPlayFocusNode,
         emptyText: 'No recently added shows yet',

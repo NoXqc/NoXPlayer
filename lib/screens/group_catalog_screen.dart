@@ -280,7 +280,9 @@ class _GroupCatalogScreenState extends State<GroupCatalogScreen> {
       items,
       (c) => PosterCard(
         title: c.name,
-        imageUrl: c.logoUrl,
+        // TMDB's own poster, when enrichment has found one, over the
+        // provider's — see `Channel.posterUrl`'s doc comment.
+        imageUrl: c.posterUrl ?? c.logoUrl,
         rating: c.rating,
         watched: storage.isFullyWatched(c.id),
         progressFraction: storage.getWatchedFraction(c.id),
@@ -300,7 +302,7 @@ class _GroupCatalogScreenState extends State<GroupCatalogScreen> {
       items,
       (s) => PosterCard(
         title: s.name,
-        imageUrl: s.coverUrl,
+        imageUrl: s.posterUrl ?? s.coverUrl,
         rating: s.rating,
         isFavorite: s.isFavorite,
         onToggleFavorite: () => _toggleSeriesFavoriteWithFeedback(playlist, s),

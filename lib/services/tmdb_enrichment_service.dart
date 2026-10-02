@@ -33,6 +33,13 @@ class TmdbEnrichmentService {
 
   static const _base = 'https://api.themoviedb.org/3';
 
+  /// TMDB's own image CDN — `w500` is a good balance for a TV poster grid
+  /// (noticeably sharper than most providers' own art without pulling full
+  /// originals). See `Channel.posterUrl`'s doc comment: this rides along in
+  /// the exact same response [_fetchDetails] already fetches for
+  /// [Channel.releaseDate]/[XtreamSeries.releaseDate], at no extra request.
+  static const _imageBase = 'https://image.tmdb.org/t/p/w500';
+
   /// Items in flight at once — plain sequential (one at a time) made a
   /// few hundred items take minutes, which read as a *stuck/wrong* sort
   /// rather than a still-loading one (reported directly: newer titles
@@ -46,18 +53,24 @@ class TmdbEnrichmentService {
   /// after batch with zero spacing at all.
   static const _batchPause = Duration(milliseconds: 150);
 
-  /// Enriches whichever of [items] have a [Channel.tmdbId] but no
-  /// [Channel.releaseDate] yet. [onProgress] fires after *every* attempt
-  /// (hit or miss), not just ones that found a date, so a caller can show
-  /// real "X of Y processed" progress — distinguishing "still working,
-  /// correct so far" from "finished, this is the final order" is the
-  /// whole point, since a partially-enriched category's incremental sort
-  /// is only valid up to whatever point enrichment has actually reached.
+  /// Enriches whichever of [items] have a [Channel.tmdbId] but are still
+  /// missing [Channel.releaseDate] or [Channel.posterUrl] — the latter was
+  /// added after the former, so an item enriched before that point has a
+  /// release date already but no poster yet; re-including it here lets a
+  /// later enrichment pass backfill just the poster without re-fetching
+  /// the date. [onProgress] fires after *every* attempt (hit or miss), not
+  /// just ones that found something, so a caller can show real "X of Y
+  /// processed" progress — distinguishing "still working, correct so far"
+  /// from "finished, this is the final order" is the whole point, since a
+  /// partially-enriched category's incremental sort is only valid up to
+  /// whatever point enrichment has actually reached.
   Future<void> enrichVod(List<Channel> items,
       {void Function(int done, int total)? onProgress}) async {
     final key = _storage.getTmdbApiKey();
-    final pending =
-        items.where((c) => c.tmdbId != null && c.releaseDate == null).toList();
+    final pending = items
+        .where((c) =>
+            c.tmdbId != null && (c.releaseDate == null || c.posterUrl == null))
+        .toList();
     if (key == null || key.isEmpty || pending.isEmpty) {
       onProgress?.call(0, 0);
       return;
@@ -74,10 +87,16 @@ class TmdbEnrichmentService {
       // catalog is" — data availability was never the problem.
       await Future.wait(batch.map((c) async {
         try {
-          final date = await _fetchReleaseDate(c.tmdbId!, key, isMovie: true);
-          if (date != null) {
-            c.releaseDate = date;
-            unawaited(_db.setVodReleaseDate(c.id, date));
+          final details = await _fetchDetails(c.tmdbId!, key, isMovie: true);
+          if (details != null) {
+            if (details.releaseDate != null) {
+              c.releaseDate = details.releaseDate;
+              unawaited(_db.setVodReleaseDate(c.id, details.releaseDate!));
+            }
+            if (details.posterUrl != null) {
+              c.posterUrl = details.posterUrl;
+              unawaited(_db.setVodPosterUrl(c.id, details.posterUrl!));
+            }
           }
         } catch (_) {
           // A dead/invalid key, a rate limit, a title TMDB doesn't have —
@@ -97,8 +116,10 @@ class TmdbEnrichmentService {
   Future<void> enrichSeries(List<XtreamSeries> items,
       {void Function(int done, int total)? onProgress}) async {
     final key = _storage.getTmdbApiKey();
-    final pending =
-        items.where((s) => s.tmdbId != null && s.releaseDate == null).toList();
+    final pending = items
+        .where((s) =>
+            s.tmdbId != null && (s.releaseDate == null || s.posterUrl == null))
+        .toList();
     if (key == null || key.isEmpty || pending.isEmpty) {
       onProgress?.call(0, 0);
       return;
@@ -109,10 +130,16 @@ class TmdbEnrichmentService {
       final batch = pending.skip(i).take(_concurrency);
       await Future.wait(batch.map((s) async {
         try {
-          final date = await _fetchReleaseDate(s.tmdbId!, key, isMovie: false);
-          if (date != null) {
-            s.releaseDate = date;
-            unawaited(_db.setSeriesReleaseDate(s.id, date));
+          final details = await _fetchDetails(s.tmdbId!, key, isMovie: false);
+          if (details != null) {
+            if (details.releaseDate != null) {
+              s.releaseDate = details.releaseDate;
+              unawaited(_db.setSeriesReleaseDate(s.id, details.releaseDate!));
+            }
+            if (details.posterUrl != null) {
+              s.posterUrl = details.posterUrl;
+              unawaited(_db.setSeriesPosterUrl(s.id, details.posterUrl!));
+            }
           }
         } catch (_) {
           // See the matching catch in enrichVod above.
@@ -124,7 +151,8 @@ class TmdbEnrichmentService {
     }
   }
 
-  Future<DateTime?> _fetchReleaseDate(String tmdbId, String apiKey,
+  Future<({DateTime? releaseDate, String? posterUrl})?> _fetchDetails(
+      String tmdbId, String apiKey,
       {required bool isMovie}) async {
     try {
       final path = isMovie ? 'movie' : 'tv';
@@ -132,10 +160,17 @@ class TmdbEnrichmentService {
       final response = await http.get(uri).timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) return null;
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final raw =
+      final rawDate =
           (isMovie ? data['release_date'] : data['first_air_date']) as String?;
-      if (raw == null || raw.isEmpty) return null;
-      return DateTime.tryParse(raw);
+      final posterPath = data['poster_path'] as String?;
+      return (
+        releaseDate: (rawDate != null && rawDate.isNotEmpty)
+            ? DateTime.tryParse(rawDate)
+            : null,
+        posterUrl: (posterPath != null && posterPath.isNotEmpty)
+            ? '$_imageBase$posterPath'
+            : null,
+      );
     } catch (_) {
       return null;
     }

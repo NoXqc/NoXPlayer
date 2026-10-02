@@ -26,6 +26,7 @@ class Channel {
     this.epgIdOverride,
     this.tmdbId,
     this.releaseDate,
+    this.posterUrl,
   });
 
   /// Stable identifier: the M3U `tvg-id` when present (used to match EPG
@@ -118,6 +119,16 @@ class Channel {
   /// *after* a category's [Channel] objects already exist in memory.
   DateTime? releaseDate;
 
+  /// A TMDB poster image, fetched at zero extra request cost — the same
+  /// per-[tmdbId] lookup `TmdbEnrichmentService` already makes for
+  /// [releaseDate] returns a `poster_path` in that identical response.
+  /// Consistently higher-resolution and more reliably present than a
+  /// provider's own [logoUrl]/[seriesCoverUrl] (reported directly as this
+  /// app's least-liked thing about the "What's New" row), so callers
+  /// prefer this over those when it's set, falling back otherwise. Same
+  /// mutable "stamp in place" reasoning as [releaseDate].
+  String? posterUrl;
+
   /// The id every EPG lookup call site uses — see [epgIdOverride]'s doc
   /// comment. Never [rawId] directly from an EPG-lookup call site; that
   /// would bypass a manual assignment.
@@ -141,6 +152,7 @@ class Channel {
         epgIdOverride: epgIdOverride,
         tmdbId: tmdbId,
         releaseDate: releaseDate,
+        posterUrl: posterUrl,
       );
 
   Map<String, dynamic> toJson() => {
@@ -160,6 +172,7 @@ class Channel {
         'seriesCoverUrl': seriesCoverUrl,
         'tmdbId': tmdbId,
         'releaseDate': releaseDate?.millisecondsSinceEpoch,
+        'posterUrl': posterUrl,
       };
 
   /// `playlistId` defaults to `'migrated_default'` and `rawId` to [id]
@@ -190,6 +203,7 @@ class Channel {
         releaseDate: json['releaseDate'] is int
             ? DateTime.fromMillisecondsSinceEpoch(json['releaseDate'] as int)
             : null,
+        posterUrl: json['posterUrl'] as String?,
       );
 
   /// Best-effort "is this a live channel, not VOD/an episode" signal from
