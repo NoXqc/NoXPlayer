@@ -1,7 +1,7 @@
 name: nox_iptv
 description: "NoX IPTV - an M3U/EPG IPTV player for Android phones, boxes, and Firesticks."
 publish_to: 'none'
-version: 3.47.0+161
+version: 3.48.0+162
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -29,6 +29,29 @@ dependencies:
   # undeclared transitive API surface.
   flutter_cache_manager: ^3.4.1
   file: ^7.0.0
+  # Already pulled in transitively by other packages — added explicitly
+  # for ParentalPin's own PIN hashing rather than relying on an undeclared
+  # transitive API surface (same reasoning as flutter_cache_manager above).
+  crypto: ^3.0.3
+  # Windows/Linux desktop only — plain sqflite has no implementation for
+  # either (Android/iOS/macOS keep using its native one, untouched). See
+  # main.dart's `databaseFactory` setup.
+  sqflite_common_ffi: ^2.3.3
+  # Windows-only playback — video_player_hdr (used on every other platform,
+  # untouched) has no Windows implementation at all. Deliberately only the
+  # Windows native-library package below, not macos/linux/android/ios ones
+  # — see lib/screens/desktop_player_screen.dart's doc comment for why this
+  # is a wholly separate, standalone player screen rather than a shared
+  # abstraction threaded through PlaybackService/the existing mobile player
+  # widgets.
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_windows_video: ^1.0.10
+  # Windows only — Check for Updates has no silent-install path there
+  # (unlike Android's FileProvider + package-installer intent, see
+  # AppUpdateService's own doc comment), so it hands the release zip's
+  # URL to the system browser instead and lets the user grab it that way.
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

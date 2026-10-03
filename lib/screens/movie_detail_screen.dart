@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +9,7 @@ import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
 import '../services/storage_service.dart';
 import '../utils/tv_theme.dart';
+import 'desktop_player_screen.dart';
 import 'player_screen.dart';
 
 /// A stop between "tap a movie" and "it starts playing" — a poster, rating,
@@ -54,6 +57,14 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
     );
 
     Future<void> play({bool resume = true}) async {
+      // See TvHomeScreen._selectChannel's matching comment — Windows has
+      // no PlaybackService-compatible player at all, so this bypasses it
+      // (and Continue Watching/resume) entirely via a standalone screen.
+      if (Platform.isWindows) {
+        Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => DesktopPlayerScreen(channel: channel)));
+        return;
+      }
       if (!resume) storage.setLastPosition(channel.id, 0);
       // Awaited so PlayerScreen's own initState (which also calls
       // play(), guarded to no-op once this channel is already current)

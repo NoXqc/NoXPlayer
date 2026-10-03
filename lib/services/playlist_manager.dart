@@ -6,6 +6,7 @@ import '../models/m3u_group.dart';
 import '../models/playlist_profile.dart';
 import '../models/xtream_series.dart';
 import '../utils/channel_name_matching.dart';
+import '../utils/constants.dart';
 import 'catalog_database.dart';
 import 'epg_service.dart';
 import 'playlist_session.dart';
@@ -13,18 +14,25 @@ import 'storage_service.dart';
 import 'tmdb_enrichment_service.dart';
 
 /// Holds every playlist's parsed catalog, group visibility, and the
-/// (globally shared) favorites — a thin merge/dispatch layer over a
-/// `List<PlaylistSession>`, one per `PlaylistProfile`. Until this version,
-/// exactly one playlist could exist at all, and this class *was* the
-/// single playlist's whole state; see `PlaylistSession` for where all of
-/// that per-playlist logic (and its hard-won real-hardware bug-fix history)
-/// actually lives now.
+/// (per-viewer — see [applyActiveViewer]) favorites — a thin merge/dispatch
+/// layer over a `List<PlaylistSession>`, one per `PlaylistProfile`. Until
+/// this version, exactly one playlist could exist at all, and this class
+/// *was* the single playlist's whole state; see `PlaylistSession` for where
+/// all of that per-playlist logic (and its hard-won real-hardware bug-fix
+/// history) actually lives now.
 ///
 /// Two independent source modes per playlist:
 /// - **M3U**: a flat [Channel] list parsed from a plain M3U URL, grouped
 ///   into tabs by keyword-matching the `group-title`.
 /// - **Xtream**: talks to the real Xtream Codes API. See `PlaylistSession`
 ///   for the lazy-category-loading/background-warm-up shape both share.
+///
+/// Deliberately has no dependency on `ViewerProfileService` (that class
+/// depends on *this* one to apply a switch — see its own doc comment — and
+/// a two-way dependency between them isn't needed for anything). Instead
+/// this class keeps the one bit of viewer state every `PlaylistSession`
+/// actually needs — whether the active viewer is restricted — as plain
+/// local state, set by [applyActiveViewer].
 class PlaylistManager extends ChangeNotifier {
   PlaylistManager(this._storage, this._catalogDb);
 
@@ -63,6 +71,12 @@ class PlaylistManager extends ChangeNotifier {
 
   Set<String> _favoriteIds = {};
   Set<String> _favoriteSeriesIds = {};
+
+  /// See this class' own doc comment. Read live by every `PlaylistSession`
+  /// via the `isRestrictedViewer` callback passed to its constructor —
+  /// changed in one place ([applyActiveViewer]) on a viewer switch, visible
+  /// to every session immediately with no per-session plumbing needed.
+  bool _activeViewerRestricted = false;
 
   final List<PlaylistSession> _sessions = [];
 
@@ -142,6 +156,14 @@ class PlaylistManager extends ChangeNotifier {
     notifyListeners();
     try {
       await _migrateLegacySinglePlaylist();
+      await _reconcileFavoritesFromDbOnce();
+
+      _catalogDb.isVodFavorite = (id) => _favoriteIds.contains(id);
+      _catalogDb.isSeriesFavorite = (id) => _favoriteSeriesIds.contains(id);
+
+      _favoriteIds = _storage.getFavorites();
+      _favoriteSeriesIds = _storage.getFavoriteSeries();
+      _activeViewerRestricted = _activeViewerIsRestricted();
 
       _sessions
         ..clear()
@@ -151,11 +173,9 @@ class PlaylistManager extends ChangeNotifier {
               catalogDb: _catalogDb,
               favoriteIds: () => _favoriteIds,
               favoriteSeriesIds: () => _favoriteSeriesIds,
+              isRestrictedViewer: () => _activeViewerRestricted,
               onNotify: notifyListeners,
             )));
-
-      _favoriteIds = _storage.getFavorites();
-      _favoriteSeriesIds = _storage.getFavoriteSeries();
 
       notifyListeners();
       // Every enabled playlist restores (from its own cache, or a fresh
@@ -245,6 +265,69 @@ class PlaylistManager extends ChangeNotifier {
     await _storage.setMigratedToMultiPlaylist(true);
   }
 
+  // --- Viewer profiles --------------------------------------------------
+  // `ViewerProfileService` owns profile CRUD and the actual switch
+  // sequence; this class only needs the two things a switch changes for
+  // *catalog* state — which favorites are active, and whether group
+  // visibility is a blocklist or an allowlist (see `PlaylistSession
+  // ._loadViewerScopedState`'s doc comment).
+
+  bool _activeViewerIsRestricted() {
+    final activeId = _storage.getActiveViewerId();
+    if (activeId == AppConstants.mainViewerId) return false;
+    for (final profile in _storage.getViewerProfiles()) {
+      if (profile.id == activeId) return profile.isRestricted;
+    }
+    return false;
+  }
+
+  /// Called by `ViewerProfileService.switchTo` once the new viewer id is
+  /// already persisted (`StorageService.setActiveViewerId`) — reloads every
+  /// session's favorited/hidden-groups/hidden-channels state and re-stamps
+  /// `isFavorite` on every already-loaded `Channel`/`XtreamSeries` for the
+  /// newly-active viewer. Deliberately never touches the network — a
+  /// profile switch should feel instant, and the actual catalog (as
+  /// opposed to which parts of it are hidden/favorited) is shared across
+  /// every viewer regardless.
+  void applyActiveViewer() {
+    _activeViewerRestricted = _activeViewerIsRestricted();
+    _favoriteIds = _storage.getFavorites();
+    _favoriteSeriesIds = _storage.getFavoriteSeries();
+    for (final session in _sessions) {
+      session.reloadViewerState();
+      session.restampFavorites();
+    }
+    notifyListeners();
+  }
+
+  /// One-time migration safety net for moving favorites off
+  /// `CatalogDatabase`'s own `is_favorite` column onto callback-based reads
+  /// — see `CatalogDatabase.isVodFavorite`'s doc comment for the drift this
+  /// closes. Unions every VOD/series row the database's column still has
+  /// set into Main's prefs favorite set, so a favorite that somehow only
+  /// ever made it into the database (not the prefs set `toggleFavorite`
+  /// actually writes) doesn't silently disappear the moment this version
+  /// stops reading that column. Runs at most once per install, ever —
+  /// guarded, not once per launch — and only ever touches Main's keys
+  /// (this runs before any viewer other than Main can exist).
+  Future<void> _reconcileFavoritesFromDbOnce() async {
+    if (_storage.getFavoritesDbReconciled()) return;
+    final playlistIds = _storage.getPlaylists().map((p) => p.id).toList();
+    if (playlistIds.isNotEmpty) {
+      final dbVod = await _catalogDb.getAllFavoriteVod(playlistIds);
+      final dbSeries = await _catalogDb.getAllFavoriteSeries(playlistIds);
+      if (dbVod.isNotEmpty || dbSeries.isNotEmpty) {
+        final favorites = _storage.getFavorites()
+          ..addAll(dbVod.map((c) => c.id));
+        final seriesFavorites = _storage.getFavoriteSeries()
+          ..addAll(dbSeries.map((s) => s.id));
+        await _storage.setFavorites(favorites);
+        await _storage.setFavoriteSeries(seriesFavorites);
+      }
+    }
+    await _storage.setFavoritesDbReconciled(true);
+  }
+
   // --- Add / update / remove / enable ---------------------------------------
 
   Future<void> addPlaylist(PlaylistProfile profile) async {
@@ -256,6 +339,7 @@ class PlaylistManager extends ChangeNotifier {
       catalogDb: _catalogDb,
       favoriteIds: () => _favoriteIds,
       favoriteSeriesIds: () => _favoriteSeriesIds,
+      isRestrictedViewer: () => _activeViewerRestricted,
       onNotify: notifyListeners,
     ));
     notifyListeners();
@@ -408,7 +492,14 @@ class PlaylistManager extends ChangeNotifier {
   Future<List<Channel>> whatsNewVod({int limit = 5}) async {
     final rows = await _catalogDb.getRecentlyAddedVod(_enabledXtreamPlaylistIds,
         limit: limit * 40);
-    final picked = _thisYearOnly(rows, (c) => c.name).take(limit).toList();
+    // A restricted viewer's hidden groups never headline What's New — see
+    // `_isHiddenForActiveViewer`'s doc comment. Filtered before `take`,
+    // not after, so a kid profile isn't left with fewer than [limit]
+    // results just because most of the unfiltered pool happened to belong
+    // to groups they can't see.
+    final visible =
+        rows.where((c) => !_isHiddenForActiveViewer(c.playlistId, c.group));
+    final picked = _thisYearOnly(visible, (c) => c.name).take(limit).toList();
     if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
       picked.sort((a, b) => _compareNullableDates(a.releaseDate, b.releaseDate));
     }
@@ -418,7 +509,9 @@ class PlaylistManager extends ChangeNotifier {
   Future<List<XtreamSeries>> whatsNewSeries({int limit = 5}) async {
     final rows = await _catalogDb
         .getRecentlyAddedSeries(_enabledXtreamPlaylistIds, limit: limit * 40);
-    final picked = _thisYearOnly(rows, (s) => s.name).take(limit).toList();
+    final visible = rows
+        .where((s) => !_isHiddenForActiveViewer(s.playlistId, s.categoryId));
+    final picked = _thisYearOnly(visible, (s) => s.name).take(limit).toList();
     if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
       picked.sort((a, b) => _compareNullableDates(a.releaseDate, b.releaseDate));
     }
@@ -472,7 +565,8 @@ class PlaylistManager extends ChangeNotifier {
   /// not series, and dropping every untitled-year entry would leave TV
   /// Shows permanently empty rather than merely selective.
   static final RegExp _titleYear = RegExp(r'(?:19|20)\d{2}');
-  static Iterable<T> _thisYearOnly<T>(List<T> rows, String Function(T) nameOf) {
+  static Iterable<T> _thisYearOnly<T>(
+      Iterable<T> rows, String Function(T) nameOf) {
     final currentYear = DateTime.now().year;
     return rows.where((row) {
       final matches = _titleYear.allMatches(nameOf(row));
@@ -790,6 +884,39 @@ class PlaylistManager extends ChangeNotifier {
         .toList();
   }
 
+  /// `CatalogDatabase.searchVod`/`searchSeries` wrapped here because that
+  /// class has no concept of "hidden" at all — unlike [visibleChannels]/
+  /// [visibleSeries] above (built from each session's own in-memory lists,
+  /// already hidden-group-filtered), a direct SQL search sees every row
+  /// regardless of visibility. [SearchScreen] calls these instead of
+  /// `CatalogDatabase`'s methods directly, so a restricted viewer's search
+  /// results can't surface a hidden category's titles. A restricted viewer
+  /// queries a wider pool first, since most of it can get filtered out
+  /// before [limit] is reached — same reasoning as [whatsNewVod]'s own
+  /// over-fetch, just a smaller multiplier since this is an interactive,
+  /// on-demand search, not a background job with time to spare.
+  Future<List<Channel>> searchVisibleVod(String query, List<String> playlistIds,
+      {int limit = 200}) async {
+    final wider = _activeViewerRestricted ? limit * 3 : limit;
+    final rows = await _catalogDb.searchVod(query, playlistIds, limit: wider);
+    return rows
+        .where((c) => !_isHiddenForActiveViewer(c.playlistId, c.group))
+        .take(limit)
+        .toList();
+  }
+
+  Future<List<XtreamSeries>> searchVisibleSeries(
+      String query, List<String> playlistIds,
+      {int limit = 200}) async {
+    final wider = _activeViewerRestricted ? limit * 3 : limit;
+    final rows =
+        await _catalogDb.searchSeries(query, playlistIds, limit: wider);
+    return rows
+        .where((s) => !_isHiddenForActiveViewer(s.playlistId, s.categoryId))
+        .take(limit)
+        .toList();
+  }
+
   /// Every id this one playlist could plausibly have EPG data for — feeds
   /// `EpgService`'s per-playlist `knownChannelIds` filter (see that
   /// class's doc comment on why an unfiltered multi-provider EPG source
@@ -835,12 +962,23 @@ class PlaylistManager extends ChangeNotifier {
   Future<void> ensureLiveChannelsLoaded() => Future.wait(
       _enabledSessionsSorted.map((s) => s.ensureLiveChannelsLoaded()));
 
-  // --- Favorites (global — shared across every playlist) --------------------
+  // --- Favorites (per viewer — see `applyActiveViewer`) ----------------------
+
+  /// A restricted viewer's hidden-but-previously-favorited channel/series
+  /// shouldn't still show up in Favorites just because it was favorited
+  /// before its group got hidden (by them or by whoever set up their
+  /// profile) — every favorite getter below filters through this. Uses the
+  /// session's already-computed [PlaylistSession.hiddenGroups] (the
+  /// blocklist-or-allowlist result — see that field's own doc comment),
+  /// not a second hidden-groups lookup of its own.
+  bool _isHiddenForActiveViewer(String playlistId, String group) =>
+      _sessionFor(playlistId)?.hiddenGroups.contains(group) ?? false;
 
   List<Channel> get favoriteChannels => _enabledSessionsSorted
           .expand((s) =>
               s.isXtream ? [...s.liveChannels, ...s.allCachedVod] : s.channels)
           .where((c) {
+        if (_isHiddenForActiveViewer(c.playlistId, c.group)) return false;
         final favoritedGroups = _sessionFor(c.playlistId)?.favoritedGroups;
         return c.isFavorite || (favoritedGroups?.contains(c.group) ?? false);
       }).toList();
@@ -850,25 +988,31 @@ class PlaylistManager extends ChangeNotifier {
           ? s.liveChannels.where((c) => c.isFavorite)
           : s.channels.where(
               (c) => c.isFavorite && _classifyGroupPublic(c.group) == 'tv'))
+      .where((c) => !_isHiddenForActiveViewer(c.playlistId, c.group))
       .toList();
 
   List<Channel> get favoriteMovies => _enabledSessionsSorted
       .expand((s) => (s.isXtream
           ? s.allCachedVod
           : s.channels.where((c) => _classifyGroupPublic(c.group) == 'vod')))
-      .where((c) => c.isFavorite)
+      .where((c) =>
+          c.isFavorite && !_isHiddenForActiveViewer(c.playlistId, c.group))
       .toList();
 
   List<XtreamSeries> get favoriteSeries => _enabledSessionsSorted
       .where((s) => s.isXtream)
       .expand((s) => s.allCachedSeries)
-      .where((s) => s.isFavorite)
+      .where((s) =>
+          s.isFavorite && !_isHiddenForActiveViewer(s.playlistId, s.categoryId))
       .toList();
 
   List<Channel> get favoriteShowChannels => _enabledSessionsSorted
       .where((s) => !s.isXtream)
       .expand((s) => s.channels)
-      .where((c) => c.isFavorite && _classifyGroupPublic(c.group) == 'series')
+      .where((c) =>
+          c.isFavorite &&
+          _classifyGroupPublic(c.group) == 'series' &&
+          !_isHiddenForActiveViewer(c.playlistId, c.group))
       .toList();
 
   /// Same classification `PlaylistSession._classifyGroup` uses — needed
@@ -889,14 +1033,26 @@ class PlaylistManager extends ChangeNotifier {
       _favoriteIds.remove(channel.id);
     }
     await _storage.setFavorites(_favoriteIds);
-    // Harmless no-op for a live/M3U channel (no matching row in the
-    // catalog database) — only actually updates a row for a VOD channel.
-    await _catalogDb.setVodFavorite(channel.id, channel.isFavorite);
+    // Only while Main is active — downgrade insurance, not the source of
+    // truth (see `CatalogDatabase.isVodFavorite`'s doc comment). Writing
+    // this for a *non-Main* viewer would make the column actively wrong
+    // for everyone else, not just stale: a bare bit can't represent "is
+    // this favorited" for more than one viewer at once. Harmless no-op for
+    // a live/M3U channel either way (no matching row in the database).
+    if (_storage.getActiveViewerId() == AppConstants.mainViewerId) {
+      await _catalogDb.setVodFavorite(channel.id, channel.isFavorite);
+    }
     notifyListeners();
   }
 
   bool isSeriesFavorited(String seriesId) =>
       _favoriteSeriesIds.contains(seriesId);
+
+  /// The composite-id equivalent of [isSeriesFavorited] — used by
+  /// `PlaybackService.reloadForViewer` to re-stamp `isFavorite` on its own
+  /// recently-played list after a viewer switch, without needing to search
+  /// every session's own channel lists for a match.
+  bool isChannelFavorited(String channelId) => _favoriteIds.contains(channelId);
 
   Future<void> toggleSeriesFavorite(XtreamSeries series) async {
     series.isFavorite = !series.isFavorite;
@@ -906,7 +1062,10 @@ class PlaylistManager extends ChangeNotifier {
       _favoriteSeriesIds.remove(series.id);
     }
     await _storage.setFavoriteSeries(_favoriteSeriesIds);
-    await _catalogDb.setSeriesFavorite(series.id, series.isFavorite);
+    // See the matching comment in toggleFavorite above.
+    if (_storage.getActiveViewerId() == AppConstants.mainViewerId) {
+      await _catalogDb.setSeriesFavorite(series.id, series.isFavorite);
+    }
     notifyListeners();
   }
 

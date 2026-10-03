@@ -108,6 +108,17 @@ class Sidebar extends StatelessWidget {
                           ),
                     selected: selectedGroup?.playlistId == group.playlistId &&
                         selectedGroup?.title == group.title,
+                    // No restricted-viewer PIN gate needed here, unlike the
+                    // TV long-press channel menu's own "Unhide" option —
+                    // `groups` above is already filtered to `!g.isHidden`,
+                    // so `group.isHidden` is always false and this toggle
+                    // can only ever *hide* a group, never un-hide one
+                    // (un-hiding only happens through Settings > Group
+                    // Management's own list, which shows hidden groups too
+                    // and sits behind the Settings PIN gate already).
+                    // Verified directly during this feature's own review
+                    // after an initial pass flagged this as a possible
+                    // bypass.
                     trailing: collapsed
                         ? null
                         : IconButton(

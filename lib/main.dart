@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'screens/catalog_sync_prompt_screen.dart';
 import 'screens/catalog_sync_screen.dart';
@@ -12,17 +15,34 @@ import 'services/app_preferences.dart';
 import 'services/catalog_database.dart';
 import 'services/device_memory_service.dart';
 import 'services/epg_service.dart';
+import 'services/parental_pin.dart';
 import 'services/persistent_image_cache.dart';
 import 'services/playback_service.dart';
 import 'services/playlist_manager.dart';
 import 'services/storage_service.dart';
+import 'services/viewer_profile_service.dart';
 import 'utils/constants.dart';
 import 'utils/route_observer.dart';
 import 'utils/tv_theme.dart';
+import 'widgets/desktop_live_resume_hint.dart';
 import 'widgets/live_resume_hint.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Plain `sqflite` has no Windows/Linux implementation at all — confirmed
+  // via .flutter-plugins-dependencies: sqflite_android/sqflite_darwin exist
+  // for the platforms this app already shipped on, nothing for
+  // windows/linux. sqflite_common_ffi's FFI-based factory is the standard
+  // swap for those two desktop platforms; Android/iOS/macOS keep using
+  // plain sqflite's own already-proven native implementation untouched.
+  if (Platform.isWindows || Platform.isLinux) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+    // Only ever used by DesktopPlayerScreen — see its own doc comment and
+    // pubspec.yaml's media_kit comment. Every other platform keeps using
+    // video_player_hdr exclusively and never touches this at all.
+    MediaKit.ensureInitialized();
+  }
   await _configureImageCache();
   // See persistent_image_cache.dart's doc comment — the package default
   // stores cached poster/logo *files* in OS-reclaimable storage while its
@@ -97,6 +117,8 @@ class _NoxIptvAppState extends State<NoxIptvApp>
   late final PlaylistManager _playlistManager;
   late final EpgService _epgService;
   late final PlaybackService _playbackService;
+  late final ViewerProfileService _viewerProfileService;
+  late final ParentalPin _parentalPin;
   bool _ready = false;
 
   /// True while [PlaylistManager.runFullCatalogSync] is blocking the
@@ -192,6 +214,9 @@ class _NoxIptvAppState extends State<NoxIptvApp>
       _playlistManager = PlaylistManager(_storage, _catalogDb);
       _epgService = EpgService(_storage);
       _playbackService = PlaybackService(_storage, _playlistManager);
+      _parentalPin = ParentalPin(_storage);
+      _viewerProfileService =
+          ViewerProfileService(_storage, _playlistManager, _playbackService);
 
       // Restores category lists (small, fast regardless of catalog size —
       // see that method's doc comment for why live channels/category
@@ -356,7 +381,13 @@ class _NoxIptvAppState extends State<NoxIptvApp>
     final lastId = _storage.getLastChannelId();
     if (lastId == null) return;
     await _playlistManager.ensureLiveChannelsLoaded();
-    for (final channel in _playlistManager.channels) {
+    // visibleChannels, not the raw `channels` getter — a restricted
+    // viewer's last-played channel may have had its group hidden since
+    // they last watched (by whoever set up their profile), and silently
+    // auto-resuming into it on launch would bypass that the same way an
+    // unfiltered search result would.
+    for (final channel
+        in _playlistManager.visibleChannels(category: 'tv')) {
       if (channel.id == lastId) {
         // silent: true — see PlaybackService.isSilentlyResuming's doc
         // comment. This still starts loading/playing right away; it
@@ -534,6 +565,9 @@ class _NoxIptvAppState extends State<NoxIptvApp>
         ChangeNotifierProvider<PlaylistManager>.value(value: _playlistManager),
         ChangeNotifierProvider<EpgService>.value(value: _epgService),
         ChangeNotifierProvider<PlaybackService>.value(value: _playbackService),
+        Provider<ParentalPin>.value(value: _parentalPin),
+        ChangeNotifierProvider<ViewerProfileService>.value(
+            value: _viewerProfileService),
       ],
       child: _buildReadyContent(context),
     );
@@ -568,6 +602,11 @@ class _NoxIptvAppState extends State<NoxIptvApp>
             children: [
               if (child != null) child,
               LiveResumeHint(navigatorKey: _navigatorKey),
+              // Windows-only equivalent — see DesktopPlayerScreen's own
+              // doc comment for why it's a separate widget/holder rather
+              // than reusing LiveResumeHint/PlaybackService.
+              if (Platform.isWindows)
+                DesktopLiveResumeHint(navigatorKey: _navigatorKey),
             ],
           ),
           themeMode: prefs.themeMode,
@@ -590,7 +629,27 @@ class _NoxIptvAppState extends State<NoxIptvApp>
                       (prefs.isTelevision ||
                           MediaQuery.of(context).size.width >=
                               AppConstants.tvLayoutWidthThreshold));
-              return useTv ? const TvHomeScreen() : const HomeScreen();
+              // `Consumer<ViewerProfileService>` plus a `ValueKey` on the
+              // active viewer's id is what actually makes a profile switch
+              // take effect on screen — nothing else in this ancestor
+              // chain (just `Consumer<AppPreferences>` above) listens to
+              // that service at all, so without this, `switchTo` would
+              // update every service's own state correctly but the UI
+              // would silently keep showing the OLD viewer's screen,
+              // confirmed as a real gap during this feature's own review.
+              // A full remount (not just a rebuild) is deliberate too —
+              // see `ViewerProfileService.switchTo`'s doc comment: it's
+              // what tears down `TvHomeScreen`'s own pending-hide timers
+              // and resets its focus/selection state via a clean `dispose`
+              // instead of needing dozens of fields manually reset.
+              return Consumer<ViewerProfileService>(
+                builder: (context, viewerService, _) {
+                  final key = ValueKey(viewerService.active.id);
+                  return useTv
+                      ? TvHomeScreen(key: key)
+                      : HomeScreen(key: key);
+                },
+              );
             },
           ),
         );

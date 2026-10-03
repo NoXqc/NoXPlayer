@@ -13,6 +13,7 @@ import '../services/epg_service.dart';
 import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
 import '../services/storage_service.dart';
+import '../services/viewer_profile_service.dart';
 import '../utils/constants.dart';
 import '../widgets/catalog_warmup_banner.dart';
 import '../widgets/channel_list_tile.dart';
@@ -22,6 +23,7 @@ import '../widgets/player_controls.dart';
 import '../widgets/sidebar.dart';
 import 'catalog_sync_screen.dart';
 import 'player_screen.dart';
+import 'profile_picker_screen.dart';
 import 'search_screen.dart';
 import 'series_detail_screen.dart';
 import 'settings/settings_menu_screen.dart';
@@ -163,9 +165,20 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openSettings() {
+  /// The single choke point every path into Settings on this layout goes
+  /// through — see `ViewerProfileService.requireUnlock`'s doc comment for
+  /// why Settings is gated as one whole, not screen-by-screen inside it.
+  Future<void> _openSettings() async {
+    final unlocked =
+        await context.read<ViewerProfileService>().requireUnlock(context);
+    if (!unlocked || !mounted) return;
     Navigator.of(context)
         .push(MaterialPageRoute(builder: (_) => const SettingsMenuScreen()));
+  }
+
+  void _openProfilePicker() {
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const ProfilePickerScreen()));
   }
 
   /// A horizontal "Continue Watching" strip for the Movies/TV Shows tabs,
@@ -296,6 +309,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.calendar_month),
             onPressed: epg.isLoading ? null : _refreshEpg,
+          ),
+          IconButton(
+            tooltip: context.watch<ViewerProfileService>().active.name,
+            icon: const Icon(Icons.account_circle_outlined),
+            onPressed: _openProfilePicker,
           ),
           IconButton(
             tooltip: 'Settings',

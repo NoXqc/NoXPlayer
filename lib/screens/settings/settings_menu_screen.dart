@@ -9,6 +9,7 @@ import 'add_playlist_screen.dart';
 import 'check_updates_screen.dart';
 import 'epg_settings_screen.dart';
 import 'playlist_manager_screen.dart';
+import 'profiles_screen.dart';
 import 'theme_screen.dart';
 import 'tmdb_settings_screen.dart';
 
@@ -51,6 +52,13 @@ class SettingsMenuScreen extends StatelessWidget {
                     subtitle: 'Every playlist: login, groups, enable/disable',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const PlaylistManagerScreen())),
+                  ),
+                  _MenuTile(
+                    icon: Icons.people_outline,
+                    title: 'Profiles',
+                    subtitle: 'Separate favorites, history & hidden groups per viewer',
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const ProfilesScreen())),
                   ),
                   _MenuTile(
                     icon: Icons.palette_outlined,

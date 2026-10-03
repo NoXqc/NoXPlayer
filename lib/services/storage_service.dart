@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/channel.dart';
 import '../models/playlist_profile.dart';
+import '../models/viewer_profile.dart';
 import '../utils/constants.dart';
 
 /// Wraps [SharedPreferences] for small settings values, and the OS temp
@@ -17,8 +18,18 @@ class StorageService {
   late SharedPreferences _prefs;
   Directory? _cacheDir;
 
+  /// See the "Viewer-profile scoping" section below for what this drives.
+  /// Loaded once at [init] and kept in memory rather than read from
+  /// [_prefs] on every single per-viewer getter/setter — `ViewerProfileService
+  /// .switchTo` updates this (via [setActiveViewerId]) and the persisted
+  /// value together, in that order, before anything else reads a
+  /// per-viewer key again, so there's never a window where the two disagree.
+  String _activeViewerId = AppConstants.mainViewerId;
+
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+    _activeViewerId = _prefs.getString(AppConstants.keyActiveViewerId) ??
+        AppConstants.mainViewerId;
   }
 
   Future<Directory> _ensureCacheDir() async {
@@ -193,40 +204,49 @@ class StorageService {
   Future<void> setGuideViewMode(String mode) =>
       _prefs.setString(AppConstants.keyGuideViewMode, mode);
 
-  // --- Favorites (global — shared across every playlist) -------------------
+  // --- Favorites (per viewer, shared across every playlist) -----------------
+  // Favorites aren't namespaced by playlist (a favorited channel is just a
+  // composite playlistId::rawId already, so there's no collision risk the
+  // way group *names* have) but ARE namespaced per viewer — see
+  // "Viewer-profile scoping" below.
 
   Set<String> getFavorites() =>
-      (_prefs.getStringList(AppConstants.keyFavorites) ?? []).toSet();
+      (_prefs.getStringList(_vk(AppConstants.keyFavorites)) ?? []).toSet();
   Future<void> setFavorites(Set<String> ids) =>
-      _prefs.setStringList(AppConstants.keyFavorites, ids.toList());
+      _prefs.setStringList(_vk(AppConstants.keyFavorites), ids.toList());
 
   Set<String> getFavoriteSeries() =>
-      (_prefs.getStringList(AppConstants.keyFavoriteSeries) ?? []).toSet();
-  Future<void> setFavoriteSeries(Set<String> ids) =>
-      _prefs.setStringList(AppConstants.keyFavoriteSeries, ids.toList());
+      (_prefs.getStringList(_vk(AppConstants.keyFavoriteSeries)) ?? [])
+          .toSet();
+  Future<void> setFavoriteSeries(Set<String> ids) => _prefs.setStringList(
+      _vk(AppConstants.keyFavoriteSeries), ids.toList());
 
-  // --- Hidden / favorited groups (per playlist) -----------------------------
+  // --- Hidden / favorited groups (per playlist, per viewer) -----------------
   // Group identity is (playlistId, title), not just title — two different
   // providers can easily have a same-named category. Each playlist gets its
-  // own namespaced key rather than one shared Set, so there's no collision.
+  // own namespaced key rather than one shared Set, so there's no collision;
+  // each viewer gets its own copy of that on top, so a restricted viewer's
+  // hidden groups are independent of what any other viewer hides.
 
   Set<String> getHiddenGroups(String playlistId) =>
-      (_prefs.getStringList('${AppConstants.keyHiddenGroups}_$playlistId') ??
+      (_prefs.getStringList(_vkp(AppConstants.keyHiddenGroups, playlistId)) ??
               [])
           .toSet();
   Future<void> setHiddenGroups(String playlistId, Set<String> groups) =>
       _prefs.setStringList(
-          '${AppConstants.keyHiddenGroups}_$playlistId', groups.toList());
+          _vkp(AppConstants.keyHiddenGroups, playlistId), groups.toList());
 
   /// Keyed by `Channel.rawId` (not the composite `id`) — this is already
-  /// namespaced per playlist via the key suffix, same as [getHiddenGroups].
+  /// namespaced per playlist and per viewer via the key suffixes, same as
+  /// [getHiddenGroups].
   Set<String> getHiddenChannels(String playlistId) =>
-      (_prefs.getStringList('${AppConstants.keyHiddenChannels}_$playlistId') ??
+      (_prefs.getStringList(
+                  _vkp(AppConstants.keyHiddenChannels, playlistId)) ??
               [])
           .toSet();
   Future<void> setHiddenChannels(String playlistId, Set<String> rawIds) =>
       _prefs.setStringList(
-          '${AppConstants.keyHiddenChannels}_$playlistId', rawIds.toList());
+          _vkp(AppConstants.keyHiddenChannels, playlistId), rawIds.toList());
 
   /// Keyed by `Channel.rawId` -> the assigned EPG feed's own channel id —
   /// see [AppConstants.keyEpgIdOverrides]'s doc comment. A malformed/
@@ -302,14 +322,15 @@ class StorageService {
           rawIds.toList());
 
   Set<String> getFavoritedGroups(String playlistId) =>
-      (_prefs.getStringList('${AppConstants.keyFavoritedGroups}_$playlistId') ??
+      (_prefs.getStringList(
+                  _vkp(AppConstants.keyFavoritedGroups, playlistId)) ??
               [])
           .toSet();
   Future<void> setFavoritedGroups(String playlistId, Set<String> groups) =>
       _prefs.setStringList(
-          '${AppConstants.keyFavoritedGroups}_$playlistId', groups.toList());
+          _vkp(AppConstants.keyFavoritedGroups, playlistId), groups.toList());
 
-  // --- Search history -------------------------------------------------------
+  // --- Search history (per viewer) ------------------------------------------
 
   static const _maxRecentSearches = 10;
 
@@ -317,7 +338,7 @@ class StorageService {
   /// than kept separate per scope — simpler, and a remembered search is
   /// useful regardless of which scope tab happens to be selected right now.
   List<String> getRecentSearches() =>
-      _prefs.getStringList(AppConstants.keyRecentSearches) ?? [];
+      _prefs.getStringList(_vk(AppConstants.keyRecentSearches)) ?? [];
 
   Future<void> addRecentSearch(String query) {
     final trimmed = query.trim();
@@ -328,11 +349,11 @@ class StorageService {
     list.insert(0, trimmed);
     if (list.length > _maxRecentSearches)
       list.removeRange(_maxRecentSearches, list.length);
-    return _prefs.setStringList(AppConstants.keyRecentSearches, list);
+    return _prefs.setStringList(_vk(AppConstants.keyRecentSearches), list);
   }
 
   Future<void> clearRecentSearches() =>
-      _prefs.remove(AppConstants.keyRecentSearches);
+      _prefs.remove(_vk(AppConstants.keyRecentSearches));
 
   // --- EPG cache -------------------------------------------------------------
   // The programme data itself lives in the disk-file cache now (see
@@ -364,21 +385,32 @@ class StorageService {
       _prefs.setString('${AppConstants.keyLastFullSyncAt}_$playlistId',
           time.toIso8601String());
 
-  // --- Resume playback ---------------------------------------------------
+  // --- Resume playback (per viewer) ---------------------------------------
 
-  String? getLastChannelId() => _prefs.getString(AppConstants.keyLastChannelId);
+  String? getLastChannelId() =>
+      _prefs.getString(_vk(AppConstants.keyLastChannelId));
   Future<void> setLastChannelId(String id) =>
-      _prefs.setString(AppConstants.keyLastChannelId, id);
+      _prefs.setString(_vk(AppConstants.keyLastChannelId), id);
+
+  /// The viewer suffix goes at the *end*, after [channelId] — not
+  /// immediately after the prefix — so every viewer's position/duration key
+  /// still starts with [AppConstants.keyLastPositionPrefix]/
+  /// [keyLastDurationPrefix] and [clearCache]'s existing `startsWith` sweep
+  /// below keeps catching all of them, not just Main's.
+  String _positionKey(String channelId) =>
+      _vk('${AppConstants.keyLastPositionPrefix}$channelId');
+  String _durationKey(String channelId) =>
+      _vk('${AppConstants.keyLastDurationPrefix}$channelId');
 
   int getLastPosition(String channelId) =>
-      _prefs.getInt('${AppConstants.keyLastPositionPrefix}$channelId') ?? 0;
-  Future<void> setLastPosition(String channelId, int milliseconds) => _prefs
-      .setInt('${AppConstants.keyLastPositionPrefix}$channelId', milliseconds);
+      _prefs.getInt(_positionKey(channelId)) ?? 0;
+  Future<void> setLastPosition(String channelId, int milliseconds) =>
+      _prefs.setInt(_positionKey(channelId), milliseconds);
 
   int getLastDuration(String channelId) =>
-      _prefs.getInt('${AppConstants.keyLastDurationPrefix}$channelId') ?? 0;
-  Future<void> setLastDuration(String channelId, int milliseconds) => _prefs
-      .setInt('${AppConstants.keyLastDurationPrefix}$channelId', milliseconds);
+      _prefs.getInt(_durationKey(channelId)) ?? 0;
+  Future<void> setLastDuration(String channelId, int milliseconds) =>
+      _prefs.setInt(_durationKey(channelId), milliseconds);
 
   /// Fraction watched (0.0-1.0), or null when there's nothing to compute
   /// one from — no saved position, or duration was never recorded (e.g.
@@ -423,5 +455,122 @@ class StorageService {
       await dir.delete(recursive: true);
     }
     await dir.create(recursive: true);
+  }
+
+  // --- Viewer-profile scoping ----------------------------------------------
+  // See `AppConstants`' "Viewer profiles" section and `ViewerProfile`'s doc
+  // comment for the feature. Every getter/setter above this point that's
+  // marked "(per viewer)" below resolves its key through `_vk`/`_vkp`
+  // instead of the bare constant — a no-op for `mainViewerId`, so an
+  // upgrading install with no other viewer keeps reading/writing exactly
+  // the key it always has.
+
+  /// Appends the active viewer's suffix to [base] — a no-op for
+  /// [AppConstants.mainViewerId]. Every per-viewer getter/setter is built
+  /// from this (or [_vkp] for a key that's also namespaced per playlist).
+  String _vk(String base) => _activeViewerId == AppConstants.mainViewerId
+      ? base
+      : '$base${AppConstants.viewerKeySuffix}$_activeViewerId';
+
+  /// Same as [_vk], for a key namespaced per playlist *and* per viewer —
+  /// the playlist suffix always comes first, viewer suffix last, so
+  /// `deleteViewerData`'s single "ends with the viewer suffix" sweep still
+  /// finds it regardless of which playlist it belongs to.
+  String _vkp(String base, String playlistId) => _vk('${base}_$playlistId');
+
+  String getActiveViewerId() => _activeViewerId;
+
+  Future<void> setActiveViewerId(String id) async {
+    _activeViewerId = id;
+    await _prefs.setString(AppConstants.keyActiveViewerId, id);
+  }
+
+  /// Always at least one entry (Main) — an install that's never configured
+  /// any other viewer simply hasn't written this key yet.
+  List<ViewerProfile> getViewerProfiles() {
+    final raw = _prefs.getString(AppConstants.keyViewerProfiles);
+    if (raw == null || raw.isEmpty) return [ViewerProfile.main()];
+    try {
+      final decoded = jsonDecode(raw) as List<dynamic>;
+      final profiles = decoded
+          .map((e) => ViewerProfile.fromJson(e as Map<String, dynamic>))
+          .toList();
+      return profiles.isEmpty ? [ViewerProfile.main()] : profiles;
+    } catch (_) {
+      return [ViewerProfile.main()];
+    }
+  }
+
+  Future<void> setViewerProfiles(List<ViewerProfile> profiles) =>
+      _prefs.setString(AppConstants.keyViewerProfiles,
+          jsonEncode(profiles.map((p) => p.toJson()).toList()));
+
+  /// `{v, salt, hash}` — see `ParentalPin` for how this is produced/checked.
+  /// Null means no PIN has ever been set (no restricted profile exists yet).
+  Map<String, dynamic>? getParentalPin() {
+    final raw = _prefs.getString(AppConstants.keyParentalPin);
+    if (raw == null) return null;
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> setParentalPin(Map<String, dynamic> record) =>
+      _prefs.setString(AppConstants.keyParentalPin, jsonEncode(record));
+
+  Future<void> clearParentalPin() =>
+      _prefs.remove(AppConstants.keyParentalPin);
+
+  /// Consecutive wrong-PIN attempts — persisted (not just in memory) so
+  /// restarting the app doesn't reset a lockout a kid could otherwise use
+  /// to get unlimited guesses.
+  int getPinFailCount() => _prefs.getInt(AppConstants.keyPinFailCount) ?? 0;
+  Future<void> setPinFailCount(int count) =>
+      _prefs.setInt(AppConstants.keyPinFailCount, count);
+
+  DateTime? getPinLockedUntil() {
+    final raw = _prefs.getString(AppConstants.keyPinLockedUntil);
+    return raw == null ? null : DateTime.tryParse(raw);
+  }
+
+  Future<void> setPinLockedUntil(DateTime? time) => time == null
+      ? _prefs.remove(AppConstants.keyPinLockedUntil)
+      : _prefs.setString(
+          AppConstants.keyPinLockedUntil, time.toIso8601String());
+
+  bool getFavoritesDbReconciled() =>
+      _prefs.getBool(AppConstants.keyFavoritesDbReconciled) ?? false;
+  Future<void> setFavoritesDbReconciled(bool value) =>
+      _prefs.setBool(AppConstants.keyFavoritesDbReconciled, value);
+
+  /// A restricted viewer's shown-groups allowlist — see
+  /// [AppConstants.keyShownGroups]'s doc comment. (Per playlist, per viewer.)
+  Set<String> getShownGroups(String playlistId) =>
+      (_prefs.getStringList(_vkp(AppConstants.keyShownGroups, playlistId)) ??
+              [])
+          .toSet();
+  Future<void> setShownGroups(String playlistId, Set<String> groups) =>
+      _prefs.setStringList(
+          _vkp(AppConstants.keyShownGroups, playlistId), groups.toList());
+
+  /// Removes every one of [viewerId]'s own keys — favorites, hidden/shown/
+  /// favorited groups and hidden channels for every playlist, positions/
+  /// durations, recent searches, and its last-channel id — in one sweep,
+  /// since every per-viewer key (see [_vk]/[_vkp]) ends with the same
+  /// `__vp_<id>` suffix regardless of which feature or playlist it belongs
+  /// to. Refuses [AppConstants.mainViewerId] outright: that id's data lives
+  /// under the bare, unsuffixed keys every pre-profiles install already
+  /// depends on, which this must never touch. The per-viewer
+  /// recently-played cache *file* is a separate concern, deleted by
+  /// whoever owns that file (`PlaybackService`), not here.
+  Future<void> deleteViewerData(String viewerId) async {
+    if (viewerId == AppConstants.mainViewerId) return;
+    final suffix = '${AppConstants.viewerKeySuffix}$viewerId';
+    final keys = _prefs.getKeys().where((k) => k.endsWith(suffix)).toList();
+    for (final key in keys) {
+      await _prefs.remove(key);
+    }
   }
 }

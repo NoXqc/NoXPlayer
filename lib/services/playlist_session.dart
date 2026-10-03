@@ -32,6 +32,7 @@ class PlaylistSession {
     required this.catalogDb,
     required this.favoriteIds,
     required this.favoriteSeriesIds,
+    required this.isRestrictedViewer,
     required this.onNotify,
   });
 
@@ -45,6 +46,14 @@ class PlaylistSession {
   /// them (to stamp `isFavorite` while loading), never owns or writes them.
   final Set<String> Function() favoriteIds;
   final Set<String> Function() favoriteSeriesIds;
+
+  /// Whether the *currently active* viewer is restricted — read live
+  /// (called, never cached) the same way [favoriteIds]/[favoriteSeriesIds]
+  /// are, so it always reflects whichever viewer is active right now
+  /// without this session needing to be told explicitly every time a
+  /// switch happens. See [_loadViewerScopedState]'s doc comment for what
+  /// this actually changes.
+  final bool Function() isRestrictedViewer;
 
   /// Forwards to the owning `PlaylistManager`'s own `notifyListeners()` —
   /// screens listen to that single `ChangeNotifier`, not to this session
@@ -193,46 +202,170 @@ class PlaylistSession {
   int? seriesCategoryTotalCountFor(String categoryName) =>
       seriesCategoryTotalCount[categoryName];
 
+  // --- Viewer-scoped state (favorited/hidden groups, hidden channels) ------
+  // See `ViewerProfile`'s doc comment for the feature. Everything else in
+  // this file (visibleChannels/visibleSeries/_warmCategories/
+  // knownChannelIds, etc.) keeps reading the plain [hiddenGroups] field
+  // exactly as it always has — only *how that field gets populated* changes
+  // here, so none of those call sites needed to change at all.
+
+  /// (Re)loads [favoritedGroups]/[hiddenChannels]/[hiddenGroups] for
+  /// whichever viewer is active right now — called from [restoreOrLoad] at
+  /// first load, and again from [reloadViewerState] on every viewer switch.
+  /// A restricted viewer's effective [hiddenGroups] is computed from the
+  /// *opposite* stored set ([StorageService.getShownGroups], an allowlist)
+  /// instead of read directly — see [ViewerProfile.isRestricted]'s doc
+  /// comment for why a restricted viewer needs "hidden unless explicitly
+  /// shown" rather than every other viewer's "shown unless explicitly
+  /// hidden" (so a category the provider adds tomorrow, which can't
+  /// possibly be in a stored allowlist yet, defaults to hidden for them).
+  void _loadViewerScopedState() {
+    favoritedGroups = storage.getFavoritedGroups(profile.id);
+    hiddenChannels = storage.getHiddenChannels(profile.id);
+    if (isRestrictedViewer()) {
+      hiddenGroups =
+          _allKnownGroupTitles().difference(storage.getShownGroups(profile.id));
+    } else {
+      hiddenGroups = storage.getHiddenGroups(profile.id);
+    }
+  }
+
+  /// Every group title this session currently knows about, across whichever
+  /// content types it has loaded so far — the universe a restricted
+  /// viewer's shown-groups allowlist gets subtracted from in
+  /// [_loadViewerScopedState]. Xtream mode's three category lists cover
+  /// live/VOD/series; M3U mode has only [channels] to derive group titles
+  /// from (no separate category list exists in that mode).
+  Set<String> _allKnownGroupTitles() => isXtream
+      ? {
+          ...liveCategories.map((c) => c.name),
+          ...vodCategories.map((c) => c.name),
+          ...seriesCategories.map((c) => c.name),
+        }
+      : channels.map((c) => c.group).toSet();
+
+  /// Called by `PlaylistManager.applyActiveViewer` whenever the active
+  /// viewer changes — reloads this playlist's favorited/hidden-groups/
+  /// hidden-channels state for whichever viewer is active now, without
+  /// touching anything network-related (categories/channels already loaded
+  /// stay loaded; only which of them count as hidden changes).
+  void reloadViewerState() => _loadViewerScopedState();
+
+  /// Re-stamps every already-loaded [Channel]/[XtreamSeries]' `isFavorite`
+  /// flag against [favoriteIds]/[favoriteSeriesIds]' *current* value —
+  /// called by `PlaylistManager.applyActiveViewer` right after a viewer
+  /// switch, since those two callbacks just started returning the
+  /// newly-active viewer's own favorites, but every object already sitting
+  /// in memory still carries whichever viewer's favorite state was true
+  /// when it was first loaded (or last restamped).
+  void restampFavorites() {
+    final favs = favoriteIds();
+    final seriesFavs = favoriteSeriesIds();
+    for (final c in channels) {
+      c.isFavorite = favs.contains(c.id);
+    }
+    for (final c in liveChannels) {
+      c.isFavorite = favs.contains(c.id);
+    }
+    for (final list in vodByCategoryName.values) {
+      for (final c in list) {
+        c.isFavorite = favs.contains(c.id);
+      }
+    }
+    for (final list in seriesByCategoryName.values) {
+      for (final s in list) {
+        s.isFavorite = seriesFavs.contains(s.id);
+      }
+    }
+  }
+
+  /// Persists a hide/show change for [titles] to whichever stored set the
+  /// active viewer actually uses (the blocklist for a normal viewer, the
+  /// allowlist for a restricted one — see [_loadViewerScopedState]'s doc
+  /// comment), then recomputes [hiddenGroups] so every caller sees the
+  /// effect immediately. Shared by [toggleGroupHidden]/[setGroupHidden]/
+  /// [setGroupsHidden] so the restricted-viewer branch only needs writing
+  /// once.
+  Future<void> _applyGroupHiddenChange(
+      Iterable<String> titles, bool hidden) async {
+    if (isRestrictedViewer()) {
+      final shown = storage.getShownGroups(profile.id);
+      for (final title in titles) {
+        if (hidden) {
+          shown.remove(title);
+        } else {
+          shown.add(title);
+        }
+      }
+      await storage.setShownGroups(profile.id, shown);
+      hiddenGroups = _allKnownGroupTitles().difference(shown);
+    } else {
+      for (final title in titles) {
+        if (hidden) {
+          hiddenGroups.add(title);
+        } else {
+          hiddenGroups.remove(title);
+        }
+      }
+      await storage.setHiddenGroups(profile.id, hiddenGroups);
+    }
+  }
+
   // --- Startup: restore from cache, or do a fresh load ---------------------
 
   /// Restores this playlist from its on-disk cache, or does a fresh
   /// network load if there's no cache yet. Returns once *something* is
   /// showable (cache hit or fresh load finished/failed).
   Future<void> restoreOrLoad() async {
-    hiddenGroups = storage.getHiddenGroups(profile.id);
-    favoritedGroups = storage.getFavoritedGroups(profile.id);
-    hiddenChannels = storage.getHiddenChannels(profile.id);
     epgIdOverrides = storage.getEpgIdOverrides(profile.id);
     channelLinks = storage.getChannelLinks(profile.id);
     autoPairedChannelLinks = storage.getAutoPairedChannelLinks(profile.id);
     autoPairedEpgOverrides = storage.getAutoPairedEpgOverrides(profile.id);
 
-    if (isXtream) {
-      final username = profile.xtreamUsername;
-      final password = profile.xtreamPassword;
-      // Whatever answered last time, not necessarily the configured
-      // primary — a cache hit skips the authenticating connect below
-      // entirely, so this is the server every on-demand category fetch
-      // for the rest of the session would otherwise be pointed at.
-      final server = profile.serverCandidates.firstOrNull;
-      if (server == null ||
-          server.isEmpty ||
-          username == null ||
-          password == null) return;
-      xtreamApi = XtreamApiService(
-          server: server,
-          username: username,
-          password: password,
-          playlistId: profile.id);
-      if (await _restoreXtreamCache()) return;
-      await loadFromXtream();
-      return;
-    }
+    // `_loadViewerScopedState()` runs in `finally`, AFTER whichever branch
+    // below actually populates categories/channels — not before, the way
+    // this used to unconditionally run first. A restricted viewer's
+    // hiddenGroups is computed from `_allKnownGroupTitles()` (see that
+    // method's doc comment), which is empty on a brand-new session before
+    // anything's loaded; computing it too early was confirmed as a real
+    // bug during this feature's own review: `_allKnownGroupTitles()` ==
+    // {} makes `{}.difference(shown) == {}`, silently treating every
+    // category as visible — for the rest of that session, on every cold
+    // start (a routine occurrence on this app's target hardware, per this
+    // file's own cold-start/low-memory-kill history), not just a brief
+    // window. Running this after the branch below means the real category
+    // list is always what a restricted viewer's hiddenGroups gets computed
+    // against, cache hit or fresh load either way.
+    try {
+      if (isXtream) {
+        final username = profile.xtreamUsername;
+        final password = profile.xtreamPassword;
+        // Whatever answered last time, not necessarily the configured
+        // primary — a cache hit skips the authenticating connect below
+        // entirely, so this is the server every on-demand category fetch
+        // for the rest of the session would otherwise be pointed at.
+        final server = profile.serverCandidates.firstOrNull;
+        if (server == null ||
+            server.isEmpty ||
+            username == null ||
+            password == null) return;
+        xtreamApi = XtreamApiService(
+            server: server,
+            username: username,
+            password: password,
+            playlistId: profile.id);
+        if (await _restoreXtreamCache()) return;
+        await loadFromXtream();
+        return;
+      }
 
-    final url = profile.m3uUrl;
-    if (url == null || url.isEmpty) return;
-    if (await _restoreM3uCache()) return;
-    await loadFromUrl(url);
+      final url = profile.m3uUrl;
+      if (url == null || url.isEmpty) return;
+      if (await _restoreM3uCache()) return;
+      await loadFromUrl(url);
+    } finally {
+      _loadViewerScopedState();
+    }
   }
 
   // --- M3U mode -----------------------------------------------------------
@@ -313,6 +446,8 @@ class PlaylistSession {
       loadingPhase = null;
       onNotify();
     }
+    // See the matching call/comment at the end of loadFromXtream.
+    _loadViewerScopedState();
   }
 
   /// All groups, in first-seen order, including hidden ones (used by the
@@ -668,6 +803,18 @@ class PlaylistSession {
       loadingPhase = null;
       onNotify();
     }
+
+    // Re-run after a fresh category fetch, not just once at initial load
+    // (restoreOrLoad's own call covers that) — this method also runs
+    // again later for "Update Content"/full catalog sync
+    // (runFullCatalogSync), which is exactly when a provider-added *new*
+    // category would first appear. A restricted viewer's hiddenGroups is
+    // computed against `_allKnownGroupTitles()` (see that method's doc
+    // comment) — without recomputing here, a category discovered by this
+    // call would simply be invisible to that computation (neither hidden
+    // nor explicitly shown) and default to *visible*, exactly backwards
+    // from the allowlist's whole point.
+    _loadViewerScopedState();
 
     // Deliberately NOT auto-starting the catalog warm-up here — the caller
     // (AddPlaylistScreen) asks the user "download everything, or choose
@@ -1208,37 +1355,21 @@ class PlaylistSession {
   }
 
   Future<void> toggleGroupHidden(String groupTitle) async {
-    if (hiddenGroups.contains(groupTitle)) {
-      hiddenGroups.remove(groupTitle);
-    } else {
-      hiddenGroups.add(groupTitle);
-    }
-    await storage.setHiddenGroups(profile.id, hiddenGroups);
+    final hidden = !hiddenGroups.contains(groupTitle);
+    await _applyGroupHiddenChange([groupTitle], hidden);
     onNotify();
   }
 
   Future<void> setGroupHidden(String groupTitle, bool hidden,
       {bool loadImmediately = true}) async {
-    if (hidden) {
-      hiddenGroups.add(groupTitle);
-    } else {
-      hiddenGroups.remove(groupTitle);
-    }
-    await storage.setHiddenGroups(profile.id, hiddenGroups);
+    await _applyGroupHiddenChange([groupTitle], hidden);
     onNotify();
     if (!hidden && loadImmediately) unawaited(_loadIfNewlyShown(groupTitle));
   }
 
   Future<void> setGroupsHidden(Iterable<String> groupTitles, bool hidden,
       {bool loadImmediately = true}) async {
-    for (final title in groupTitles) {
-      if (hidden) {
-        hiddenGroups.add(title);
-      } else {
-        hiddenGroups.remove(title);
-      }
-    }
-    await storage.setHiddenGroups(profile.id, hiddenGroups);
+    await _applyGroupHiddenChange(groupTitles, hidden);
     onNotify();
     if (!hidden && loadImmediately) {
       for (final title in groupTitles) {

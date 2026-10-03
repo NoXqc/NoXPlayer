@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:provider/provider.dart';
 
 import '../models/channel.dart';
@@ -12,10 +14,12 @@ import '../models/epg_program.dart';
 import '../models/m3u_group.dart';
 import '../models/xtream_series.dart';
 import '../services/app_preferences.dart';
+import '../services/desktop_mini_player.dart';
 import '../services/epg_service.dart';
 import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
 import '../services/storage_service.dart';
+import '../services/viewer_profile_service.dart';
 import '../utils/constants.dart';
 import '../utils/route_observer.dart';
 import '../utils/tv_theme.dart';
@@ -28,8 +32,10 @@ import '../widgets/section_label.dart';
 import '../widgets/settings_scaffold.dart';
 import 'catalog_sync_screen.dart';
 import 'group_catalog_screen.dart';
+import 'desktop_player_screen.dart';
 import 'movie_detail_screen.dart';
 import 'player_screen.dart';
+import 'profile_picker_screen.dart';
 import 'search_screen.dart';
 import 'series_detail_screen.dart';
 import 'settings/settings_menu_screen.dart';
@@ -350,6 +356,17 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       case 'favorite':
         _toggleFavoriteWithFeedback(context, channel);
       case 'hide':
+        // Un-hiding (not hiding) is exactly the direct, non-Settings
+        // bypass this gate exists for — a restricted viewer could
+        // otherwise un-hide a channel from this long-press menu without
+        // ever touching Settings or the PIN pad at all. Hiding a channel
+        // only makes things stricter, so it stays ungated either way.
+        if (isHidden) {
+          final unlocked = await context
+              .read<ViewerProfileService>()
+              .requireUnlock(context);
+          if (!unlocked || !mounted) return;
+        }
         _toggleHiddenWithFeedback(context, channel);
     }
   }
@@ -1141,6 +1158,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   }
 
   Future<void> _selectChannel(Channel channel) async {
+    // Windows has no PlaybackService-compatible player at all (see
+    // DesktopPlayerScreen's own doc comment) — a completely separate,
+    // standalone screen/player instance, bypassing PlaybackService (and
+    // therefore Continue Watching/resume/backup-server retry) entirely
+    // rather than routing through the shared mobile player architecture.
+    if (Platform.isWindows) {
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => DesktopPlayerScreen(channel: channel)));
+      return;
+    }
     final playback = context.read<PlaybackService>();
     // A deliberate tap always ends the cold-start suppression window,
     // even if it's for a *different* channel than the one silently
@@ -1192,9 +1219,20 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         MaterialPageRoute(builder: (_) => SeriesDetailScreen(series: series)));
   }
 
-  void _openSettings() {
+  /// The single choke point every path into Settings on this layout goes
+  /// through — see `ViewerProfileService.requireUnlock`'s doc comment for
+  /// why Settings is gated as one whole, not screen-by-screen inside it.
+  Future<void> _openSettings() async {
+    final unlocked =
+        await context.read<ViewerProfileService>().requireUnlock(context);
+    if (!unlocked || !mounted) return;
     Navigator.of(context)
         .push(MaterialPageRoute(builder: (_) => const SettingsMenuScreen()));
+  }
+
+  void _openProfilePicker() {
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const ProfilePickerScreen()));
   }
 
   void _openSearch() {
@@ -1255,6 +1293,18 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// "free this login up for another device" action, not an accidental
   /// tap consequence.
   Future<void> _confirmHardExit() async {
+    // A restricted viewer gets a plain close, no confirmation and no
+    // playlist-disabling — the "free up this login" framing below doesn't
+    // apply to them, and disabling every playlist here would combine badly
+    // with Settings being PIN-gated: the next person to open the app would
+    // find every playlist disabled with no ungated way back in. Only the
+    // *active* viewer's restricted status matters here, not whether any
+    // restricted profile exists at all — Main (or any other unrestricted
+    // profile) exiting the app behaves exactly as it always has.
+    if (context.read<ViewerProfileService>().isActiveRestricted) {
+      SystemNavigator.pop();
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -1663,6 +1713,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           onTap: () => _refreshPlaylist(context),
         ),
         _SelectableRow(
+          icon: Icons.account_circle_outlined,
+          label: context.watch<ViewerProfileService>().active.name,
+          selected: false,
+          collapsed: collapsed,
+          onTap: _openProfilePicker,
+        ),
+        _SelectableRow(
           icon: Icons.settings,
           label: 'Settings',
           selected: false,
@@ -1908,6 +1965,139 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     });
   }
 
+  /// The Timeline guide's own small preview box (top-left corner) — shows
+  /// whatever's actually playing, or an informational card for whatever's
+  /// minimized, or "Nothing playing". [channel] is `PlaybackService
+  /// .currentChannel`, always null on Windows — that service is never
+  /// touched by `DesktopPlayerScreen`/`DesktopMiniPlayer` (see their own
+  /// doc comments), so this box has to watch `DesktopMiniPlayer.instance
+  /// .channel` directly there instead, or it permanently reads "Nothing
+  /// playing" even with a live channel actually minimized (reported
+  /// directly — this exact box, sitting right next to a working resume
+  /// pill saying otherwise, reading as "the mini player doesn't work").
+  Widget _buildTimelinePreviewBox(Channel? channel) {
+    if (Platform.isWindows) {
+      // A real video feed, unlike the first pass at this box — unlike
+      // `video_player_hdr`'s platform views (see `LiveResumeHint`'s own
+      // doc comment for the real multi-consumer rendering bug that caused
+      // on mobile), `media_kit`'s texture-based rendering supports more
+      // than one `Video` widget bound to the same controller at once, and
+      // in practice only one is ever actually mounted at a time anyway —
+      // this one unmounts (channel.value becomes null, via `take()`) in
+      // the same frame `DesktopPlayerScreen`'s own mounts, never both at
+      // once. `DesktopMiniPlayer.controller` is read-only here — this box
+      // doesn't take ownership of the session, just renders it.
+      return ValueListenableBuilder<Channel?>(
+        valueListenable: DesktopMiniPlayer.instance.channel,
+        builder: (context, minimized, _) {
+          if (minimized == null) {
+            return const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.tv_off, color: Colors.white54),
+                  SizedBox(height: 6),
+                  Text('Nothing playing',
+                      style: TextStyle(color: Colors.white70)),
+                ],
+              ),
+            );
+          }
+          final controller = DesktopMiniPlayer.instance.controller;
+          return ExcludeFocus(
+            child: InkWell(
+              onTap: () {
+                final session = DesktopMiniPlayer.instance.take();
+                if (session == null) return;
+                Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => DesktopPlayerScreen(
+                          channel: minimized,
+                          existingPlayer: session.$1,
+                          existingController: session.$2,
+                        )));
+              },
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (controller != null)
+                    Video(controller: controller, controls: NoVideoControls)
+                  else
+                    const ColoredBox(color: Colors.black),
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      padding: const EdgeInsets.fromLTRB(10, 20, 10, 8),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [
+                            Colors.black.withValues(alpha: 0.8),
+                            Colors.transparent,
+                          ],
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(minimized.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13)),
+                          const Text('Click to resume',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 11)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    if (channel == null) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.tv_off, color: Colors.white54),
+            SizedBox(height: 6),
+            Text('Nothing playing', style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+      );
+    }
+    return ExcludeFocus(
+      // Excluded from focus, not just tap-only — this box sits directly
+      // above the grid's top row, and default D-pad traversal reaching Up
+      // from there would otherwise land here instead of stopping cleanly
+      // at the guide's own edge.
+      child: GestureDetector(
+        onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => PlayerScreen(channel: channel))),
+        // Same channel-id key as the full-size pane in the non-timeline
+        // branch below — see the long comment there for why (stale-frame
+        // vs. texture-teardown race). showControls: false — the full
+        // title/seek/play-pause bar this draws by default doesn't fit a
+        // box this small; reported directly as "stuck on" permanently
+        // covering most of the preview. Tapping the bare video now jumps
+        // to fullscreen instead of a separate button.
+        child: VideoPlayerPane(
+            key: ValueKey(channel.id), showEpgBar: false, showControls: false),
+      ),
+    );
+  }
+
   Widget _buildLiveRegion(PlaylistManager playlist, EpgService epg) {
     // Kick off the live channel list's first load the moment this tab is
     // actually shown — see ensureLiveChannelsLoaded's doc comment for why
@@ -1980,15 +2170,36 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       // the guide's own channel-label column has to start below the
       // header, not run underneath it. The groups column is a sibling of
       // this whole region in the outer Row, so it stays full height.
-      return Column(
+      final previewRow = Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            height: 160,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(
+          // Windows gets a proportionally wider video box (Expanded,
+          // instead of a fixed 284px) to match its own taller preview
+          // row below — a fixed width sized for the Android TV box's
+          // fixed 160px-tall row would look like a thin sliver once that
+          // row is several times taller on a resizable desktop window.
+          Platform.isWindows
+              ? Expanded(
+                  // flex 2:1 against the description panel's flex 1 below
+                  // (was 2:3, i.e. 40% of the row) — requested directly:
+                  // extend the mini player right by at least 50%; 2:1
+                  // gives it roughly two-thirds of the row (a ~67%
+                  // increase from 40%), well past that minimum, since the
+                  // live program description next to it doesn't need to
+                  // be nearly that wide to stay readable.
+                  flex: 2,
+                  child: Container(
+                    clipBehavior: Clip.antiAlias,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.18),
+                          width: 1.5),
+                    ),
+                    child: _buildTimelinePreviewBox(channel),
+                  ),
+                )
+              : Container(
                   width: 284,
                   clipBehavior: Clip.antiAlias,
                   decoration: BoxDecoration(
@@ -1997,71 +2208,56 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                         color: Colors.white.withValues(alpha: 0.18),
                         width: 1.5),
                   ),
-                  child: channel == null
-                      ? const Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.tv_off, color: Colors.white54),
-                              SizedBox(height: 6),
-                              Text('Nothing playing',
-                                  style: TextStyle(color: Colors.white70)),
-                            ],
-                          ),
-                        )
-                      : ExcludeFocus(
-                          // Excluded from focus, not just tap-only — this
-                          // box sits directly above the grid's top row,
-                          // and default D-pad traversal reaching Up from
-                          // there would otherwise land here instead of
-                          // stopping cleanly at the guide's own edge.
-                          child: GestureDetector(
-                            onTap: () => Navigator.of(context).push(
-                                MaterialPageRoute(
-                                    builder: (_) =>
-                                        PlayerScreen(channel: channel))),
-                            // Same channel-id key as the full-size pane in
-                            // the non-timeline branch below — see the long
-                            // comment there for why (stale-frame vs.
-                            // texture-teardown race). showControls: false
-                            // — the full title/seek/play-pause bar this
-                            // draws by default doesn't fit a box this
-                            // small; reported directly as "stuck on"
-                            // permanently covering most of the preview.
-                            // Tapping the bare video now jumps to
-                            // fullscreen instead of a separate button.
-                            child: VideoPlayerPane(
-                                key: ValueKey(channel.id),
-                                showEpgBar: false,
-                                showControls: false),
-                          ),
-                        ),
+                  child: _buildTimelinePreviewBox(channel),
                 ),
-                Expanded(
-                  child: _GuideNowPanel(
-                    focusedChannel: _guideFocusedChannel,
-                    focusedProgram: _guideFocusedProgram,
-                    playingChannel: channel,
-                    epg: epg,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 12),
           Expanded(
-            child: _TimelineGuide(
-              key: _timelineGuideKey,
-              channels: _currentLiveChannels(playlist),
+            flex: 1,
+            child: _GuideNowPanel(
+              focusedChannel: _guideFocusedChannel,
+              focusedProgram: _guideFocusedProgram,
+              playingChannel: channel,
               epg: epg,
-              onOpen: _selectChannel,
-              onFocusChanged: _onGuideFocusChanged,
-              onShowOptions: _showChannelOptions,
-              onWindowStale: () =>
-                  setState(() => _timelineGuideKey = GlobalKey()),
             ),
           ),
         ],
+      );
+
+      final guide = _TimelineGuide(
+        key: _timelineGuideKey,
+        channels: _currentLiveChannels(playlist),
+        epg: epg,
+        onOpen: _selectChannel,
+        onFocusChanged: _onGuideFocusChanged,
+        onShowOptions: _showChannelOptions,
+        onWindowStale: () => setState(() => _timelineGuideKey = GlobalKey()),
+      );
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: Platform.isWindows
+            ? [
+                // Android TV's fixed 160px preview row read as the right
+                // ratio there (reported directly), but on a much taller,
+                // resizable PC window that same fixed height left the
+                // mini player tiny against a disproportionately dominant
+                // guide below it (roughly an 85/15 split in the guide's
+                // favor on a typical window). Flex-based instead of a
+                // fixed height, so it scales with the actual window
+                // instead of a constant tuned for a TV's screen — an even
+                // 50/50 split here cuts the guide's own share by well
+                // over 40% (85 -> 50) and gives the mini player a real,
+                // substantial size instead of the sliver it was, reported
+                // directly as still too small even after the preview
+                // itself got real video in it.
+                Expanded(flex: 1, child: previewRow),
+                const Divider(height: 12),
+                Expanded(flex: 1, child: guide),
+              ]
+            : [
+                SizedBox(height: 160, child: previewRow),
+                const Divider(height: 12),
+                Expanded(child: guide),
+              ],
       );
     }
 
@@ -4965,7 +5161,21 @@ class _ProgramBlockState extends State<_ProgramBlock> {
             }
           },
           child: InkWell(
-            onTap: widget.onOpen,
+            // Windows only — gating actual playback behind a second click
+            // instead of the first lets a single click act as a pure
+            // preview, reported directly as the expected mouse behavior
+            // (click = look, double-click = commit); a D-pad remote has
+            // no such ambiguity (one press IS the commit), so
+            // HoldToActivate above and a touch tap are untouched, only
+            // this widget's own mouse-click path changes. `onTap: null`
+            // was tried first on the assumption InkWell requests focus on
+            // any tap-down regardless of its own callbacks — reported
+            // directly as not actually true here (no focus, no details
+            // panel, on a single click at all); `_node.requestFocus()`
+            // makes the single click focus this block explicitly instead
+            // of trusting that.
+            onTap: Platform.isWindows ? _node.requestFocus : widget.onOpen,
+            onDoubleTap: Platform.isWindows ? widget.onOpen : null,
             child: Container(
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(

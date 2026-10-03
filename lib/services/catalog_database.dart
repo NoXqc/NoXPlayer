@@ -30,6 +30,23 @@ import '../models/xtream_series.dart';
 class CatalogDatabase {
   Database? _db;
 
+  /// Live favorite lookups, set once by `PlaylistManager` at construction —
+  /// every row this class reads back stamps `isFavorite` through these
+  /// instead of its own `is_favorite` column. That column drifts: it's
+  /// only written at the moment something's favorited/unfavorited
+  /// (`setVodFavorite`/`setSeriesFavorite`, called from
+  /// `PlaylistManager.toggleFavorite`), but a *cache-hit* category load
+  /// (`PlaylistSession.ensureCategoryLoaded` returning already-cached rows)
+  /// reads the column as-is with no re-stamp against whatever's actually
+  /// favorited right now — confirmed as a real, pre-existing gap during
+  /// this feature's own review. Viewer profiles make the column actively
+  /// wrong, not just occasionally stale: a bare bit can't represent "is
+  /// this favorited" for more than one viewer at once. Null until
+  /// `PlaylistManager` wires it (falls back to the column so an unwired
+  /// caller — there shouldn't be one — gets the old behavior, not a crash).
+  bool Function(String channelId)? isVodFavorite;
+  bool Function(String seriesId)? isSeriesFavorite;
+
   Future<Database> get _database async {
     final existing = _db;
     if (existing != null) return existing;
@@ -256,7 +273,8 @@ class CatalogDatabase {
       url: row['url'] as String,
       logoUrl: row['logo_url'] as String?,
       subtitleUrl: row['subtitle_url'] as String?,
-      isFavorite: (row['is_favorite'] as int) == 1,
+      isFavorite:
+          isVodFavorite?.call(id) ?? (row['is_favorite'] as int) == 1,
       rating: row['rating'] as String?,
       addedAt:
           addedAt != null ? DateTime.fromMillisecondsSinceEpoch(addedAt) : null,
@@ -289,13 +307,15 @@ class CatalogDatabase {
   XtreamSeries _rowToSeries(Map<String, Object?> row) {
     final addedAt = row['added_at'] as int?;
     final releaseDate = row['release_date'] as int?;
+    final id = row['id'] as String;
     return XtreamSeries(
       seriesId: row['series_id'] as int,
       playlistId: row['playlist_id'] as String,
       name: row['name'] as String,
       categoryId: row['category_name'] as String,
       coverUrl: row['cover_url'] as String?,
-      isFavorite: (row['is_favorite'] as int) == 1,
+      isFavorite:
+          isSeriesFavorite?.call(id) ?? (row['is_favorite'] as int) == 1,
       rating: row['rating'] as String?,
       addedAt:
           addedAt != null ? DateTime.fromMillisecondsSinceEpoch(addedAt) : null,

@@ -8,6 +8,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/channel.dart';
 import '../models/playlist_profile.dart';
+import '../utils/constants.dart';
 import 'playlist_manager.dart';
 import 'storage_service.dart';
 
@@ -44,6 +45,19 @@ class PlaybackService extends ChangeNotifier {
 
   static const _recentlyPlayedCacheKey = 'recently_played';
   static const _maxRecentlyPlayed = 30;
+
+  /// Main keeps the bare `recently_played` cache file name an upgrading
+  /// install already has — every other viewer gets its own, so "Continue
+  /// Watching" doesn't mix one viewer's history into another's. Same
+  /// suffix convention as `StorageService`'s per-viewer prefs keys, just
+  /// applied to a cache *file* name instead of a prefs key, since this
+  /// list has always lived in the file cache, not SharedPreferences.
+  String get _recentlyPlayedCacheKeyForViewer {
+    final viewerId = _storage.getActiveViewerId();
+    return viewerId == AppConstants.mainViewerId
+        ? _recentlyPlayedCacheKey
+        : '${_recentlyPlayedCacheKey}_vp_$viewerId';
+  }
 
   final StorageService _storage;
   final PlaylistManager _playlistManager;
@@ -184,7 +198,7 @@ class PlaybackService extends ChangeNotifier {
   bool get isPlayingSomething => currentChannel != null;
 
   Future<void> init() async {
-    final raw = await _storage.readCacheFile(_recentlyPlayedCacheKey);
+    final raw = await _storage.readCacheFile(_recentlyPlayedCacheKeyForViewer);
     if (raw == null) return;
     try {
       _recentlyPlayed = (jsonDecode(raw) as List)
@@ -195,6 +209,21 @@ class PlaybackService extends ChangeNotifier {
     }
   }
 
+  /// Called by `ViewerProfileService.switchTo` after the active viewer has
+  /// already changed — re-reads whichever viewer's recently-played list is
+  /// now active (same logic as [init], just callable again later) and
+  /// re-stamps `isFavorite` on every item against the newly-active
+  /// viewer's own favorites, since these [Channel] objects don't live long
+  /// enough to go through `PlaylistSession.restampFavorites`' own pass
+  /// over its in-memory catalog lists.
+  Future<void> reloadForViewer() async {
+    await init();
+    for (final c in _recentlyPlayed) {
+      c.isFavorite = _playlistManager.isChannelFavorited(c.id);
+    }
+    notifyListeners();
+  }
+
   Future<void> _recordRecentlyPlayed(Channel channel) async {
     _recentlyPlayed.removeWhere((c) => c.id == channel.id);
     _recentlyPlayed.insert(0, channel);
@@ -202,7 +231,7 @@ class PlaybackService extends ChangeNotifier {
       _recentlyPlayed = _recentlyPlayed.sublist(0, _maxRecentlyPlayed);
     }
     await _storage.writeCacheFile(
-      _recentlyPlayedCacheKey,
+      _recentlyPlayedCacheKeyForViewer,
       jsonEncode(_recentlyPlayed.map((c) => c.toJson()).toList()),
     );
     notifyListeners();

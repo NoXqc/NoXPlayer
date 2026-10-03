@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// A GitHub release newer than what's currently installed.
 class UpdateInfo {
@@ -20,6 +21,11 @@ class UpdateInfo {
   /// version, so it's directly comparable via [_isNewer].
   final String version;
   final String releaseNotes;
+
+  /// The matching asset's direct download URL — an `.apk` on Android, a
+  /// `.zip` on Windows (see [AppUpdateService.checkForUpdate]'s own doc
+  /// comment for why Windows only ever opens this in a browser instead of
+  /// downloading/installing it the way Android does).
   final String downloadUrl;
   final int apkSizeBytes;
 }
@@ -106,20 +112,26 @@ class AppUpdateService {
     final packageInfo = await PackageInfo.fromPlatform();
     if (!_isNewer(latestVersion, packageInfo.version)) return null;
 
+    // Windows has no package-installer equivalent to hand an `.apk` to —
+    // its release asset is a plain `.zip` of the built Release folder
+    // instead (see CheckUpdatesScreen's own doc comment for the simpler
+    // "open it in a browser" flow that's all Windows actually needs).
+    final extension = Platform.isWindows ? '.zip' : '.apk';
     final assets = (decoded['assets'] as List?) ?? const [];
-    final apkAsset = assets.cast<Map<String, dynamic>>().firstWhere(
+    final matchingAsset = assets.cast<Map<String, dynamic>>().firstWhere(
           (a) =>
-              (a['name'] as String?)?.toLowerCase().endsWith('.apk') ?? false,
+              (a['name'] as String?)?.toLowerCase().endsWith(extension) ??
+              false,
           orElse: () => const {},
         );
-    final downloadUrl = apkAsset['browser_download_url'] as String?;
+    final downloadUrl = matchingAsset['browser_download_url'] as String?;
     if (downloadUrl == null) return null;
 
     return UpdateInfo(
       version: latestVersion,
       releaseNotes: (decoded['body'] as String?)?.trim() ?? '',
       downloadUrl: downloadUrl,
-      apkSizeBytes: (apkAsset['size'] as int?) ?? 0,
+      apkSizeBytes: (matchingAsset['size'] as int?) ?? 0,
     );
   }
 
@@ -198,4 +210,13 @@ class AppUpdateService {
   /// nothing past this call can be automated further from inside the app.
   Future<void> installApk(String filePath) =>
       _channel.invokeMethod('installApk', {'filePath': filePath});
+
+  /// Windows' whole update flow — no `MainActivity.kt`-style native
+  /// installer channel exists for it (nothing in this repo builds a
+  /// signed Windows installer at all yet, just a plain Release folder),
+  /// so there's nothing to silently download-and-install the way Android
+  /// does. Opening the asset's direct URL in the system browser and
+  /// letting the user unzip/run it themselves is the entire mechanism.
+  Future<bool> openInBrowser(String url) =>
+      launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
 }

@@ -52,6 +52,13 @@ class AppConstants {
   static const String keyFavoriteSeries = 'nox_favorite_series';
   static const String keyHiddenGroups = 'nox_hidden_groups';
 
+  /// A restricted ("kid") viewer's *shown*-groups allowlist — the inverse
+  /// of [keyHiddenGroups]'s blocklist. See `ViewerProfile.isRestricted`'s
+  /// doc comment for why a restricted viewer needs the opposite default
+  /// (a newly-added category should start hidden for them, not visible).
+  /// Namespaced per playlist exactly like [keyHiddenGroups].
+  static const String keyShownGroups = 'nox_shown_groups';
+
   /// Per-channel hide, scoped to live TV only — for duplicate feeds a
   /// provider lists within an otherwise-wanted group (e.g. the same
   /// channel in both HD and HEVC), where hiding the whole group isn't
@@ -109,6 +116,30 @@ class AppConstants {
   static const String keyLastChannelId = 'nox_last_channel_id';
   static const String keyLastPositionPrefix = 'nox_last_position_';
   static const String keyLastDurationPrefix = 'nox_last_duration_';
+
+  // --- Viewer profiles -----------------------------------------------------
+  // See `ViewerProfile`'s doc comment for the feature this supports: several
+  // viewers sharing one device/playlist set, each with their own favorites/
+  // hidden-groups/watch-history. `mainViewerId`'s data lives under every
+  // *existing* unsuffixed key above completely unchanged — an upgrading
+  // install with no viewer profiles yet is simply "Main", reading exactly
+  // what it already had, with no migration/data-movement step at all. Only
+  // a second-or-later viewer's data gets the `__vp_<id>` suffix added by
+  // `StorageService`'s viewer-scoping helpers.
+  static const String mainViewerId = 'main';
+  static const String keyViewerProfiles = 'nox_viewer_profiles';
+  static const String keyActiveViewerId = 'nox_active_viewer';
+  static const String keyParentalPin = 'nox_parental_pin';
+  static const String keyPinFailCount = 'nox_pin_fail_count';
+  static const String keyPinLockedUntil = 'nox_pin_locked_until';
+
+  /// One-time guard — see `PlaylistManager`'s favorites-reconciliation step
+  /// in its `init()`, which only ever needs to run once per install.
+  static const String keyFavoritesDbReconciled = 'nox_fav_db_reconciled';
+
+  /// Suffix appended to a per-viewer-scoped key for every viewer except
+  /// [mainViewerId] — see `StorageService._vk`.
+  static const String viewerKeySuffix = '__vp_';
 
   /// LEGACY global scalar — when the last full catalog sync completed.
   /// Per-playlist now (`'${keyLastFullSyncAt}_$playlistId'`, read/written

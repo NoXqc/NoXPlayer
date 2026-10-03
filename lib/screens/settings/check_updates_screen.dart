@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -66,6 +68,21 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
         _errorMessage = e.toString();
       });
     }
+  }
+
+  /// Windows' entire update flow — see AppUpdateService.openInBrowser's
+  /// doc comment for why there's no download/install state machine to
+  /// drive here the way Android's [_download]/[_install] do: nothing past
+  /// opening the browser can be automated on this platform at all yet.
+  Future<void> _openWindowsDownload() async {
+    final update = _update;
+    if (update == null) return;
+    final opened = await _updateService.openInBrowser(update.downloadUrl);
+    if (!mounted || opened) return;
+    setState(() {
+      _status = _Status.error;
+      _errorMessage = 'Couldn\'t open the download link.';
+    });
   }
 
   Future<void> _download() async {
@@ -200,11 +217,24 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
                 style: Theme.of(context).textTheme.bodySmall),
           ],
           const SizedBox(height: 16),
-          FilledButton.icon(
-            icon: const Icon(Icons.download),
-            label: const Text('Download & Install'),
-            onPressed: _download,
-          ),
+          if (Platform.isWindows) ...[
+            FilledButton.icon(
+              icon: const Icon(Icons.open_in_browser),
+              label: const Text('Open Download Page'),
+              onPressed: _openWindowsDownload,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Opens in your browser — unzip the download and run '
+              'nox_iptv.exe to update, replacing the old folder.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ] else
+            FilledButton.icon(
+              icon: const Icon(Icons.download),
+              label: const Text('Download & Install'),
+              onPressed: _download,
+            ),
         ];
       case _Status.downloading:
         return [

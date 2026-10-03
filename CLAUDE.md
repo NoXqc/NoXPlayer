@@ -126,6 +126,31 @@ Only release when the owner asks ("update the latest", "fully release").
   failures retry other servers. Mid-stream drops do not fail over. Sticks to last-working server.
 - **Palettes:** duo-tone `primary`/`secondary`; optional `highlight` replaces the scheme primary
   (Habs uses white). Old id `green_orange` maps to `habs`.
+- **Viewer profiles** (`ViewerProfile`, `ViewerProfileService`): several viewers sharing one
+  device's playlists, each with their own favorites/hidden-groups/watch-history. Main's data lives
+  under every *existing* unsuffixed storage key, completely unchanged — never add a step that
+  rewrites Main's keys on upgrade; a second-or-later viewer's keys get `__vp_<id>` appended by
+  `StorageService._vk`/`_vkp` instead (position/duration keys keep the suffix at the very end, not
+  after the prefix, so `clearCache()`'s `startsWith` sweep still catches every viewer's). A
+  restricted ("kid") viewer uses a *shown-groups allowlist* (`keyShownGroups`), not the blocklist
+  every other viewer uses — see `PlaylistSession._loadViewerScopedState`'s doc comment for why a
+  new category must default to hidden for them, not visible. `CatalogDatabase`'s own `is_favorite`
+  column stopped being the favorite source of truth (it can't represent more than one viewer) —
+  `PlaylistManager` injects a live callback (`isVodFavorite`/`isSeriesFavorite`) instead; only write
+  that column while Main is active (downgrade insurance, not correctness-load-bearing).
+  `ViewerProfileService.requireUnlock` is the single PIN choke point for *opening Settings at all*
+  from a restricted profile — not screen-by-screen inside it. Any direct, non-Settings control that
+  can un-hide something (the TV live-channel long-press menu's "Unhide" option is the one real
+  example found so far) needs its own `requireUnlock` check at the point of the action instead,
+  since it never passes through the Settings gate to begin with — audit any *new* one the same way
+  before assuming the Settings gate alone covers it. A profile switch (`switchTo`) stops playback
+  *before* flipping the active viewer id (so the final position save lands under the old viewer),
+  then calls `PlaylistManager.applyActiveViewer`/`PlaybackService.reloadForViewer` to re-derive
+  everything else from storage with no network access — and only takes visible effect because
+  `main.dart` wraps the home screen in `Consumer<ViewerProfileService>` keyed by the active viewer's
+  id, which remounts `TvHomeScreen`/`HomeScreen` from scratch (clean dispose of pending-hide timers,
+  focus state, etc.) — that `Consumer`/key is the one thing that makes a switch actually show up on
+  screen; nothing else up the tree listens to this service at all.
 
 ## Git
 - Commit only when asked; end commit messages with the attribution trailer Claude Code provides.

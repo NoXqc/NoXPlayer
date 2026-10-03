@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -9,6 +11,7 @@ import '../services/storage_service.dart';
 import '../utils/tv_theme.dart';
 import '../widgets/poster_card.dart';
 import '../widgets/section_label.dart';
+import 'desktop_player_screen.dart';
 import 'player_screen.dart';
 
 /// Shows a series' seasons as stacked horizontally-scrolling rows of
@@ -77,6 +80,16 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
   /// auto-advance into the next episode near the end (see
   /// `PlaybackService._nextInQueue`), including across a season boundary.
   void _openEpisode(Channel episode, List<Channel> queue) {
+    // See TvHomeScreen._selectChannel's matching comment — Windows has no
+    // PlaybackService-compatible player at all, so this bypasses it (and
+    // Continue Watching/resume) entirely via a standalone screen. The
+    // queue is passed through so Previous/Next episode still works there.
+    if (Platform.isWindows) {
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) =>
+              DesktopPlayerScreen(channel: episode, queue: queue)));
+      return;
+    }
     context.read<PlaybackService>().setUpNextQueue(queue);
     Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => PlayerScreen(channel: episode)));

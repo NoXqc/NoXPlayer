@@ -116,17 +116,18 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Future<void> _runDbSearch(String query) async {
-    final db = context.read<CatalogDatabase>();
+    final playlist = context.read<PlaylistManager>();
     // Restricted to enabled playlists — a disabled playlist's stale
     // cached rows shouldn't surface in search results.
-    final playlistIds = context
-        .read<PlaylistManager>()
-        .profiles
+    final playlistIds = playlist.profiles
         .where((p) => p.enabled && p.isXtream)
         .map((p) => p.id)
         .toList();
-    final vod = await db.searchVod(query, playlistIds);
-    final series = await db.searchSeries(query, playlistIds);
+    // Goes through PlaylistManager, not CatalogDatabase directly — see
+    // PlaylistManager.searchVisibleVod's doc comment for why a direct DB
+    // search has no hidden-group awareness at all.
+    final vod = await playlist.searchVisibleVod(query, playlistIds);
+    final series = await playlist.searchVisibleSeries(query, playlistIds);
     // The query field may have moved on to something else (or been
     // cleared) by the time this actually returns — a stale result
     // overwriting a newer/empty one would flash wrong results on screen.
@@ -412,8 +413,14 @@ class _SearchScreenState extends State<SearchScreen> {
   List<_ResultRow> _buildRows(PlaylistManager playlist, String q) {
     final rows = <_ResultRow>[];
 
-    final channelMatches =
-        playlist.channels.where((c) => c.name.toLowerCase().contains(q)).toList();
+    // visibleChannels, not the raw `channels` getter — that one bypasses
+    // hidden-group/hidden-channel filtering entirely, which would otherwise
+    // let a restricted viewer search their way straight to a hidden
+    // channel without ever un-hiding its group.
+    final channelMatches = playlist
+        .visibleChannels(category: 'tv')
+        .where((c) => c.name.toLowerCase().contains(q))
+        .toList();
     if (channelMatches.isNotEmpty) {
       rows.add(_buildChannelRow(rows.length, 'Live TV', channelMatches));
     }
