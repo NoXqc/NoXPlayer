@@ -98,12 +98,18 @@ class Channel {
   /// EPG" — every existing channel keeps working exactly as before.
   String? epgIdOverride;
 
-  /// The provider's own TMDB (The Movie Database) id for this title, when
-  /// it sends one — present on the same `get_vod_streams`/`get_series`
-  /// bulk list call [addedAt] already comes from, at zero extra network
-  /// cost. Exists purely as the lookup key [releaseDate] is fetched with;
-  /// nothing else in the app reads this directly.
-  final String? tmdbId;
+  /// The TMDB (The Movie Database) id this title is looked up by — the
+  /// provider's own `get_vod_streams`/`get_series` bulk list call
+  /// [addedAt] already comes from sends one for *some* items at zero extra
+  /// network cost; when it doesn't (confirmed directly: entirely untagged
+  /// on some providers, with no TMDB-sourced [releaseDate]/[posterUrl]
+  /// ever appearing as a result — "What's New" looked like it was simply
+  /// never using TMDB at all), [TmdbEnrichmentService] resolves one itself
+  /// via a title search instead and stamps it in here. Mutable (not
+  /// `final`) for exactly that reason — same pattern [releaseDate]/
+  /// [posterUrl] already use. Exists purely as the lookup key those two
+  /// are fetched with; nothing else in the app reads this directly.
+  String? tmdbId;
 
   /// The title's actual real-world release date — deliberately *not* the
   /// same thing as [addedAt] (when the provider's own catalog first

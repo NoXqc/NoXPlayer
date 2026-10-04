@@ -53,13 +53,20 @@ class TmdbEnrichmentService {
   /// after batch with zero spacing at all.
   static const _batchPause = Duration(milliseconds: 150);
 
-  /// Enriches whichever of [items] have a [Channel.tmdbId] but are still
-  /// missing [Channel.releaseDate] or [Channel.posterUrl] — the latter was
-  /// added after the former, so an item enriched before that point has a
-  /// release date already but no poster yet; re-including it here lets a
-  /// later enrichment pass backfill just the poster without re-fetching
-  /// the date. [onProgress] fires after *every* attempt (hit or miss), not
-  /// just ones that found something, so a caller can show real "X of Y
+  /// Enriches whichever of [items] are still missing [Channel.releaseDate]
+  /// or [Channel.posterUrl] — the latter was added after the former, so an
+  /// item enriched before that point has a release date already but no
+  /// poster yet; re-including it here lets a later enrichment pass
+  /// backfill just the poster without re-fetching the date. No longer
+  /// gated on [Channel.tmdbId] already being set — confirmed directly on
+  /// a real provider (Trex/SRS-style) as the actual reason this whole
+  /// feature looked like it silently did nothing with a valid key saved:
+  /// most of its catalog sends no `tmdb` field at all, so every item was
+  /// filtered out before a single request was ever made. A missing
+  /// [Channel.tmdbId] is now resolved here too, via [_searchTmdbId], the
+  /// same way a human would search TMDB by the title itself.
+  /// [onProgress] fires after *every* attempt (hit or miss), not just
+  /// ones that found something, so a caller can show real "X of Y
   /// processed" progress — distinguishing "still working, correct so far"
   /// from "finished, this is the final order" is the whole point, since a
   /// partially-enriched category's incremental sort is only valid up to
@@ -68,8 +75,7 @@ class TmdbEnrichmentService {
       {void Function(int done, int total)? onProgress}) async {
     final key = _storage.getTmdbApiKey();
     final pending = items
-        .where((c) =>
-            c.tmdbId != null && (c.releaseDate == null || c.posterUrl == null))
+        .where((c) => c.releaseDate == null || c.posterUrl == null)
         .toList();
     if (key == null || key.isEmpty || pending.isEmpty) {
       onProgress?.call(0, 0);
@@ -87,7 +93,14 @@ class TmdbEnrichmentService {
       // catalog is" — data availability was never the problem.
       await Future.wait(batch.map((c) async {
         try {
-          final details = await _fetchDetails(c.tmdbId!, key, isMovie: true);
+          var id = c.tmdbId;
+          id ??= await _searchTmdbId(c.name, key, isMovie: true);
+          if (id != null && id != c.tmdbId) {
+            c.tmdbId = id;
+            unawaited(_db.setVodTmdbId(c.id, id));
+          }
+          if (id == null) return;
+          final details = await _fetchDetails(id, key, isMovie: true);
           if (details != null) {
             if (details.releaseDate != null) {
               c.releaseDate = details.releaseDate;
@@ -103,9 +116,10 @@ class TmdbEnrichmentService {
           // none of these are worth surfacing as an error to the viewer
           // browsing a poster grid. The item just keeps showing no release
           // date, same as if this service didn't run at all.
+        } finally {
+          done++;
+          onProgress?.call(done, total);
         }
-        done++;
-        onProgress?.call(done, total);
       }));
       await Future<void>.delayed(_batchPause);
     }
@@ -117,8 +131,7 @@ class TmdbEnrichmentService {
       {void Function(int done, int total)? onProgress}) async {
     final key = _storage.getTmdbApiKey();
     final pending = items
-        .where((s) =>
-            s.tmdbId != null && (s.releaseDate == null || s.posterUrl == null))
+        .where((s) => s.releaseDate == null || s.posterUrl == null)
         .toList();
     if (key == null || key.isEmpty || pending.isEmpty) {
       onProgress?.call(0, 0);
@@ -130,7 +143,14 @@ class TmdbEnrichmentService {
       final batch = pending.skip(i).take(_concurrency);
       await Future.wait(batch.map((s) async {
         try {
-          final details = await _fetchDetails(s.tmdbId!, key, isMovie: false);
+          var id = s.tmdbId;
+          id ??= await _searchTmdbId(s.name, key, isMovie: false);
+          if (id != null && id != s.tmdbId) {
+            s.tmdbId = id;
+            unawaited(_db.setSeriesTmdbId(s.id, id));
+          }
+          if (id == null) return;
+          final details = await _fetchDetails(id, key, isMovie: false);
           if (details != null) {
             if (details.releaseDate != null) {
               s.releaseDate = details.releaseDate;
@@ -143,12 +163,75 @@ class TmdbEnrichmentService {
           }
         } catch (_) {
           // See the matching catch in enrichVod above.
+        } finally {
+          done++;
+          onProgress?.call(done, total);
         }
-        done++;
-        onProgress?.call(done, total);
       }));
       await Future<void>.delayed(_batchPause);
     }
+  }
+
+  /// Looks up a TMDB id by title for an item the provider sent no `tmdb`
+  /// field for — the fallback [enrichVod]/[enrichSeries] use instead of
+  /// just giving up. Provider titles are usually decorated (language/
+  /// quality prefixes like "FR - "/"4K-EN-HDR - ", trailing tags like
+  /// "[MULTI-SUB]") well beyond what TMDB's own search can match against,
+  /// so [_cleanTitleForSearch] strips those first. Takes the top result as-
+  /// is — TMDB's search endpoint already ranks by relevance/popularity,
+  /// and a wrong match here only ever costs a wrong-but-harmless poster/
+  /// date on one title, not anything the user acts on directly.
+  Future<String?> _searchTmdbId(String rawTitle, String apiKey,
+      {required bool isMovie}) async {
+    final cleaned = _cleanTitleForSearch(rawTitle);
+    if (cleaned.title.isEmpty) return null;
+    try {
+      final path = isMovie ? 'search/movie' : 'search/tv';
+      final uri = Uri.parse('$_base/$path').replace(queryParameters: {
+        'api_key': apiKey,
+        'query': cleaned.title,
+        if (cleaned.year != null)
+          (isMovie ? 'year' : 'first_air_date_year'): cleaned.year.toString(),
+      });
+      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final results = (data['results'] as List?) ?? const [];
+      if (results.isEmpty) return null;
+      return (results.first as Map<String, dynamic>)['id']?.toString();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// A leading provider tag ("FR - ", "4K-EN-HDR - " — one or more dash/
+  /// underscore-joined alphanumeric segments followed by " - "), a
+  /// trailing year in parentheses (captured separately as a search hint,
+  /// not left in the query text), and any number of trailing bracketed
+  /// tags ("[MULTI-SUB]", "[VF]"). Best-effort, not exhaustive — provider
+  /// naming varies, but TMDB's own search ranking tolerates an imperfect
+  /// query far better than it tolerates searching for the raw decorated
+  /// string wholesale.
+  static final RegExp _leadingProviderTag =
+      RegExp(r'^[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*\s*-\s*');
+  static final RegExp _trailingBracketTag = RegExp(r'\s*\[[^\]]*\]\s*$');
+  static final RegExp _trailingYear = RegExp(r'\s*\((\d{4})\)\s*$');
+
+  ({String title, int? year}) _cleanTitleForSearch(String raw) {
+    var title = raw;
+    while (true) {
+      final stripped = title.replaceFirst(_trailingBracketTag, '');
+      if (stripped == title) break;
+      title = stripped;
+    }
+    int? year;
+    final yearMatch = _trailingYear.firstMatch(title);
+    if (yearMatch != null) {
+      year = int.tryParse(yearMatch.group(1)!);
+      title = title.replaceFirst(_trailingYear, '');
+    }
+    title = title.replaceFirst(_leadingProviderTag, '');
+    return (title: title.trim(), year: year);
   }
 
   Future<({DateTime? releaseDate, String? posterUrl})?> _fetchDetails(

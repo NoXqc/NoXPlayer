@@ -572,6 +572,22 @@ class CatalogDatabase {
         where: 'id = ?', whereArgs: [id]);
   }
 
+  /// Caches a TMDB id [TmdbEnrichmentService] resolved itself (via a title
+  /// search) for an item the provider never tagged with one — see
+  /// `Channel.tmdbId`'s doc comment. Same "write once, separate from the
+  /// wholesale category replace" reasoning as [setVodReleaseDate].
+  Future<void> setVodTmdbId(String id, String tmdbId) async {
+    final db = await _database;
+    await db.update('vod_channels', {'tmdb_id': tmdbId},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> setSeriesTmdbId(String id, String tmdbId) async {
+    final db = await _database;
+    await db.update('series_items', {'tmdb_id': tmdbId},
+        where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<void> setVodFavorite(String id, bool value) async {
     final db = await _database;
     await db.update('vod_channels', {'is_favorite': value ? 1 : 0},

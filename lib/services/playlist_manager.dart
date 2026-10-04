@@ -499,7 +499,10 @@ class PlaylistManager extends ChangeNotifier {
     // to groups they can't see.
     final visible =
         rows.where((c) => !_isHiddenForActiveViewer(c.playlistId, c.group));
-    final picked = _thisYearOnly(visible, (c) => c.name).take(limit).toList();
+    final picked = _thisYearOnly(visible, (c) => c.name)
+        .where((c) => _notKnownStale(c.releaseDate))
+        .take(limit)
+        .toList();
     if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
       picked.sort((a, b) => _compareNullableDates(a.releaseDate, b.releaseDate));
     }
@@ -511,11 +514,32 @@ class PlaylistManager extends ChangeNotifier {
         .getRecentlyAddedSeries(_enabledXtreamPlaylistIds, limit: limit * 40);
     final visible = rows
         .where((s) => !_isHiddenForActiveViewer(s.playlistId, s.categoryId));
-    final picked = _thisYearOnly(visible, (s) => s.name).take(limit).toList();
+    final picked = _thisYearOnly(visible, (s) => s.name)
+        .where((s) => _notKnownStale(s.releaseDate))
+        .take(limit)
+        .toList();
     if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
       picked.sort((a, b) => _compareNullableDates(a.releaseDate, b.releaseDate));
     }
     return picked;
+  }
+
+  /// [_thisYearOnly] only has a title's *text* to go on (a regex for a
+  /// literal year), so a title with no year written in it at all — common
+  /// for series, and confirmed directly on a real provider for movies too
+  /// ("FR - American Hostage", nothing dating it) — always passed that
+  /// filter regardless of how old it actually is. Once a real
+  /// [Channel.releaseDate]/[XtreamSeries.releaseDate] is known (cached
+  /// from an earlier [TmdbEnrichmentService] pass — this itself never
+  /// waits on a network call, see this class's own doc comment), it's a
+  /// strictly better signal than the title-regex guess and should win:
+  /// an item that's actually a decade old gets dropped here even though
+  /// its title alone looked "new". Unenriched items (the common case the
+  /// first time this runs) pass through unchanged — there's nothing
+  /// better to go on yet, same as before this existed.
+  static bool _notKnownStale(DateTime? releaseDate) {
+    if (releaseDate == null) return true;
+    return DateTime.now().difference(releaseDate).inDays <= 450;
   }
 
   /// Newest first; a null date (never TMDB-enriched, or TMDB had nothing
@@ -544,12 +568,24 @@ class PlaylistManager extends ChangeNotifier {
   /// sort, not a feature of its own worth exposing a setting for. Scoped
   /// to just the current ~10 "What's New" picks (never a whole catalog),
   /// so even a cold cache-miss run is a handful of requests, not hundreds.
-  Future<void> refreshWhatsNewTmdbIfDue() async {
+  ///
+  /// [force] skips the weekly gate entirely — `TmdbSettingsScreen`'s
+  /// "Refresh now" button uses this. The persisted timestamp survives an
+  /// app *update*, not just a restart: confirmed directly as a real trap
+  /// once [TmdbEnrichmentService] gained its title-search fallback (it
+  /// used to only work for provider-tagged items) — anyone whose weekly
+  /// window had already started under the old, narrower logic would see
+  /// no change at all after updating, for up to another 7 days, with
+  /// nothing on screen to explain why.
+  Future<void> refreshWhatsNewTmdbIfDue({bool force = false}) async {
     final key = _storage.getTmdbApiKey();
     if (key == null || key.isEmpty) return;
-    final last = _storage.getWhatsNewTmdbLastRefreshed();
-    if (last != null && DateTime.now().difference(last) < const Duration(days: 7)) {
-      return;
+    if (!force) {
+      final last = _storage.getWhatsNewTmdbLastRefreshed();
+      if (last != null &&
+          DateTime.now().difference(last) < const Duration(days: 7)) {
+        return;
+      }
     }
     final service = TmdbEnrichmentService(_storage, _catalogDb);
     final vod = await whatsNewVod();

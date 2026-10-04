@@ -32,7 +32,9 @@ import '../widgets/section_label.dart';
 import '../widgets/settings_scaffold.dart';
 import 'catalog_sync_screen.dart';
 import 'group_catalog_screen.dart';
+import 'desktop_multiview_screen.dart';
 import 'desktop_player_screen.dart';
+import 'multiview_screen.dart';
 import 'movie_detail_screen.dart';
 import 'player_screen.dart';
 import 'profile_picker_screen.dart';
@@ -1164,6 +1166,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // therefore Continue Watching/resume/backup-server retry) entirely
     // rather than routing through the shared mobile player architecture.
     if (Platform.isWindows) {
+      // Abandon whatever's minimized first — reported directly as two
+      // channels' audio playing at once otherwise: picking a channel
+      // here is an unrelated, fresh selection, not a resume, so any
+      // previously-minimized session has to be torn down rather than
+      // left running forever with nothing pointed at it anymore. See
+      // DesktopMiniPlayer.clear's own doc comment.
+      DesktopMiniPlayer.instance.clear();
       Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => DesktopPlayerScreen(channel: channel)));
       return;
@@ -1695,6 +1704,47 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           collapsed: collapsed,
           onTap: _openSearch,
         ),
+        // Windows only — requested directly, citing TiviMate's own
+        // multiview (works fine even on a Fire Stick) and that a Windows
+        // PC has far more headroom than any box this app otherwise
+        // targets. See DesktopMultiviewScreen's own doc comment for why
+        // this doesn't extend to mobile/TV: `media_kit`'s texture-based
+        // rendering is what actually makes several simultaneous players
+        // safe, and only Windows has that player at all.
+        // TiviMate's own multiview runs fine even on older Fire Sticks —
+        // requested directly, so this isn't Windows-only the way most of
+        // this session's other desktop-specific work has been. Windows
+        // keeps its mouse-driven, media_kit-backed screen; every other
+        // platform gets a separate, remote-first one built around
+        // video_player_hdr instead (there is no cross-platform video
+        // engine in this app — see pubspec.yaml's media_kit comment).
+        _SelectableRow(
+          icon: Icons.grid_view,
+          label: 'Multiview',
+          selected: false,
+          collapsed: collapsed,
+          onTap: () {
+            if (Platform.isWindows) {
+              DesktopMiniPlayer.instance.clear();
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const DesktopMultiviewScreen()));
+            } else {
+              // PlaybackService's own background-kept-alive live channel
+              // (the mobile "island"/resume hint — deliberately still
+              // playing after backing out of fullscreen, and almost
+              // always populated anyway since the app auto-resumes the
+              // last channel on launch) is a separate player system from
+              // this screen's own controllers, same as DesktopMiniPlayer
+              // is on Windows. Reported directly as its audio bleeding
+              // through on top of whichever multiview cell has audio
+              // focus — stopping it here is the same fix as the Windows
+              // branch above, just a different background player.
+              unawaited(context.read<PlaybackService>().stop());
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const MultiviewScreen()));
+            }
+          },
+        ),
         const Divider(height: 16, color: Colors.white24),
         for (final tab in _tabs)
           _SelectableRow(
@@ -1965,15 +2015,18 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     });
   }
 
-  /// The Timeline guide's own small preview box (top-left corner) — shows
-  /// whatever's actually playing, or an informational card for whatever's
-  /// minimized, or "Nothing playing". [channel] is `PlaybackService
-  /// .currentChannel`, always null on Windows — that service is never
-  /// touched by `DesktopPlayerScreen`/`DesktopMiniPlayer` (see their own
-  /// doc comments), so this box has to watch `DesktopMiniPlayer.instance
+  /// The small live-preview box both guide views use — the Timeline
+  /// guide's own top-left corner box, and (reused, not duplicated) the
+  /// plain "Live" guide's inline preview pane. Shows whatever's actually
+  /// playing, or an informational card for whatever's minimized, or
+  /// "Nothing playing". [channel] is `PlaybackService.currentChannel`,
+  /// always null on Windows — that service is never touched by
+  /// `DesktopPlayerScreen`/`DesktopMiniPlayer` (see their own doc
+  /// comments), so this box has to watch `DesktopMiniPlayer.instance
   /// .channel` directly there instead, or it permanently reads "Nothing
-  /// playing" even with a live channel actually minimized (reported
-  /// directly — this exact box, sitting right next to a working resume
+  /// playing"/"Select a channel to start watching" even with a live
+  /// channel actually minimized (reported directly on both guide views,
+  /// separately — this exact box, sitting right next to a working resume
   /// pill saying otherwise, reading as "the mini player doesn't work").
   Widget _buildTimelinePreviewBox(Channel? channel) {
     if (Platform.isWindows) {
@@ -2282,58 +2335,23 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       child: Stack(
         children: [
           Positioned.fill(
-            child: channel == null
-                ? const Center(
-                    child: Text('Select a channel to start watching'))
-                // The video itself is a glance, not a scrub surface —
-                // excluding it from focus stops the D-pad from getting
-                // stuck on its internal Slider (Left/Right seek instead
-                // of moving focus back to the lists).
-                //
-                // Was conditionally swapped for a plain ColoredBox while
-                // `_coveredByPushedRoute` (i.e. whenever the fullscreen
-                // player is on top) — a fix for a *theory* about two
-                // simultaneous consumers of the same video texture, which
-                // turned out to be wrong (the actual fullscreen black
-                // screen persisted after that fix shipped). Worse: real
-                // hardware logs during the black screen showed "Could not
-                // find corresponding native window for surface" — a real
-                // Android error meaning the decoder tried to render into a
-                // surface that had already been torn down. Unmounting this
-                // exact widget the instant the fullscreen player mounts is
-                // a very plausible cause of exactly that: it tears down
-                // this consumer's handle on the shared video texture at
-                // the precise moment the new one needs it. Left mounted
-                // (just visually covered) like it always used to be.
-                // NOT torn down on entering/leaving fullscreen for the same
-                // channel (this key doesn't change then, so no remount
-                // happens; the crash risk noted above stays fully avoided).
-                //
-                // Keyed by channel id for a *different* reason: this same
-                // shared-controller architecture (one VideoPlayerHdrController
-                // in PlaybackService, reused across this pane, the fullscreen
-                // player, and the live island pill) turned out to cause a
-                // real, reproducible bug of its own — this pane going stale
-                // on a channel switch, still showing the previous channel's
-                // last frame while the new stream is genuinely already
-                // playing elsewhere (confirmed absent on the pre-Live-Island
-                // 3.20.1 build, so this shared-controller design is the
-                // actual cause, not a pre-existing platform-view issue).
-                // Forcing Flutter to fully tear down and recreate this pane's
-                // Element/platform view whenever the *live* channel id
-                // actually changes — same fix already applied at the other
-                // two VideoPlayerPane call sites (home_screen.dart,
-                // player_screen.dart) — is the deliberate risk being taken
-                // here: it only remounts on a genuine channel change, never
-                // on a fullscreen enter/exit for the same channel, so it
-                // shouldn't reintroduce the concurrent-consumer race above —
-                // but this is the one call site that race was originally
-                // found on, so treat this as the higher-risk half of the fix
-                // if a freeze reappears in a different shape.
-                : ExcludeFocus(
-                    child: VideoPlayerPane(
-                        key: ValueKey(channel.id), showEpgBar: false),
-                  ),
+            // `channel` (`PlaybackService.currentChannel`) is always null
+            // on Windows — that service is never touched by
+            // `DesktopPlayerScreen`/`DesktopMiniPlayer` (see their own
+            // doc comments) — so this plain pane used to permanently read
+            // "Select a channel to start watching" there even with a
+            // live channel actually minimized, the exact same gap the
+            // Timeline guide's own preview box had before it was fixed to
+            // watch `DesktopMiniPlayer` directly. Reported directly as
+            // the same bug on this ("Live", non-timeline) guide view —
+            // reusing that already-fixed box here instead of duplicating
+            // its Windows-vs-not branching a second time. See its own doc
+            // comment for why rendering `DesktopMiniPlayer`'s video here
+            // is safe (no second simultaneous stream/audio consumer):
+            // `media_kit`'s texture-based rendering tolerates more than
+            // one `Video` widget on the same controller, and in practice
+            // only one is ever actually mounted at a time anyway.
+            child: _buildTimelinePreviewBox(channel),
           ),
           if (channel != null)
             Positioned(
@@ -2722,6 +2740,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             rating: c.rating,
             watched: storage.isFullyWatched(c.id),
             progressFraction: storage.getWatchedFraction(c.id),
+            cardWidth: _browsePosterWidth,
+            cardPosterHeight: _browsePosterHeight,
             focusNode: index == 0 ? _continueWatchingFirstFocusNode : null,
             onTap: () => asSeries
                 ? _openSeries(XtreamSeries(
@@ -2857,6 +2877,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 rating: c.rating,
                 watched: storage.isFullyWatched(c.id),
                 progressFraction: storage.getWatchedFraction(c.id),
+                cardWidth: _browsePosterWidth,
+                cardPosterHeight: _browsePosterHeight,
                 focusNode: index == 0
                     ? _firstPosterFocusNodeForGroup(
                         group.playlistId, group.title)
@@ -2956,6 +2978,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             title: s.name,
             imageUrl: s.coverUrl,
             rating: s.rating,
+            cardWidth: _browsePosterWidth,
+            cardPosterHeight: _browsePosterHeight,
             focusNode: index == 0
                 ? _firstPosterFocusNodeForGroup(group.playlistId, group.title)
                 : null,
@@ -3420,6 +3444,26 @@ class _GroupRowState extends State<_GroupRow> {
   }
 }
 
+/// Windows gets noticeably larger browse posters than the TV-tuned
+/// defaults ([PosterCard.width]/[PosterCard.posterHeight]) — the same
+/// 1.8x bump [_BrowseHero]'s own height uses, so the grid under that much
+/// bigger hero banner doesn't still read as tuned for a TV screen. Plain
+/// top-level getters, not `static const` like [PosterCard]'s own fields —
+/// those need to stay compile-time constants (used as default parameter
+/// values), which a `Platform.isWindows` check can't be.
+// Was 1.8 — reduced ~30% per direct feedback that the first pass at
+// this was too big.
+const double _windowsPosterScale = 1.26;
+double get _browsePosterWidth =>
+    Platform.isWindows ? PosterCard.width * _windowsPosterScale : PosterCard.width;
+double get _browsePosterHeight => Platform.isWindows
+    ? PosterCard.posterHeight * _windowsPosterScale
+    : PosterCard.posterHeight;
+double get _browseCardHeight => _browsePosterHeight +
+    (Platform.isWindows
+        ? PosterCard.titleHeight * _windowsPosterScale
+        : PosterCard.titleHeight);
+
 /// One horizontally-scrolling row of [PosterCard]s under a category title
 /// — the Netflix/Apple-TV "browse" pattern. Builds cards lazily as they
 /// scroll into view — a category can hold thousands of items.
@@ -3454,8 +3498,9 @@ class _CategoryRow<T> extends StatelessWidget {
           ),
           SizedBox(
             // Was 210 — ~20% smaller per feedback that the catalog read
-            // too large.
-            height: PosterCard.height,
+            // too large. Windows scales back up from there — see
+            // _browseCardHeight's own doc comment.
+            height: _browseCardHeight,
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -3467,8 +3512,7 @@ class _CategoryRow<T> extends StatelessWidget {
               // gives posters a head start decoding before they're seen —
               // some extra memory (the image cache ceiling still bounds
               // the total), traded for a visibly smoother scroll.
-              scrollCacheExtent:
-                  const ScrollCacheExtent.pixels(PosterCard.width * 5),
+              scrollCacheExtent: ScrollCacheExtent.pixels(_browsePosterWidth * 5),
               itemBuilder: (context, i) => itemBuilder(items[i], i),
             ),
           ),
@@ -3506,7 +3550,19 @@ class _BrowseHero extends StatelessWidget {
       // underneath). Grown again for the description text below the
       // title now that it has one; the larger bottom margin below is the
       // same "don't collide with the row label" guard scaled up with it.
-      height: 210,
+      // Windows got a fixed-pixel bump on top of that in two earlier
+      // passes (680px total) — reported directly as sized for a 4K
+      // monitor specifically (what this was actually being tuned
+      // against) and wildly too tall on a plain 1080p one, where a fixed
+      // pixel count is a much bigger fraction of the whole window. A
+      // fraction of the actual available height instead — scales with
+      // whatever this resizable window's real size is, 4K or 1080p or
+      // anything between, rather than a constant tuned for one specific
+      // screen. Clamped so a very short or very tall window still gets
+      // something reasonable at either end.
+      height: Platform.isWindows
+          ? (MediaQuery.of(context).size.height * 0.32).clamp(220.0, 480.0)
+          : 210,
       margin: const EdgeInsets.only(bottom: 18),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
@@ -3520,79 +3576,190 @@ class _BrowseHero extends StatelessWidget {
             width: 2),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Stack(
-        fit: StackFit.expand,
+      // Windows gets a real poster thumbnail at its own aspect ratio next
+      // to the text, not the full-bleed `BoxFit.cover` backdrop below —
+      // reported directly with a screenshot: a catalog poster is a
+      // portrait image, and stretching one to cover this whole wide
+      // banner (especially once it grew this much taller) showed nothing
+      // but an unrecognizable, heavily zoomed-in crop of the artwork, not
+      // a poster. Android/TV keeps the original backdrop look unchanged —
+      // its much shorter, fixed 210px height never made the same crop
+      // read as broken the way it did once this banner grew to 680px.
+      child: Platform.isWindows
+          ? _buildWindowsHeroContent(scheme)
+          : _buildBackdropHeroContent(scheme),
+    );
+  }
+
+  Widget _buildWindowsHeroContent(ColorScheme scheme) {
+    return ColoredBox(
+      color: Colors.grey.shade900,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(color: Colors.grey.shade900),
-          if (imageUrl != null && imageUrl!.isNotEmpty)
-            CachedNetworkImage(
-              imageUrl: imageUrl!,
-              key: ValueKey(imageUrl),
-              fit: BoxFit.cover,
-              errorWidget: (_, __, ___) => const SizedBox.shrink(),
-            ),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.transparent,
-                  Color.alphaBlend(scheme.primary.withValues(alpha: 0.35),
-                      Colors.black.withValues(alpha: 0.85)),
-                ],
-              ),
-            ),
+          AspectRatio(
+            // Standard poster aspect — matches PosterCard's own ~0.70
+            // width:height ratio elsewhere in this app.
+            aspectRatio: 2 / 3,
+            child: imageUrl != null && imageUrl!.isNotEmpty
+                ? CachedNetworkImage(
+                    imageUrl: imageUrl!,
+                    key: ValueKey(imageUrl),
+                    fit: BoxFit.cover,
+                    errorWidget: (_, __, ___) =>
+                        Container(color: Colors.grey.shade900),
+                  )
+                : Container(color: Colors.grey.shade900),
           ),
-          Positioned(
-            left: 20,
-            bottom: 16,
-            right: 20,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(width: 4, height: 22, color: scheme.secondary),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        title ?? 'Browse',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.all(28),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    Color.alphaBlend(scheme.primary.withValues(alpha: 0.35),
+                        Colors.black.withValues(alpha: 0.92)),
+                    Color.alphaBlend(scheme.secondary.withValues(alpha: 0.2),
+                        Colors.black.withValues(alpha: 0.8)),
                   ],
                 ),
-                const SizedBox(height: 8),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 200),
-                  child: description == null
-                      ? const SizedBox.shrink()
-                      : Padding(
-                          key: ValueKey(description),
-                          padding: const EdgeInsets.only(left: 14),
-                          child: Text(
-                            description!,
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 14,
-                                height: 1.3),
-                          ),
+              ),
+              // A scrollable, not a plain Column — at the larger text
+              // sizes requested directly (title 44px, description 34px),
+              // a long title/description plus this box's own responsive
+              // (so, sometimes short) height made a fixed Column
+              // genuinely overflow its bounds on a short window instead
+              // of just looking cramped. This never engages at all once
+              // everything actually fits — it only ever matters at the
+              // small/large-text extremes.
+              child: SingleChildScrollView(
+                child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(width: 5, height: 36, color: scheme.secondary),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          title ?? 'Browse',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 44,
+                              fontWeight: FontWeight.bold),
                         ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: description == null
+                        ? const SizedBox.shrink()
+                        : Padding(
+                            key: ValueKey(description),
+                            padding: const EdgeInsets.only(left: 17),
+                            child: Text(
+                              description!,
+                              maxLines: 6,
+                              overflow: TextOverflow.ellipsis,
+                              // Requested directly: "at least 32-38" — 34
+                              // sits in the middle of that range.
+                              style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 34,
+                                  height: 1.35),
+                            ),
+                          ),
+                  ),
+                ],
                 ),
-              ],
+              ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildBackdropHeroContent(ColorScheme scheme) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Container(color: Colors.grey.shade900),
+        if (imageUrl != null && imageUrl!.isNotEmpty)
+          CachedNetworkImage(
+            imageUrl: imageUrl!,
+            key: ValueKey(imageUrl),
+            fit: BoxFit.cover,
+            errorWidget: (_, __, ___) => const SizedBox.shrink(),
+          ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.transparent,
+                Color.alphaBlend(scheme.primary.withValues(alpha: 0.35),
+                    Colors.black.withValues(alpha: 0.85)),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          left: 20,
+          bottom: 16,
+          right: 20,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(width: 4, height: 22, color: scheme.secondary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      title ?? 'Browse',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: description == null
+                    ? const SizedBox.shrink()
+                    : Padding(
+                        key: ValueKey(description),
+                        padding: const EdgeInsets.only(left: 14),
+                        child: Text(
+                          description!,
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                              height: 1.3),
+                        ),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -3780,10 +3947,16 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
               CachedNetworkImage(
                 imageUrl: imageUrl,
                 key: ValueKey(imageUrl),
-                // contain, not _BrowseHero's cover: filling an area this
-                // large with a portrait poster would crop it down to a
-                // thin band through the middle.
-                fit: BoxFit.contain,
+                // Was `contain` (letterboxed, with the gradient above
+                // filling the bars either side) — changed back to `cover`
+                // per direct request, to fill this whole slide the way
+                // every other poster in this app already does by default
+                // (see PosterCard.fit). Not the same hazard as the
+                // scrapped blur effect above: that crashed real Fire
+                // Stick hardware via a GPU blur *shader* specifically —
+                // plain cropping is the same ordinary operation already
+                // running crash-free across every poster grid in the app.
+                fit: BoxFit.cover,
                 errorWidget: (_, __, ___) => const SizedBox.shrink(),
               ),
             DecoratedBox(

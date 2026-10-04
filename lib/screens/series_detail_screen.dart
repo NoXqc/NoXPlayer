@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../models/channel.dart';
 import '../models/xtream_series.dart';
+import '../services/desktop_mini_player.dart';
 import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
 import '../services/storage_service.dart';
@@ -85,6 +86,10 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
     // Continue Watching/resume) entirely via a standalone screen. The
     // queue is passed through so Previous/Next episode still works there.
     if (Platform.isWindows) {
+      // See TvHomeScreen._selectChannel's matching comment — abandons
+      // any minimized live channel first, so it can't keep playing audio
+      // in the background behind this unrelated episode.
+      DesktopMiniPlayer.instance.clear();
       Navigator.of(context).push(MaterialPageRoute(
           builder: (_) =>
               DesktopPlayerScreen(channel: episode, queue: queue)));

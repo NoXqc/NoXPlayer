@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
@@ -91,18 +93,58 @@ class PosterCard extends StatefulWidget {
 class _PosterCardState extends State<PosterCard> {
   bool _focused = false;
 
+  /// Only [widget.focusNode] (the first-card-of-a-row case) gives this an
+  /// externally-owned node — every other instance needs its own stable
+  /// handle too, on Windows, to call `.requestFocus()` on directly (see
+  /// the `onTap` doc comment below); left as `null` on InkWell otherwise,
+  /// it manages one internally that this widget has no reference to.
+  FocusNode? _ownedFocusNode;
+  FocusNode get _effectiveFocusNode =>
+      widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
+
+  @override
+  void dispose() {
+    _ownedFocusNode?.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hasImage = widget.imageUrl != null && widget.imageUrl!.isNotEmpty;
     final showProgress = !widget.watched && widget.progressFraction != null;
+    // Derived from however much bigger than the TV-tuned default
+    // `cardWidth` actually is (1.0 for every caller that doesn't override
+    // it) — the title row's height and its text both need to grow along
+    // with a much bigger poster (Windows's browse rows, see
+    // TvHomeScreen's `_browsePosterWidth`/`_browseCardHeight`), or a
+    // fixed 30px/11pt title underneath a ~1.8x taller poster reads as a
+    // mismatched sliver of mostly-blank space under tiny text.
+    final scale = widget.cardWidth / PosterCard.width;
+    final titleHeight = PosterCard.titleHeight * scale;
 
     final card = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
       child: InkWell(
-        focusNode: widget.focusNode,
+        focusNode: _effectiveFocusNode,
         borderRadius: BorderRadius.circular(10),
-        onTap: widget.onTap,
+        // Windows only — same fix/reasoning as TvHomeScreen's
+        // _ProgramBlock (the Timeline guide's program cells): a single
+        // click immediately opening the detail screen (the old, only
+        // behavior here) never gave the hero banner above this grid a
+        // chance to show anything — the click that would populate it via
+        // onFocusGained also navigated away in the same instant,
+        // reported directly as "nothing shows in the hero banner."
+        // Explicit `.requestFocus()` on the first click, not left to
+        // InkWell's own tap-triggers-focus behavior — confirmed
+        // unreliable there once onTap itself is null. A second click
+        // (onDoubleTap) is the only thing that still opens it. Remote/
+        // touch (HoldToActivate below, and every other platform) is
+        // untouched — same scoping as the Timeline guide fix.
+        onTap: Platform.isWindows
+            ? _effectiveFocusNode.requestFocus
+            : widget.onTap,
+        onDoubleTap: Platform.isWindows ? widget.onTap : null,
         onFocusChange: (f) {
           setState(() => _focused = f);
           if (f) widget.onFocusGained();
@@ -116,7 +158,7 @@ class _PosterCardState extends State<PosterCard> {
           curve: Curves.easeOut,
           child: SizedBox(
             width: widget.cardWidth,
-            height: widget.cardPosterHeight + PosterCard.titleHeight,
+            height: widget.cardPosterHeight + titleHeight,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -299,7 +341,7 @@ class _PosterCardState extends State<PosterCard> {
                   ),
                 ),
                 SizedBox(
-                  height: PosterCard.titleHeight,
+                  height: titleHeight,
                   child: Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
@@ -308,7 +350,7 @@ class _PosterCardState extends State<PosterCard> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: _focused ? scheme.primary : Colors.white,
-                        fontSize: 11,
+                        fontSize: 11 * scale,
                         fontWeight:
                             _focused ? FontWeight.bold : FontWeight.normal,
                         height: 1.15,

@@ -120,6 +120,19 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
       _ownsPlayer = false;
     } else {
       _player = Player();
+      // Disables ffmpeg's demuxer-level Range-request reconnect on a
+      // live, non-seekable TS stream — confirmed (via an identical,
+      // maintainer-diagnosed bug in another mpv/ffmpeg-based player,
+      // IPTVnator) as the actual cause of a very specific symptom:
+      // playback silently freezing on its last frame after ~15-20s, no
+      // error, no black screen. mpv's default reconnect handling issues
+      // that Range reconnect periodically; this provider's live stream
+      // endpoint doesn't support it, so the reconnect attempt just hangs
+      // forever instead of either succeeding or failing cleanly. Reported
+      // directly as exactly this symptom in Multiview — not a provider
+      // connection-limit issue after all, despite looking like one.
+      (_player.platform as NativePlayer)
+          .setProperty('demuxer-lavf-o', 'reconnect_streamed=0');
       _videoController = VideoController(_player);
       _player.open(Media(_currentChannel.url));
     }

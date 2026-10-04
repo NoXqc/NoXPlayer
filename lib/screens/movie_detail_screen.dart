@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/channel.dart';
+import '../services/desktop_mini_player.dart';
 import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
 import '../services/storage_service.dart';
@@ -61,6 +62,10 @@ class _MovieDetailScreenState extends State<MovieDetailScreen> {
       // no PlaybackService-compatible player at all, so this bypasses it
       // (and Continue Watching/resume) entirely via a standalone screen.
       if (Platform.isWindows) {
+        // See TvHomeScreen._selectChannel's matching comment — abandons
+        // any minimized live channel first, so it can't keep playing
+        // audio in the background behind this unrelated movie.
+        DesktopMiniPlayer.instance.clear();
         Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => DesktopPlayerScreen(channel: channel)));
         return;

@@ -49,8 +49,8 @@ class XtreamSeries {
   final DateTime? addedAt;
 
   /// See `Channel.tmdbId`'s doc comment — same field, same source call
-  /// (`get_series`), same purpose.
-  final String? tmdbId;
+  /// (`get_series`), same purpose, same mutable-in-place pattern.
+  String? tmdbId;
 
   /// See `Channel.releaseDate`'s doc comment — same reasoning and the same
   /// mutable-in-place pattern, for the same reason.

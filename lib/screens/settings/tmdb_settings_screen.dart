@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
+import '../../services/playlist_manager.dart';
 import '../../services/storage_service.dart';
 import '../../widgets/settings_scaffold.dart';
 
@@ -23,18 +25,44 @@ class TmdbSettingsScreen extends StatefulWidget {
 class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
   late final TextEditingController _controller;
   bool _validating = false;
+  bool _refreshing = false;
+
+  final _apiKeyFocus = FocusNode();
+  final _saveFocus = FocusNode();
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(
         text: context.read<StorageService>().getTmdbApiKey() ?? '');
+    HardwareKeyboard.instance.addHandler(_handleApiKeyFieldEscapeKey);
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleApiKeyFieldEscapeKey);
+    _apiKeyFocus.dispose();
+    _saveFocus.dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  /// Same root cause/fix as `_AddProfileScreenState
+  /// ._handleNameFieldEscapeKey` (see that method's own, fuller doc
+  /// comment): `EditableText` claims arrow keys for itself whenever a
+  /// text field has focus, regardless of direction, so plain default
+  /// Down traversal never actually escapes this screen's API key field
+  /// at all — reported directly as "can't reach [Refresh/Save] with
+  /// D-pad", the same symptom that fix already covered elsewhere. This
+  /// explicit `HardwareKeyboard` handler is the only reliable way out of
+  /// a focused text field on real remote hardware.
+  bool _handleApiKeyFieldEscapeKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return false;
+    if (event.logicalKey != LogicalKeyboardKey.arrowDown) return false;
+    if (FocusManager.instance.primaryFocus != _apiKeyFocus) return false;
+    _saveFocus.requestFocus();
+    return true;
   }
 
   /// Saves immediately (so a key is never lost just because the
@@ -63,6 +91,22 @@ class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
           : 'Saved, but TMDB rejected this key — double-check it\'s correct'),
       backgroundColor: valid ? null : Colors.red.shade900,
     ));
+  }
+
+  /// Bypasses the normal once-a-week gate — see
+  /// `PlaylistManager.refreshWhatsNewTmdbIfDue`'s own doc comment for why
+  /// that gate exists and why a manual override is needed at all: its
+  /// persisted "last run" timestamp survives an app *update*, not just a
+  /// restart, so anyone whose weekly window already started under an
+  /// older, narrower version of that lookup would otherwise see no
+  /// change for up to another 7 days with nothing to explain why.
+  Future<void> _refreshWhatsNew() async {
+    setState(() => _refreshing = true);
+    await context.read<PlaylistManager>().refreshWhatsNewTmdbIfDue(force: true);
+    if (!mounted) return;
+    setState(() => _refreshing = false);
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('What\'s New refreshed from TMDB')));
   }
 
   Future<bool> _checkKey(String key) async {
@@ -113,6 +157,7 @@ class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
           const SizedBox(height: 20),
           TextField(
             controller: _controller,
+            focusNode: _apiKeyFocus,
             // Submitting straight from the on-screen keyboard's own
             // Done/Enter key — reachable without ever leaving the
             // keyboard — rather than requiring a D-pad trip down to the
@@ -141,6 +186,7 @@ class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
           // is transparent, so the same focused fill reads as the obvious
           // solid highlight every other button in this app already has.
           OutlinedButton(
+            focusNode: _saveFocus,
             onPressed: _validating ? null : _save,
             child: _validating
                 ? const SizedBox(
@@ -149,6 +195,26 @@ class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2))
                 : const Text('Save'),
           ),
+          if (context.watch<StorageService>().getTmdbApiKey()?.isNotEmpty ??
+              false) ...[
+            const SizedBox(height: 16),
+            const Text(
+                'What\'s New only re-checks TMDB about once a week on its '
+                'own. Use this to force it right now instead of waiting — '
+                'useful right after saving a key for the first time.',
+                style: TextStyle(fontSize: 12, color: Colors.white60)),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _refreshing ? null : _refreshWhatsNew,
+              icon: _refreshing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh),
+              label: const Text('Refresh What\'s New Now'),
+            ),
+          ],
           const SizedBox(height: 24),
           // TMDB's own terms require this attribution wherever their API
           // is actually used — not optional/cosmetic.

@@ -59,4 +59,21 @@ class DesktopMiniPlayer {
     channel.value = null;
     return (player, controller);
   }
+
+  /// Abandons whatever's minimized, disposing its `Player` outright —
+  /// every fresh-playback entry point (`TvHomeScreen._selectChannel`,
+  /// `MovieDetailScreen.play`, `SeriesDetailScreen._openEpisode`) calls
+  /// this before starting something new. Reported directly: picking a
+  /// *different* live channel after minimizing one left the old session
+  /// quietly still running — [minimize] only disposes a previous one when
+  /// minimize is called *again*, which a brand-new, unrelated channel
+  /// selection never does, so the old `Player` just kept decoding/playing
+  /// audio in the background forever, with the resume pill still pointed
+  /// at it even though a different channel was now also playing on top.
+  void clear() {
+    _player?.dispose();
+    _player = null;
+    _controller = null;
+    channel.value = null;
+  }
 }
