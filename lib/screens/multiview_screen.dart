@@ -40,11 +40,36 @@ class _MultiviewCell {
   final FocusNode focusNode = FocusNode(debugLabel: 'multiview-cell');
 }
 
+/// Requested directly: a smaller, 2-channel layout alongside the
+/// original 4-channel grid — fewer simultaneous decode sessions when you
+/// only actually want to watch two things, and each cell gets twice the
+/// width to show it. This screen always keeps 4 `_cells` allocated
+/// regardless of which is active; only [dual]'s own two extra cells get
+/// disposed when switching down to it (see `_setLayout`) to actually
+/// free their connections/decode sessions rather than just hiding them.
+enum _MultiviewLayout { dual, quad }
+
 class _MultiviewScreenState extends State<MultiviewScreen> {
   static const _cellCount = 4;
   final List<_MultiviewCell> _cells =
       List.generate(_cellCount, (_) => _MultiviewCell());
   int _activeCell = 0;
+  _MultiviewLayout _layout = _MultiviewLayout.quad;
+
+  void _setLayout(_MultiviewLayout layout) {
+    if (layout == _layout) return;
+    if (layout == _MultiviewLayout.dual) {
+      for (var i = 2; i < _cellCount; i++) {
+        final cell = _cells[i];
+        final old = cell.controller;
+        cell.channel = null;
+        cell.controller = null;
+        unawaited(old?.dispose());
+      }
+      if (_activeCell >= 2) _activeCell = 0;
+    }
+    setState(() => _layout = layout);
+  }
 
   @override
   void initState() {
@@ -190,6 +215,12 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
+              leading: const Icon(Icons.fullscreen, color: Colors.white),
+              title: const Text('Full screen',
+                  style: TextStyle(color: Colors.white)),
+              onTap: () => Navigator.of(sheetContext).pop('fullscreen'),
+            ),
+            ListTile(
               leading: const Icon(Icons.refresh, color: Colors.white),
               title:
                   const Text('Reload', style: TextStyle(color: Colors.white)),
@@ -212,6 +243,8 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
       ),
     );
     switch (action) {
+      case 'fullscreen':
+        await _openFullscreen(index);
       case 'reload':
         await _reload(index);
       case 'swap':
@@ -219,6 +252,27 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
       case 'remove':
         _clear(index);
     }
+  }
+
+  /// Reuses the cell's already-playing controller rather than starting a
+  /// second decode session for the same stream — this box is already
+  /// close to its real concurrent-decoder ceiling (see `_assign`'s doc
+  /// comment), so a fullscreen view is just a bigger window onto the same
+  /// session, not a new one. A plain `Navigator.push` (no `PopScope`
+  /// override here) means Back simply pops this route, landing back on
+  /// the multiview grid underneath with that same controller still
+  /// playing — requested directly ("back should bring us to the multi
+  /// view").
+  Future<void> _openFullscreen(int index) async {
+    final cell = _cells[index];
+    final channel = cell.channel;
+    final controller = cell.controller;
+    if (channel == null || controller == null) return;
+    _setActive(index);
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _MultiviewFullscreenView(
+          channel: channel, controller: controller),
+    ));
   }
 
   @override
@@ -243,6 +297,24 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    PopupMenuButton<_MultiviewLayout>(
+                      tooltip: 'Layout',
+                      icon: const Icon(Icons.grid_view, color: Colors.white),
+                      onSelected: _setLayout,
+                      itemBuilder: (context) => [
+                        CheckedPopupMenuItem(
+                          value: _MultiviewLayout.dual,
+                          checked: _layout == _MultiviewLayout.dual,
+                          child: const Text('2 channels'),
+                        ),
+                        CheckedPopupMenuItem(
+                          value: _MultiviewLayout.quad,
+                          checked: _layout == _MultiviewLayout.quad,
+                          child: const Text('4 channels'),
+                        ),
+                      ],
+                    ),
                     const Spacer(),
                     const Icon(Icons.volume_up, color: Colors.amber, size: 16),
                     const SizedBox(width: 4),
@@ -266,38 +338,78 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.all(6),
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: Row(
+                  // Stacked (Column), not side-by-side — requested
+                  // directly: splitting a landscape screen into left/
+                  // right halves squeezes each cell into a tall, narrow
+                  // near-square, badly distorting a widescreen video's
+                  // actual shape. Splitting top/bottom instead lets each
+                  // cell span the full screen width, keeping something
+                  // much closer to its real aspect ratio even though it's
+                  // shorter.
+                  // The cell *frame* (border/header/buttons) fills the
+                  // whole row, same as a quad cell fills its quarter —
+                  // reported directly that constraining the whole frame to
+                  // 16:9 (an earlier version of this fix) made dual cells
+                  // look noticeably smaller than quad's. Only the video
+                  // itself is aspect-constrained now (inside `_buildCell`),
+                  // letterboxing within the full-size frame instead of
+                  // shrinking the frame around it.
+                  // Flex 13:7 instead of a flat 50/50 split when only one
+                  // of the two cells actually has a channel in it — a
+                  // plain even split made a single active stream look
+                  // small (letterboxed within an exactly-half-height row),
+                  // reported directly as needing to be "bigger by 30%".
+                  // 13:7 gives the occupied row exactly 65% of the
+                  // available height, i.e. 1.3x the even-split baseline —
+                  // once both cells are filled they're back to equal flex
+                  // (13:13) and split evenly like a normal multiview grid.
+                  child: _layout == _MultiviewLayout.dual
+                      ? Column(
                           children: [
                             Expanded(
+                                flex: _cells[0].channel != null ? 13 : 7,
                                 child: Padding(
                                     padding: const EdgeInsets.all(3),
                                     child: _buildCell(0))),
                             Expanded(
+                                flex: _cells[1].channel != null ? 13 : 7,
                                 child: Padding(
                                     padding: const EdgeInsets.all(3),
                                     child: _buildCell(1))),
                           ],
-                        ),
-                      ),
-                      Expanded(
-                        child: Row(
+                        )
+                      : Column(
                           children: [
                             Expanded(
-                                child: Padding(
-                                    padding: const EdgeInsets.all(3),
-                                    child: _buildCell(2))),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                      child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: _buildCell(0))),
+                                  Expanded(
+                                      child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: _buildCell(1))),
+                                ],
+                              ),
+                            ),
                             Expanded(
-                                child: Padding(
-                                    padding: const EdgeInsets.all(3),
-                                    child: _buildCell(3))),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                      child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: _buildCell(2))),
+                                  Expanded(
+                                      child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: _buildCell(3))),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
-                      ),
-                    ],
-                  ),
                 ),
               ),
             ],
@@ -374,8 +486,19 @@ class _MultiviewCellTileState extends State<_MultiviewCellTile> {
           children: [
             if (widget.controller != null &&
                 widget.controller!.value.isInitialized)
-              VideoPlayerHdr(widget.controller!,
-                  key: ObjectKey(widget.controller))
+              // AspectRatio wraps only the video, not the frame around it
+              // — VideoPlayerHdr has no built-in letterboxing of its own
+              // (same as PlayerControls' identical fix) and otherwise just
+              // stretches to fill whatever box it's handed.
+              Center(
+                child: AspectRatio(
+                  aspectRatio: widget.controller!.value.aspectRatio == 0
+                      ? 16 / 9
+                      : widget.controller!.value.aspectRatio,
+                  child: VideoPlayerHdr(widget.controller!,
+                      key: ObjectKey(widget.controller)),
+                ),
+              )
             else
               ColoredBox(
                 color: const Color(0xFF1A1A1A),
@@ -396,12 +519,24 @@ class _MultiviewCellTileState extends State<_MultiviewCellTile> {
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  // Was a 2-stop gradient fading to transparent almost
+                  // immediately — reported directly as barely visible
+                  // against a bright/busy video frame. A mid-bar stop
+                  // keeps the whole header solidly dark (not just its
+                  // very top edge) before fading out underneath it, and
+                  // the text itself now carries its own shadow as a
+                  // second, independent line of contrast — the same
+                  // "readable over anything behind it" fix already used
+                  // elsewhere in this app (e.g. PosterCard's progress
+                  // label) rather than relying on the backdrop alone.
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
+                      stops: const [0.0, 0.6, 1.0],
                       colors: [
-                        Colors.black.withValues(alpha: 0.78),
+                        Colors.black.withValues(alpha: 0.92),
+                        Colors.black.withValues(alpha: 0.92),
                         Colors.transparent,
                       ],
                     ),
@@ -410,7 +545,11 @@ class _MultiviewCellTileState extends State<_MultiviewCellTile> {
                     children: [
                       if (widget.active) ...[
                         const Icon(Icons.volume_up,
-                            color: Colors.amber, size: 15),
+                            color: Colors.amber,
+                            size: 15,
+                            shadows: [
+                              Shadow(color: Colors.black, blurRadius: 4)
+                            ]),
                         const SizedBox(width: 4),
                       ],
                       Expanded(
@@ -421,13 +560,97 @@ class _MultiviewCellTileState extends State<_MultiviewCellTile> {
                           style: const TextStyle(
                               color: Colors.white,
                               fontSize: 12,
-                              fontWeight: FontWeight.w600),
+                              fontWeight: FontWeight.w600,
+                              shadows: [
+                                Shadow(color: Colors.black, blurRadius: 4)
+                              ]),
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Pushed from a cell's hold-Select menu ("Full screen") — reuses that
+/// cell's already-playing `VideoPlayerHdrController` instead of starting a
+/// second decode session for the same stream. Popping (Back) just returns
+/// to the multiview grid underneath, where the same controller is still
+/// playing, unaffected.
+class _MultiviewFullscreenView extends StatefulWidget {
+  const _MultiviewFullscreenView(
+      {required this.channel, required this.controller});
+
+  final Channel channel;
+  final VideoPlayerHdrController controller;
+
+  @override
+  State<_MultiviewFullscreenView> createState() =>
+      _MultiviewFullscreenViewState();
+}
+
+class _MultiviewFullscreenViewState extends State<_MultiviewFullscreenView> {
+  final _backFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.setVolume(1.0);
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _backFocus.requestFocus());
+  }
+
+  @override
+  void dispose() {
+    _backFocus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: widget.controller.value.aspectRatio == 0
+                    ? 16 / 9
+                    : widget.controller.value.aspectRatio,
+                child: VideoPlayerHdr(widget.controller,
+                    key: ObjectKey(widget.controller)),
+              ),
+            ),
+            Positioned(
+              left: 4,
+              top: 4,
+              child: IconButton(
+                focusNode: _backFocus,
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 24,
+              child: Center(
+                child: Text(
+                  widget.channel.name,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      shadows: [Shadow(color: Colors.black, blurRadius: 4)]),
+                ),
+              ),
+            ),
           ],
         ),
       ),

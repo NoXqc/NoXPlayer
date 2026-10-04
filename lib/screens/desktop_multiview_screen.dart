@@ -38,11 +38,36 @@ class _MultiviewCell {
   VideoController? controller;
 }
 
+/// Requested directly: a smaller, 2-channel layout alongside the
+/// original 4-channel grid — fewer simultaneous decode sessions when you
+/// only actually want to watch two things, and each cell gets twice the
+/// width to show it. [DesktopMultiviewScreen] always keeps 4 `_cells`
+/// allocated regardless of which is active; only [dual]'s own two extra
+/// cells get disposed when switching down to it (see [_setLayout]) to
+/// actually free their connections rather than just hiding them.
+enum _MultiviewLayout { dual, quad }
+
 class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
   static const _cellCount = 4;
   final List<_MultiviewCell> _cells =
       List.generate(_cellCount, (_) => _MultiviewCell());
   int _activeCell = 0;
+  _MultiviewLayout _layout = _MultiviewLayout.quad;
+
+  void _setLayout(_MultiviewLayout layout) {
+    if (layout == _layout) return;
+    if (layout == _MultiviewLayout.dual) {
+      // Actually free cells 2/3's connections/decode sessions, not just
+      // hide them — leaving them playing, muted, off-screen would still
+      // hold a connection slot and a decoder for nothing visible.
+      for (var i = 2; i < _cellCount; i++) {
+        _cells[i].player?.dispose();
+        _cells[i] = _MultiviewCell();
+      }
+      if (_activeCell >= 2) _activeCell = 0;
+    }
+    setState(() => _layout = layout);
+  }
 
   @override
   void dispose() {
@@ -129,6 +154,24 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    PopupMenuButton<_MultiviewLayout>(
+                      tooltip: 'Layout',
+                      icon: const Icon(Icons.grid_view, color: Colors.white),
+                      onSelected: _setLayout,
+                      itemBuilder: (context) => [
+                        CheckedPopupMenuItem(
+                          value: _MultiviewLayout.dual,
+                          checked: _layout == _MultiviewLayout.dual,
+                          child: const Text('2 channels'),
+                        ),
+                        CheckedPopupMenuItem(
+                          value: _MultiviewLayout.quad,
+                          checked: _layout == _MultiviewLayout.quad,
+                          child: const Text('4 channels'),
+                        ),
+                      ],
+                    ),
                     const Spacer(),
                     const Icon(Icons.volume_up, color: Colors.amber, size: 16),
                     const SizedBox(width: 4),
@@ -140,17 +183,78 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.all(6),
-                  child: GridView.builder(
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 6,
-                      crossAxisSpacing: 6,
-                      childAspectRatio: 16 / 9,
-                    ),
-                    itemCount: _cellCount,
-                    itemBuilder: (context, i) => _buildCell(i),
-                  ),
+                  // Stacked (Column), not side-by-side — requested
+                  // directly: splitting a landscape screen into left/
+                  // right halves squeezes each cell into a tall, narrow
+                  // near-square, badly distorting a widescreen video's
+                  // actual shape. Splitting top/bottom instead lets each
+                  // cell span the full screen width, keeping something
+                  // much closer to its real aspect ratio even though it's
+                  // shorter.
+                  // The cell *frame* (border/header/buttons) fills the
+                  // whole row, same as a quad cell fills its quarter —
+                  // constraining the whole frame to 16:9 (an earlier
+                  // version of this fix) made dual cells look noticeably
+                  // smaller than quad's. Only the video itself is aspect-
+                  // constrained now (inside `_buildCell`), letterboxing
+                  // within the full-size frame instead of shrinking the
+                  // frame around it.
+                  // Flex 13:7 instead of a flat 50/50 split when only one
+                  // of the two cells actually has a channel in it — a
+                  // plain even split made a single active stream look
+                  // small (letterboxed within an exactly-half-height row),
+                  // reported directly as needing to be "bigger by 30%".
+                  // 13:7 gives the occupied row exactly 65% of the
+                  // available height, i.e. 1.3x the even-split baseline —
+                  // once both cells are filled they're back to equal flex
+                  // (13:13) and split evenly like a normal multiview grid.
+                  child: _layout == _MultiviewLayout.dual
+                      ? Column(
+                          children: [
+                            Expanded(
+                                flex: _cells[0].channel != null ? 13 : 7,
+                                child: Padding(
+                                    padding: const EdgeInsets.all(3),
+                                    child: _buildCell(0))),
+                            Expanded(
+                                flex: _cells[1].channel != null ? 13 : 7,
+                                child: Padding(
+                                    padding: const EdgeInsets.all(3),
+                                    child: _buildCell(1))),
+                          ],
+                        )
+                      : Column(
+                          children: [
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                      child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: _buildCell(0))),
+                                  Expanded(
+                                      child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: _buildCell(1))),
+                                ],
+                              ),
+                            ),
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                      child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: _buildCell(2))),
+                                  Expanded(
+                                      child: Padding(
+                                          padding: const EdgeInsets.all(3),
+                                          child: _buildCell(3))),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                 ),
               ),
             ],
@@ -178,7 +282,17 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
           fit: StackFit.expand,
           children: [
             if (cell.controller != null)
-              Video(controller: cell.controller!, controls: NoVideoControls)
+              // AspectRatio wraps only the video, not the frame around it
+              // — media_kit's Video widget has no fit/letterbox option of
+              // its own and otherwise just stretches to fill whatever box
+              // it's handed.
+              Center(
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Video(
+                      controller: cell.controller!, controls: NoVideoControls),
+                ),
+              )
             else
               const ColoredBox(
                 color: Color(0xFF1A1A1A),
@@ -195,12 +309,24 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  // Was a 2-stop gradient fading to transparent almost
+                  // immediately — reported directly as barely visible
+                  // against a bright/busy video frame. A mid-bar stop
+                  // keeps the whole header solidly dark (not just its
+                  // very top edge) before fading out underneath it, and
+                  // the text itself now carries its own shadow as a
+                  // second, independent line of contrast — the same
+                  // "readable over anything behind it" fix already used
+                  // elsewhere in this app (e.g. PosterCard's progress
+                  // label) rather than relying on the backdrop alone.
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
+                      stops: const [0.0, 0.6, 1.0],
                       colors: [
-                        Colors.black.withValues(alpha: 0.78),
+                        Colors.black.withValues(alpha: 0.92),
+                        Colors.black.withValues(alpha: 0.92),
                         Colors.transparent,
                       ],
                     ),
@@ -209,7 +335,11 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
                     children: [
                       if (active) ...[
                         const Icon(Icons.volume_up,
-                            color: Colors.amber, size: 15),
+                            color: Colors.amber,
+                            size: 15,
+                            shadows: [
+                              Shadow(color: Colors.black, blurRadius: 4)
+                            ]),
                         const SizedBox(width: 4),
                       ],
                       Expanded(
@@ -220,7 +350,10 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
                           style: const TextStyle(
                               color: Colors.white,
                               fontSize: 12,
-                              fontWeight: FontWeight.w600),
+                              fontWeight: FontWeight.w600,
+                              shadows: [
+                                Shadow(color: Colors.black, blurRadius: 4)
+                              ]),
                         ),
                       ),
                       IconButton(
