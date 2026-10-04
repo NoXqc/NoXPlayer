@@ -492,13 +492,24 @@ class PlaylistManager extends ChangeNotifier {
   Future<List<Channel>> whatsNewVod({int limit = 5}) async {
     final rows = await _catalogDb.getRecentlyAddedVod(_enabledXtreamPlaylistIds,
         limit: limit * 40);
+    // Prefer whichever instance the main Movies browse grid already has
+    // loaded in memory for the same item over the fresh, disposable copy
+    // getRecentlyAddedVod just built from a DB row — TmdbEnrichmentService
+    // mutates whatever object it's handed *in place*; enriching this
+    // method's own throwaway copy left the grid's already-loaded Channel
+    // (a separate instance for the same id) never finding out, reported
+    // directly as the main hero banner not picking up a backdrop that
+    // What's New itself already showed for the exact same title. Keyed
+    // once up front rather than searched per row.
+    final loaded = {for (final c in allCachedVod) c.id: c};
+    final canonical = rows.map((c) => loaded[c.id] ?? c).toList();
     // A restricted viewer's hidden groups never headline What's New — see
     // `_isHiddenForActiveViewer`'s doc comment. Filtered before `take`,
     // not after, so a kid profile isn't left with fewer than [limit]
     // results just because most of the unfiltered pool happened to belong
     // to groups they can't see.
-    final visible =
-        rows.where((c) => !_isHiddenForActiveViewer(c.playlistId, c.group));
+    final visible = canonical
+        .where((c) => !_isHiddenForActiveViewer(c.playlistId, c.group));
     final picked = _thisYearOnly(visible, (c) => c.name)
         .where((c) => _notKnownStale(c.releaseDate))
         .take(limit)
@@ -512,7 +523,11 @@ class PlaylistManager extends ChangeNotifier {
   Future<List<XtreamSeries>> whatsNewSeries({int limit = 5}) async {
     final rows = await _catalogDb
         .getRecentlyAddedSeries(_enabledXtreamPlaylistIds, limit: limit * 40);
-    final visible = rows
+    // See whatsNewVod's matching comment just above — same reasoning,
+    // same fix.
+    final loaded = {for (final s in allCachedSeries) s.id: s};
+    final canonical = rows.map((s) => loaded[s.id] ?? s).toList();
+    final visible = canonical
         .where((s) => !_isHiddenForActiveViewer(s.playlistId, s.categoryId));
     final picked = _thisYearOnly(visible, (s) => s.name)
         .where((s) => _notKnownStale(s.releaseDate))

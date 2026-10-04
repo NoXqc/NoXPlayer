@@ -14,6 +14,7 @@ class XtreamSeries {
     this.tmdbId,
     this.releaseDate,
     this.posterUrl,
+    this.backdropUrl,
   }) : id = '$playlistId::series_$seriesId';
 
   /// The raw per-provider integer Xtream itself uses — kept because
@@ -59,6 +60,10 @@ class XtreamSeries {
   /// See `Channel.posterUrl`'s doc comment — same reasoning, same source.
   String? posterUrl;
 
+  /// See `Channel.backdropUrl`'s doc comment — same reasoning, same
+  /// source.
+  String? backdropUrl;
+
   /// Mutable, flipped in place by `PlaylistManager.toggleSeriesFavorite` —
   /// same pattern as `Channel.isFavorite`.
   bool isFavorite;
@@ -75,6 +80,7 @@ class XtreamSeries {
         'tmdbId': tmdbId,
         'releaseDate': releaseDate?.millisecondsSinceEpoch,
         'posterUrl': posterUrl,
+        'backdropUrl': backdropUrl,
       };
 
   /// `playlistId` defaults to `'migrated_default'` for the same reason as
@@ -95,5 +101,6 @@ class XtreamSeries {
             ? DateTime.fromMillisecondsSinceEpoch(json['releaseDate'] as int)
             : null,
         posterUrl: json['posterUrl'] as String?,
+        backdropUrl: json['backdropUrl'] as String?,
       );
 }

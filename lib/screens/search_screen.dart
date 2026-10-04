@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,12 +8,14 @@ import 'package:provider/provider.dart';
 import '../models/channel.dart';
 import '../models/xtream_series.dart';
 import '../services/catalog_database.dart';
+import '../services/desktop_mini_player.dart';
 import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
 import '../services/storage_service.dart';
 import '../utils/tv_theme.dart';
 import '../widgets/poster_card.dart';
 import '../widgets/settings_scaffold.dart';
+import 'desktop_player_screen.dart';
 import 'player_screen.dart';
 import 'series_detail_screen.dart';
 
@@ -162,6 +165,18 @@ class _SearchScreenState extends State<SearchScreen> {
 
   Future<void> _openChannel(Channel channel) async {
     _recordSearch(_query);
+    // See TvHomeScreen._selectChannel's matching comment — Windows has no
+    // PlaybackService-compatible player at all (video_player_hdr has no
+    // Windows implementation), so PlayerScreen below fails outright there.
+    // Every other entry point (TvHomeScreen, movie/series detail) already
+    // branches here; this one was missed, reported directly as "picking a
+    // channel from search gives a playback error" on Windows specifically.
+    if (Platform.isWindows) {
+      DesktopMiniPlayer.instance.clear();
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => DesktopPlayerScreen(channel: channel)));
+      return;
+    }
     // Awaited so PlayerScreen's own initState (which also calls play(),
     // guarded to no-op once this channel is already current) doesn't
     // race this call — see TvHomeScreen._selectChannel for the full

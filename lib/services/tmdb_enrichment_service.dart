@@ -40,6 +40,13 @@ class TmdbEnrichmentService {
   /// [Channel.releaseDate]/[XtreamSeries.releaseDate], at no extra request.
   static const _imageBase = 'https://image.tmdb.org/t/p/w500';
 
+  /// Backdrops are landscape key-art, shown much larger (a full-bleed hero
+  /// banner) than a poster-grid thumbnail ever is — `w1280` instead of
+  /// `w500` so it doesn't visibly upscale/blur at that size. See
+  /// `Channel.backdropUrl`'s doc comment for why this exists as a
+  /// separate field from [_imageBase]'s poster at all.
+  static const _backdropImageBase = 'https://image.tmdb.org/t/p/w1280';
+
   /// Items in flight at once — plain sequential (one at a time) made a
   /// few hundred items take minutes, which read as a *stuck/wrong* sort
   /// rather than a still-loading one (reported directly: newer titles
@@ -75,7 +82,10 @@ class TmdbEnrichmentService {
       {void Function(int done, int total)? onProgress}) async {
     final key = _storage.getTmdbApiKey();
     final pending = items
-        .where((c) => c.releaseDate == null || c.posterUrl == null)
+        .where((c) =>
+            c.releaseDate == null ||
+            c.posterUrl == null ||
+            c.backdropUrl == null)
         .toList();
     if (key == null || key.isEmpty || pending.isEmpty) {
       onProgress?.call(0, 0);
@@ -110,6 +120,10 @@ class TmdbEnrichmentService {
               c.posterUrl = details.posterUrl;
               unawaited(_db.setVodPosterUrl(c.id, details.posterUrl!));
             }
+            if (details.backdropUrl != null) {
+              c.backdropUrl = details.backdropUrl;
+              unawaited(_db.setVodBackdropUrl(c.id, details.backdropUrl!));
+            }
           }
         } catch (_) {
           // A dead/invalid key, a rate limit, a title TMDB doesn't have —
@@ -131,7 +145,10 @@ class TmdbEnrichmentService {
       {void Function(int done, int total)? onProgress}) async {
     final key = _storage.getTmdbApiKey();
     final pending = items
-        .where((s) => s.releaseDate == null || s.posterUrl == null)
+        .where((s) =>
+            s.releaseDate == null ||
+            s.posterUrl == null ||
+            s.backdropUrl == null)
         .toList();
     if (key == null || key.isEmpty || pending.isEmpty) {
       onProgress?.call(0, 0);
@@ -159,6 +176,11 @@ class TmdbEnrichmentService {
             if (details.posterUrl != null) {
               s.posterUrl = details.posterUrl;
               unawaited(_db.setSeriesPosterUrl(s.id, details.posterUrl!));
+            }
+            if (details.backdropUrl != null) {
+              s.backdropUrl = details.backdropUrl;
+              unawaited(
+                  _db.setSeriesBackdropUrl(s.id, details.backdropUrl!));
             }
           }
         } catch (_) {
@@ -234,8 +256,12 @@ class TmdbEnrichmentService {
     return (title: title.trim(), year: year);
   }
 
-  Future<({DateTime? releaseDate, String? posterUrl})?> _fetchDetails(
-      String tmdbId, String apiKey,
+  Future<
+      ({
+        DateTime? releaseDate,
+        String? posterUrl,
+        String? backdropUrl
+      })?> _fetchDetails(String tmdbId, String apiKey,
       {required bool isMovie}) async {
     try {
       final path = isMovie ? 'movie' : 'tv';
@@ -246,12 +272,16 @@ class TmdbEnrichmentService {
       final rawDate =
           (isMovie ? data['release_date'] : data['first_air_date']) as String?;
       final posterPath = data['poster_path'] as String?;
+      final backdropPath = data['backdrop_path'] as String?;
       return (
         releaseDate: (rawDate != null && rawDate.isNotEmpty)
             ? DateTime.tryParse(rawDate)
             : null,
         posterUrl: (posterPath != null && posterPath.isNotEmpty)
             ? '$_imageBase$posterPath'
+            : null,
+        backdropUrl: (backdropPath != null && backdropPath.isNotEmpty)
+            ? '$_backdropImageBase$backdropPath'
             : null,
       );
     } catch (_) {

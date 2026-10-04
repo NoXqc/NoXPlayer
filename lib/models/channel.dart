@@ -27,6 +27,7 @@ class Channel {
     this.tmdbId,
     this.releaseDate,
     this.posterUrl,
+    this.backdropUrl,
   });
 
   /// Stable identifier: the M3U `tvg-id` when present (used to match EPG
@@ -135,6 +136,19 @@ class Channel {
   /// mutable "stamp in place" reasoning as [releaseDate].
   String? posterUrl;
 
+  /// A TMDB *backdrop* image — a landscape (16:9) scene still/key-art,
+  /// a completely different asset from [posterUrl]'s portrait poster,
+  /// fetched from the same per-[tmdbId] lookup at no extra request cost
+  /// (`backdrop_path` rides along in that identical response). Requested
+  /// directly after seeing TiviMate's full-bleed hero banner: stretching
+  /// [posterUrl] (portrait) to fill a wide banner is the exact "hand and
+  /// a desk" crop bug this app already hit once building its own hero —
+  /// a real landscape backdrop is the actual fix, not a different crop of
+  /// the same wrong image. Same mutable "stamp in place" pattern as
+  /// [posterUrl]; null until enrichment has run for this item, same as
+  /// every TMDB-sourced field here.
+  String? backdropUrl;
+
   /// The id every EPG lookup call site uses — see [epgIdOverride]'s doc
   /// comment. Never [rawId] directly from an EPG-lookup call site; that
   /// would bypass a manual assignment.
@@ -159,6 +173,7 @@ class Channel {
         tmdbId: tmdbId,
         releaseDate: releaseDate,
         posterUrl: posterUrl,
+        backdropUrl: backdropUrl,
       );
 
   Map<String, dynamic> toJson() => {
@@ -179,6 +194,7 @@ class Channel {
         'tmdbId': tmdbId,
         'releaseDate': releaseDate?.millisecondsSinceEpoch,
         'posterUrl': posterUrl,
+        'backdropUrl': backdropUrl,
       };
 
   /// `playlistId` defaults to `'migrated_default'` and `rawId` to [id]
@@ -210,6 +226,7 @@ class Channel {
             ? DateTime.fromMillisecondsSinceEpoch(json['releaseDate'] as int)
             : null,
         posterUrl: json['posterUrl'] as String?,
+        backdropUrl: json['backdropUrl'] as String?,
       );
 
   /// Best-effort "is this a live channel, not VOD/an episode" signal from

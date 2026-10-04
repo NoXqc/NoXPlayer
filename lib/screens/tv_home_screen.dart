@@ -92,6 +92,12 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   String? _focusedTitle;
   String? _focusedImageUrl;
 
+  /// A true landscape TMDB backdrop for whatever's currently focused, when
+  /// one's already been enriched — see `_BrowseHero`'s doc comment for why
+  /// this is kept separate from [_focusedImageUrl] (a portrait poster/logo)
+  /// rather than folded into one fallback chain.
+  String? _focusedBackdropUrl;
+
   /// The stable id of whatever's currently focused in the Movies/TV Shows
   /// browse grid — `_updateBrowseFocus`'s de-dupe key (title alone isn't
   /// unique enough across playlists) and the dwell timer's "is this
@@ -506,6 +512,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       _selectedGroup = null;
       _focusedTitle = null;
       _focusedImageUrl = null;
+      _focusedBackdropUrl = null;
       _focusedId = null;
       _focusedDescription = null;
       _focusDepth = 0;
@@ -859,6 +866,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     required String id,
     required String title,
     String? imageUrl,
+    String? backdropUrl,
     required Future<String?> Function() fetchDescription,
   }) {
     if (_focusedId == id) return;
@@ -868,6 +876,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       _focusedId = id;
       _focusedTitle = title;
       _focusedImageUrl = imageUrl;
+      _focusedBackdropUrl = backdropUrl;
       _focusedDescription = cached ? playlist.peekCachedDescription(id) : null;
     });
     if (cached) return;
@@ -2770,6 +2779,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                   id: series.id,
                   title: title,
                   imageUrl: imageUrl,
+                  backdropUrl: c.backdropUrl,
                   fetchDescription: () =>
                       playlist.getHeroSeriesDescription(series),
                 );
@@ -2779,6 +2789,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                   id: c.id,
                   title: title,
                   imageUrl: imageUrl,
+                  backdropUrl: c.backdropUrl,
                   fetchDescription: () => playlist.getHeroVodDescription(c),
                 );
               } else {
@@ -2789,6 +2800,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                   id: c.id,
                   title: title,
                   imageUrl: imageUrl,
+                  backdropUrl: c.backdropUrl,
                   fetchDescription: () => Future.value(null),
                 );
               }
@@ -2840,6 +2852,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         loadItems: playlist.whatsNewVod,
         titleOf: (c) => c.name,
         imageUrlOf: (c) => c.posterUrl ?? c.logoUrl,
+        backdropUrlOf: (c) => c.backdropUrl,
         onOpen: _openMovie,
         playFocusNode: _moviesWhatsNewPlayFocusNode,
         emptyText: 'No recently added movies yet',
@@ -2892,6 +2905,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                     id: c.id,
                     title: c.name,
                     imageUrl: c.logoUrl,
+                    backdropUrl: c.backdropUrl,
                     fetchDescription: () => playlist.getHeroVodDescription(c),
                   );
                   _ensureRowVisible(
@@ -2955,6 +2969,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         loadItems: playlist.whatsNewSeries,
         titleOf: (s) => s.name,
         imageUrlOf: (s) => s.posterUrl ?? s.coverUrl,
+        backdropUrlOf: (s) => s.backdropUrl,
         onOpen: _openSeries,
         playFocusNode: _showsWhatsNewPlayFocusNode,
         emptyText: 'No recently added shows yet',
@@ -2993,6 +3008,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                 id: s.id,
                 title: s.name,
                 imageUrl: s.coverUrl,
+                backdropUrl: s.backdropUrl,
                 fetchDescription: () => playlist.getHeroSeriesDescription(s),
               );
               _ensureRowVisible(_keyForGroup(group.playlistId, group.title));
@@ -3015,6 +3031,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         _BrowseHero(
             title: _focusedTitle,
             imageUrl: _focusedImageUrl,
+            backdropUrl: _focusedBackdropUrl,
             description: _focusedDescription),
         Expanded(
           child: emptyText != null
@@ -3527,10 +3544,28 @@ class _CategoryRow<T> extends StatelessWidget {
 /// Apple TV / Android TV browse screens.
 class _BrowseHero extends StatelessWidget {
   const _BrowseHero(
-      {required this.title, required this.imageUrl, this.description});
+      {required this.title,
+      required this.imageUrl,
+      this.backdropUrl,
+      this.description});
 
   final String? title;
+
+  /// A portrait poster/logo — the safe fallback image when [backdropUrl]
+  /// isn't available yet (used by Android/TV's full-bleed crop, which
+  /// already reads fine at its small fixed height, and by Windows' own
+  /// poster-beside-text layout, which exists specifically to avoid
+  /// stretching a portrait image edge-to-edge).
   final String? imageUrl;
+
+  /// A true landscape TMDB backdrop — see `Channel.backdropUrl`'s doc
+  /// comment. When this is set, both platforms prefer it over [imageUrl]
+  /// for the full-bleed background; Windows additionally switches its
+  /// *whole layout* to the full-bleed style for it (see [build]) instead
+  /// of the poster-beside-text compromise, since a real landscape image
+  /// doesn't have that layout's stretching problem to work around in the
+  /// first place.
+  final String? backdropUrl;
 
   /// Null while nothing's been focused yet, while it's still being
   /// fetched (see `_TvHomeScreenState._updateBrowseFocus`'s debounce), or
@@ -3576,18 +3611,21 @@ class _BrowseHero extends StatelessWidget {
             width: 2),
       ),
       clipBehavior: Clip.antiAlias,
-      // Windows gets a real poster thumbnail at its own aspect ratio next
-      // to the text, not the full-bleed `BoxFit.cover` backdrop below —
-      // reported directly with a screenshot: a catalog poster is a
-      // portrait image, and stretching one to cover this whole wide
-      // banner (especially once it grew this much taller) showed nothing
-      // but an unrecognizable, heavily zoomed-in crop of the artwork, not
-      // a poster. Android/TV keeps the original backdrop look unchanged —
-      // its much shorter, fixed 210px height never made the same crop
-      // read as broken the way it did once this banner grew to 680px.
-      child: Platform.isWindows
-          ? _buildWindowsHeroContent(scheme)
-          : _buildBackdropHeroContent(scheme),
+      // Windows only gets the full-bleed look when a real landscape
+      // [backdropUrl] is actually available — without one, the only image
+      // on hand is a portrait poster/logo, and stretching that edge-to-
+      // edge across this whole wide banner is the exact "hand and a desk"
+      // crop bug reported directly with a screenshot the first time this
+      // was tried. The poster-beside-text layout exists purely as the
+      // fallback for that case. Android/TV's much shorter, fixed 210px
+      // height never made a poster crop read as broken the same way, so
+      // it always uses the full-bleed style (now preferring a real
+      // backdrop over the poster crop when one's available).
+      child: Platform.isWindows && backdropUrl != null && backdropUrl!.isNotEmpty
+          ? _buildBackdropHeroContent(scheme, big: true)
+          : Platform.isWindows
+              ? _buildWindowsHeroContent(scheme)
+              : _buildBackdropHeroContent(scheme, big: false),
     );
   }
 
@@ -3687,15 +3725,25 @@ class _BrowseHero extends StatelessWidget {
     );
   }
 
-  Widget _buildBackdropHeroContent(ColorScheme scheme) {
+  /// Full-bleed, TiviMate-style hero — a real landscape backdrop behind a
+  /// bottom-anchored gradient and title/description, text sized and
+  /// padded larger ([big]) on Windows' much taller banner than Android/
+  /// TV's compact 210px one. Prefers [backdropUrl] (a true landscape
+  /// image, safe to `BoxFit.cover`) over [imageUrl] (a portrait poster/
+  /// logo, used only until this item's own backdrop has been enriched) —
+  /// see [backdropUrl]'s doc comment for why cropping a portrait image
+  /// this way was the actual bug this exists to avoid repeating.
+  Widget _buildBackdropHeroContent(ColorScheme scheme, {required bool big}) {
+    final effectiveImageUrl =
+        (backdropUrl != null && backdropUrl!.isNotEmpty) ? backdropUrl : imageUrl;
     return Stack(
       fit: StackFit.expand,
       children: [
         Container(color: Colors.grey.shade900),
-        if (imageUrl != null && imageUrl!.isNotEmpty)
+        if (effectiveImageUrl != null && effectiveImageUrl.isNotEmpty)
           CachedNetworkImage(
-            imageUrl: imageUrl!,
-            key: ValueKey(imageUrl),
+            imageUrl: effectiveImageUrl,
+            key: ValueKey(effectiveImageUrl),
             fit: BoxFit.cover,
             errorWidget: (_, __, ___) => const SizedBox.shrink(),
           ),
@@ -3707,52 +3755,61 @@ class _BrowseHero extends StatelessWidget {
               colors: [
                 Colors.transparent,
                 Color.alphaBlend(scheme.primary.withValues(alpha: 0.35),
-                    Colors.black.withValues(alpha: 0.85)),
+                    Colors.black.withValues(alpha: big ? 0.92 : 0.85)),
               ],
             ),
           ),
         ),
         Positioned(
-          left: 20,
-          bottom: 16,
-          right: 20,
+          left: big ? 28 : 20,
+          bottom: big ? 24 : 16,
+          right: big ? 28 : 20,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Container(width: 4, height: 22, color: scheme.secondary),
-                  const SizedBox(width: 10),
+                  Container(
+                      width: big ? 5 : 4,
+                      height: big ? 36 : 22,
+                      color: scheme.secondary),
+                  SizedBox(width: big ? 12 : 10),
                   Expanded(
                     child: Text(
                       title ?? 'Browse',
-                      maxLines: 1,
+                      maxLines: big ? 2 : 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                           color: Colors.white,
-                          fontSize: 22,
+                          fontSize: big ? 44 : 22,
                           fontWeight: FontWeight.bold),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              SizedBox(height: big ? 12 : 8),
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
                 child: description == null
                     ? const SizedBox.shrink()
                     : Padding(
                         key: ValueKey(description),
-                        padding: const EdgeInsets.only(left: 14),
+                        padding: EdgeInsets.only(left: big ? 17 : 14),
                         child: Text(
                           description!,
+                          // Bottom-anchored, not filling the whole banner
+                          // the way the poster-beside-text layout's own
+                          // scrollable column did — fewer lines keeps the
+                          // text block short enough to actually fit above
+                          // the bottom edge on a shorter window instead of
+                          // needing to scroll to be readable at all.
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                               color: Colors.white70,
-                              fontSize: 14,
-                              height: 1.3),
+                              fontSize: big ? 34 : 14,
+                              height: big ? 1.35 : 1.3),
                         ),
                       ),
               ),
@@ -3779,6 +3836,7 @@ class _WhatsNewCarousel<T> extends StatefulWidget {
     required this.loadItems,
     required this.titleOf,
     required this.imageUrlOf,
+    this.backdropUrlOf,
     required this.onOpen,
     required this.playFocusNode,
     required this.emptyText,
@@ -3793,6 +3851,14 @@ class _WhatsNewCarousel<T> extends StatefulWidget {
 
   final String Function(T item) titleOf;
   final String? Function(T item) imageUrlOf;
+
+  /// A true landscape TMDB backdrop, preferred over [imageUrlOf]'s
+  /// portrait poster/logo when set — see `Channel.backdropUrl`'s doc
+  /// comment. Optional (not every `_WhatsNewCarousel` instantiation needs
+  /// to pass one, though both current ones do) since this carousel is
+  /// generic over item type and some future one might have nothing of the
+  /// kind to offer.
+  final String? Function(T item)? backdropUrlOf;
   final void Function(T item) onOpen;
 
   /// Owned by `_TvHomeScreenState` — see its own doc comment on why the
@@ -3910,7 +3976,9 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
 
   Widget _buildPage(BuildContext context, T item) {
     final scheme = Theme.of(context).colorScheme;
-    final imageUrl = widget.imageUrlOf(item);
+    final backdrop = widget.backdropUrlOf?.call(item);
+    final imageUrl =
+        (backdrop != null && backdrop.isNotEmpty) ? backdrop : widget.imageUrlOf(item);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Container(
