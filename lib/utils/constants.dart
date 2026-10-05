@@ -48,6 +48,18 @@ class AppConstants {
   static const String keyTmdbApiKey = 'nox_tmdb_api_key';
   static const String keyWhatsNewTmdbLastRefreshed =
       'nox_whats_new_tmdb_last_refreshed';
+
+  /// The curated "What's New" selection itself — see
+  /// `PlaylistManager.refreshWhatsNewTmdbIfDue`'s doc comment for why
+  /// this exists as a separately-persisted, ordered id list rather than
+  /// just re-deriving "newest" from the provider catalog on every read:
+  /// the actual selection now comes from matching TMDB's own trending/
+  /// popular titles against the catalog, which is too expensive (a TMDB
+  /// fetch plus a DB search per candidate) to redo on every carousel
+  /// render. `Channel.id`s and `XtreamSeries.id`s respectively, in
+  /// display order.
+  static const String keyWhatsNewVodIds = 'nox_whats_new_vod_ids';
+  static const String keyWhatsNewSeriesIds = 'nox_whats_new_series_ids';
   static const String keyFavorites = 'nox_favorites';
   static const String keyFavoriteSeries = 'nox_favorite_series';
   static const String keyHiddenGroups = 'nox_hidden_groups';

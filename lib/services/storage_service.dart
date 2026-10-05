@@ -173,6 +173,19 @@ class StorageService {
 
   Future<void> setWhatsNewTmdbLastRefreshed(DateTime time) => _prefs.setString(
       AppConstants.keyWhatsNewTmdbLastRefreshed, time.toIso8601String());
+
+  /// See `AppConstants.keyWhatsNewVodIds`'s doc comment. Empty (not null)
+  /// when never refreshed yet — callers treat that as "nothing curated
+  /// yet", same as any other empty list.
+  List<String> getWhatsNewVodIds() =>
+      _prefs.getStringList(AppConstants.keyWhatsNewVodIds) ?? [];
+  Future<void> setWhatsNewVodIds(List<String> ids) =>
+      _prefs.setStringList(AppConstants.keyWhatsNewVodIds, ids);
+
+  List<String> getWhatsNewSeriesIds() =>
+      _prefs.getStringList(AppConstants.keyWhatsNewSeriesIds) ?? [];
+  Future<void> setWhatsNewSeriesIds(List<String> ids) =>
+      _prefs.setStringList(AppConstants.keyWhatsNewSeriesIds, ids);
   Future<void> setThemeMode(String mode) =>
       _prefs.setString(AppConstants.keyThemeMode, mode);
 

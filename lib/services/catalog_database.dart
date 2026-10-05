@@ -422,6 +422,25 @@ class CatalogDatabase {
     return rows.map(_rowToChannel).toList();
   }
 
+  /// Looks up specific VOD items by their composite [Channel.id] —
+  /// `PlaylistManager`'s curated "What's New" selection persists an
+  /// ordered id list (see `AppConstants.keyWhatsNewVodIds`'s doc
+  /// comment), not full `Channel` objects, and the matched item's own
+  /// category might not even be loaded into memory this session (it was
+  /// matched via a full-catalog [searchVod], independent of what's
+  /// currently warmed) — this is the DB-level read that list needs to
+  /// become real `Channel`s again. Result order is *not* guaranteed to
+  /// match [ids]' order (SQL `IN` doesn't promise that) — callers that
+  /// care re-order by id themselves.
+  Future<List<Channel>> getVodByIds(List<String> ids) async {
+    if (ids.isEmpty) return [];
+    final db = await _database;
+    final placeholders = List.filled(ids.length, '?').join(', ');
+    final rows =
+        await db.query('vod_channels', where: 'id IN ($placeholders)', whereArgs: ids);
+    return rows.map(_rowToChannel).toList();
+  }
+
   /// Category-name substrings the "What's New" carousel refuses to
   /// surface, however recently something in them was added — an
   /// auto-playing slideshow the user didn't ask to browse into is a
@@ -498,6 +517,16 @@ class CatalogDatabase {
       whereArgs: ['%$query%', ...playlistIds],
       limit: limit,
     );
+    return rows.map(_rowToSeries).toList();
+  }
+
+  /// See [getVodByIds]'s doc comment — same idea for series.
+  Future<List<XtreamSeries>> getSeriesByIds(List<String> ids) async {
+    if (ids.isEmpty) return [];
+    final db = await _database;
+    final placeholders = List.filled(ids.length, '?').join(', ');
+    final rows = await db.query('series_items',
+        where: 'id IN ($placeholders)', whereArgs: ids);
     return rows.map(_rowToSeries).toList();
   }
 

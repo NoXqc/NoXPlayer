@@ -103,15 +103,21 @@ class _SettingsGradientBackground extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          // Blended toward black rather than used at full saturation —
-          // this still has to sit *behind* plain white body text on
-          // every screen it's used on, at every point in the gradient,
-          // not just the corners. Reference image's own brightest corner
-          // reads as a fairly deep, saturated blue for exactly the same
-          // reason, not a pastel.
+          // Blended heavily toward black, not just "toward" it — reported
+          // directly as "way too aggressive", reading as a near-full-
+          // saturation color wash across the entire screen (sidebar,
+          // groups column, and — being behind every translucent
+          // Colors.white.withValues(alpha: ~0.06) row/block fill
+          // elsewhere in this app — bleeding straight through those too)
+          // instead of a mostly-black background with just a hint of the
+          // palette's hue. Focus/selected-state fills elsewhere already
+          // use the palette at full saturation (scheme.primary/
+          // .secondary, untouched by this), so that contrast against a
+          // much darker backdrop is actually the point, not a side effect
+          // to correct for.
           colors: [
-            Color.lerp(palette.primary, Colors.black, 0.35)!,
-            Color.lerp(palette.secondary, Colors.black, 0.65)!,
+            Color.lerp(palette.primary, Colors.black, 0.82)!,
+            Color.lerp(palette.secondary, Colors.black, 0.92)!,
           ],
         ),
       ),

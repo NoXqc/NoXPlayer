@@ -8,6 +8,16 @@ import '../models/xtream_series.dart';
 import 'catalog_database.dart';
 import 'storage_service.dart';
 
+/// One TMDB trending/popular result — see
+/// [TmdbEnrichmentService.fetchTrendingMovies]/[fetchTrendingSeries].
+typedef TmdbTrendingItem = ({
+  String tmdbId,
+  String title,
+  DateTime? releaseDate,
+  String? posterUrl,
+  String? backdropUrl,
+});
+
 /// Fetches each title's real-world release date from TMDB (The Movie
 /// Database) and caches it — see `Channel.releaseDate`'s doc comment for
 /// why this exists as a separate lookup instead of just using the
@@ -298,4 +308,71 @@ class TmdbEnrichmentService {
       return null;
     }
   }
+
+  /// TMDB's own "what's actually popular right now" list — a completely
+  /// different signal from everything else in this file, which only ever
+  /// enriches titles the *provider's own catalog* already decided to
+  /// surface (by category, or by its own `added`/`last_modified` field).
+  /// Built for `PlaylistManager.refreshWhatsNewTmdbIfDue`'s curated
+  /// "What's New" rebuild: reported directly, with a screenshot, that
+  /// sorting by provider-reported recency surfaced obscure/mislabeled
+  /// titles and literal sports-event listings nobody recognized, while a
+  /// competing app's "New"/trending view (also TMDB-backed) read as
+  /// entirely familiar titles. `/trending/movie/week` over `/popular` —
+  /// weekly trending tracks what's *actually* being watched/talked about
+  /// right now; `/popular` skews toward whatever's broadly well-known
+  /// forever (old franchise entries keep outranking anything new).
+  /// [page] is 1-indexed, 20 results each, matching TMDB's own paging.
+  Future<List<TmdbTrendingItem>> fetchTrendingMovies(String apiKey,
+          {int page = 1}) =>
+      _fetchTrending('movie', apiKey, page: page);
+
+  Future<List<TmdbTrendingItem>> fetchTrendingSeries(String apiKey,
+          {int page = 1}) =>
+      _fetchTrending('tv', apiKey, page: page);
+
+  Future<List<TmdbTrendingItem>> _fetchTrending(String mediaType, String apiKey,
+      {required int page}) async {
+    try {
+      final uri = Uri.parse('$_base/trending/$mediaType/week').replace(
+          queryParameters: {'api_key': apiKey, 'page': '$page'});
+      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return const [];
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final results = (data['results'] as List?) ?? const [];
+      return results.whereType<Map<String, dynamic>>().map((item) {
+        final id = item['id']?.toString();
+        final title = (mediaType == 'movie' ? item['title'] : item['name'])
+            ?.toString();
+        final rawDate =
+            (mediaType == 'movie' ? item['release_date'] : item['first_air_date'])
+                ?.toString();
+        final posterPath = item['poster_path'] as String?;
+        final backdropPath = item['backdrop_path'] as String?;
+        return (
+          tmdbId: id ?? '',
+          title: title ?? '',
+          releaseDate: (rawDate != null && rawDate.isNotEmpty)
+              ? DateTime.tryParse(rawDate)
+              : null,
+          posterUrl: (posterPath != null && posterPath.isNotEmpty)
+              ? '$_imageBase$posterPath'
+              : null,
+          backdropUrl: (backdropPath != null && backdropPath.isNotEmpty)
+              ? '$_backdropImageBase$backdropPath'
+              : null,
+        );
+      }).where((item) => item.tmdbId.isNotEmpty && item.title.isNotEmpty).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// Strips the same provider decorations [_cleanTitleForSearch] does,
+  /// for the *other* direction: matching a clean TMDB title against the
+  /// catalog's own decorated provider titles (`PlaylistManager`'s
+  /// trending-match pass). Exposed publicly since that matching happens
+  /// one layer up, against `CatalogDatabase` directly, not through this
+  /// service.
+  String cleanTitleForMatching(String raw) => _cleanTitleForSearch(raw).title;
 }

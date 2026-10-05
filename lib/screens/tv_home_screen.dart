@@ -3912,6 +3912,14 @@ class _BrowseHero extends StatelessWidget {
             imageUrl: effectiveImageUrl,
             key: ValueKey(effectiveImageUrl),
             fit: BoxFit.cover,
+            // Same reasoning as _WhatsNewCarousel's identical fix: this
+            // banner is much wider/shorter than a 16:9 backdrop, so a
+            // default center-aligned cover crops the subject (almost
+            // always in the upper portion of backdrop key-art) off at
+            // the shoulders. Anchoring to the top also happens to put
+            // the bottom-anchored title/description gradient below right
+            // over the part of the image already being cropped away.
+            alignment: Alignment.topCenter,
             errorWidget: (_, __, ___) => const SizedBox.shrink(),
           ),
         DecoratedBox(
@@ -4192,6 +4200,18 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
                 // plain cropping is the same ordinary operation already
                 // running crash-free across every poster grid in the app.
                 fit: BoxFit.cover,
+                // Backdrop key-art almost always puts its actual subject
+                // (a face, a figure) in the upper portion of the frame —
+                // this slide's box is much wider/shorter than the 16:9
+                // source image, so a default center-aligned cover crops
+                // evenly off the top *and* bottom, which on a backdrop
+                // this short-and-wide cuts the subject off at the
+                // shoulders. Reported directly, with a screenshot: a
+                // barely-recognizable torso/arm crop, not a poster.
+                // Anchoring to the top keeps the subject in frame and
+                // crops the (usually empty sky/background) bottom
+                // instead.
+                alignment: Alignment.topCenter,
                 errorWidget: (_, __, ___) => const SizedBox.shrink(),
               ),
             DecoratedBox(

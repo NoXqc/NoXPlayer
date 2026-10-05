@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -535,9 +537,16 @@ class PlaylistManager extends ChangeNotifier {
   /// release date instead of added-date, when one's been set (see
   /// [refreshWhatsNewTmdbIfDue] for where [Channel.releaseDate] actually
   /// gets populated — never here, this is a plain, fast, no-network read).
-  Future<List<Channel>> whatsNewVod({int limit = 5}) async {
+  /// The shared "recently added, filtered" pool both [whatsNewVod] (picks
+  /// the final display set from it) and [refreshWhatsNewTmdbIfDue] (TMDB-
+  /// enriches a wider slice of it than ever actually gets shown) draw
+  /// from — [poolSize] differs between the two callers specifically so
+  /// enrichment can look at more candidates than the carousel displays at
+  /// once (see [refreshWhatsNewTmdbIfDue]'s doc comment for why that gap
+  /// matters).
+  Future<List<Channel>> _whatsNewVodCandidates(int poolSize) async {
     final rows = await _catalogDb.getRecentlyAddedVod(_enabledXtreamPlaylistIds,
-        limit: limit * 40);
+        limit: poolSize);
     // Prefer whichever instance the main Movies browse grid already has
     // loaded in memory for the same item over the fresh, disposable copy
     // getRecentlyAddedVod just built from a DB row — TmdbEnrichmentService
@@ -550,35 +559,101 @@ class PlaylistManager extends ChangeNotifier {
     final loaded = {for (final c in allCachedVod) c.id: c};
     final canonical = rows.map((c) => loaded[c.id] ?? c).toList();
     // A restricted viewer's hidden groups never headline What's New — see
-    // `_isHiddenForActiveViewer`'s doc comment. Filtered before `take`,
-    // not after, so a kid profile isn't left with fewer than [limit]
-    // results just because most of the unfiltered pool happened to belong
-    // to groups they can't see.
+    // `_isHiddenForActiveViewer`'s doc comment.
     final visible = canonical
         .where((c) => !_isHiddenForActiveViewer(c.playlistId, c.group));
-    final picked = _thisYearOnly(visible, (c) => c.name)
+    return _thisYearOnly(visible, (c) => c.name)
         .where((c) => _notKnownStale(c.releaseDate))
-        .take(limit)
         .toList();
+  }
+
+  /// The curated TMDB-trending selection [refreshWhatsNewTmdbIfDue] built
+  /// (see `AppConstants.keyWhatsNewVodIds`'s doc comment), filtered back
+  /// down to what's actually visible/still-cached right now — empty
+  /// means "no TMDB key", "never refreshed yet", or "everything matched
+  /// is since hidden/gone", any of which falls back to
+  /// [_whatsNewVodCandidates] in [whatsNewVod] itself.
+  Future<List<Channel>> _curatedWhatsNewVod(int limit) async {
+    final ids = _storage.getWhatsNewVodIds();
+    if (ids.isEmpty) return const [];
+    final rows = await _catalogDb.getVodByIds(ids);
+    final loaded = {for (final c in allCachedVod) c.id: c};
+    final byId = {for (final c in rows) c.id: loaded[c.id] ?? c};
+    final picked = <Channel>[];
+    // getVodByIds doesn't preserve order (SQL IN doesn't promise it) —
+    // walking the original [ids] order here is what actually keeps the
+    // carousel trending-ordered.
+    for (final id in ids) {
+      final c = byId[id];
+      if (c != null && !_isHiddenForActiveViewer(c.playlistId, c.group)) {
+        picked.add(c);
+      }
+      if (picked.length >= limit) break;
+    }
+    return picked;
+  }
+
+  Future<List<Channel>> whatsNewVod({int limit = 5}) async {
+    if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
+      final curated = await _curatedWhatsNewVod(limit);
+      if (curated.isNotEmpty) return curated;
+    }
+    // Fallback: no TMDB key, or a key but nothing curated yet (first
+    // launch with a fresh key, before the first refresh has actually
+    // run) — the old provider "recently added" behavior, same as always.
+    final candidates = await _whatsNewVodCandidates(limit * 40);
+    final picked = _preferEnriched(candidates, limit,
+        hasArt: (c) =>
+            (c.backdropUrl?.isNotEmpty ?? false) ||
+            (c.posterUrl?.isNotEmpty ?? false));
     if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
       picked.sort((a, b) => _compareNullableDates(a.releaseDate, b.releaseDate));
     }
     return picked;
   }
 
-  Future<List<XtreamSeries>> whatsNewSeries({int limit = 5}) async {
+  Future<List<XtreamSeries>> _whatsNewSeriesCandidates(int poolSize) async {
     final rows = await _catalogDb
-        .getRecentlyAddedSeries(_enabledXtreamPlaylistIds, limit: limit * 40);
-    // See whatsNewVod's matching comment just above — same reasoning,
-    // same fix.
+        .getRecentlyAddedSeries(_enabledXtreamPlaylistIds, limit: poolSize);
+    // See _whatsNewVodCandidates' matching comment just above — same
+    // reasoning, same fix.
     final loaded = {for (final s in allCachedSeries) s.id: s};
     final canonical = rows.map((s) => loaded[s.id] ?? s).toList();
     final visible = canonical
         .where((s) => !_isHiddenForActiveViewer(s.playlistId, s.categoryId));
-    final picked = _thisYearOnly(visible, (s) => s.name)
+    return _thisYearOnly(visible, (s) => s.name)
         .where((s) => _notKnownStale(s.releaseDate))
-        .take(limit)
         .toList();
+  }
+
+  /// See [_curatedWhatsNewVod]'s doc comment — same idea for series.
+  Future<List<XtreamSeries>> _curatedWhatsNewSeries(int limit) async {
+    final ids = _storage.getWhatsNewSeriesIds();
+    if (ids.isEmpty) return const [];
+    final rows = await _catalogDb.getSeriesByIds(ids);
+    final loaded = {for (final s in allCachedSeries) s.id: s};
+    final byId = {for (final s in rows) s.id: loaded[s.id] ?? s};
+    final picked = <XtreamSeries>[];
+    for (final id in ids) {
+      final s = byId[id];
+      if (s != null && !_isHiddenForActiveViewer(s.playlistId, s.categoryId)) {
+        picked.add(s);
+      }
+      if (picked.length >= limit) break;
+    }
+    return picked;
+  }
+
+  Future<List<XtreamSeries>> whatsNewSeries({int limit = 5}) async {
+    if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
+      final curated = await _curatedWhatsNewSeries(limit);
+      if (curated.isNotEmpty) return curated;
+    }
+    final candidates = await _whatsNewSeriesCandidates(limit * 40);
+    final picked = _preferEnriched(candidates, limit,
+        hasArt: (s) =>
+            (s.backdropUrl?.isNotEmpty ?? false) ||
+            (s.posterUrl?.isNotEmpty ?? false));
     if (_storage.getTmdbApiKey()?.isNotEmpty ?? false) {
       picked.sort((a, b) => _compareNullableDates(a.releaseDate, b.releaseDate));
     }
@@ -603,6 +678,30 @@ class PlaylistManager extends ChangeNotifier {
     return DateTime.now().difference(releaseDate).inDays <= 450;
   }
 
+  /// Picks the final [limit] "What's New" items from a wider candidate
+  /// pool, preferring ones TMDB actually found real artwork for — a
+  /// title that's merely recently-added-but-unmatched (a provider
+  /// re-ingesting a whole batch at once, a sports event that was never
+  /// going to be on TMDB in the first place, ...) still sorts by recency
+  /// same as before, just behind every candidate that does have one.
+  /// Reported directly: one playlist's bulk-added, TMDB-unmatched batch
+  /// was edging out an equally-new, successfully-matched title from a
+  /// *different* playlist, simply by having a fractionally newer
+  /// `added_at` — nothing here is actually playlist-aware, it just
+  /// happens to fix that, since whichever playlist's catalog TMDB
+  /// matches better naturally floats to the top instead. A plain
+  /// `List.sort` by a boolean key isn't used here — Dart's sort isn't
+  /// guaranteed stable, and scrambling the already-recency-ordered
+  /// candidates *within* either tier would undo the ordering this is
+  /// built on top of; partitioning with `.where()` (which does preserve
+  /// order) and concatenating keeps each tier's relative order intact.
+  static List<T> _preferEnriched<T>(
+      List<T> candidates, int limit, {required bool Function(T) hasArt}) {
+    final enriched = candidates.where(hasArt).toList();
+    final unenriched = candidates.where((c) => !hasArt(c)).toList();
+    return [...enriched, ...unenriched].take(limit).toList();
+  }
+
   /// Newest first; a null date (never TMDB-enriched, or TMDB had nothing
   /// for it) always sorts last rather than being treated as oldest — same
   /// rule `GroupCatalogScreen`'s own TMDB sort uses.
@@ -613,31 +712,46 @@ class PlaylistManager extends ChangeNotifier {
     return b.compareTo(a);
   }
 
-  /// Keeps "What's New" sorted by real release date (once a TMDB key is
-  /// set) without ever making the carousel itself wait on a network call —
-  /// [whatsNewVod]/[whatsNewSeries] only ever *read* [Channel.releaseDate]/
-  /// [XtreamSeries.releaseDate], already persisted to [CatalogDatabase] by
-  /// whichever of this or `GroupCatalogScreen`'s own on-demand TMDB sort
-  /// ran last. Runs at most once a week, checked at each app launch rather
-  /// than via an in-process timer — a TV app routinely gets closed between
+  /// Rebuilds "What's New"'s curated selection from TMDB's own weekly-
+  /// trending titles — a deliberate rework, not a tweak: sorting by the
+  /// *provider's* "recently added" timestamp (the original approach)
+  /// surfaced whatever a provider happened to bulk re-ingest, mislabeled
+  /// duplicates, and literal sports-event listings right alongside actual
+  /// new releases, none of which TMDB could ever match — reported
+  /// directly, with screenshots, as an unrecognizable carousel next to a
+  /// competing app's trending-backed one that was all familiar titles.
+  /// Trending itself doesn't care what any provider's own catalog
+  /// metadata says at all; it only asks "is this real catalog item
+  /// something TMDB says people are actually watching this week", so the
+  /// result is inherently made of recognizable titles — the low-quality-
+  /// poster problem and the "showing content nobody's heard of" problem
+  /// turn out to be the same root cause, fixed by the same change.
+  ///
+  /// Walks [TmdbEnrichmentService.fetchTrendingMovies]/[fetchTrendingSeries]
+  /// page by page, matching each trending title against this catalog via
+  /// [CatalogDatabase.searchVod]/[searchSeries] (`_matchTrending`'s own
+  /// doc comment has the match-then-stamp details), until [_curatedPoolSize]
+  /// real matches are found per media type or trending data runs out.
+  /// Wider than the 5 actually displayed — same reasoning as the
+  /// enrichment pool before this rework had: hiding/removal between
+  /// refreshes, or simply fewer than 5 trending titles happening to exist
+  /// in this specific catalog, still leaves enough to show.
+  ///
+  /// Runs at most once a week, checked at each app launch rather than via
+  /// an in-process timer — a TV app routinely gets closed between
   /// sessions, so a `Timer.periodic(Duration(days: 7))` would frequently
-  /// never fire at all; a persisted last-run timestamp, checked every cold
-  /// start, actually achieves "about once a week" for how this app is
-  /// really used. No interval to tune, deliberately — this exists to keep
-  /// the *existing, already-free* "What's New" carousel accurate for
-  /// anyone who happens to have added a key for `GroupCatalogScreen`'s
-  /// sort, not a feature of its own worth exposing a setting for. Scoped
-  /// to just the current ~10 "What's New" picks (never a whole catalog),
-  /// so even a cold cache-miss run is a handful of requests, not hundreds.
+  /// never fire at all; a persisted last-run timestamp, checked every
+  /// cold start, actually achieves "about once a week" for how this app
+  /// is really used.
   ///
   /// [force] skips the weekly gate entirely — `TmdbSettingsScreen`'s
   /// "Refresh now" button uses this. The persisted timestamp survives an
-  /// app *update*, not just a restart: confirmed directly as a real trap
-  /// once [TmdbEnrichmentService] gained its title-search fallback (it
-  /// used to only work for provider-tagged items) — anyone whose weekly
-  /// window had already started under the old, narrower logic would see
-  /// no change at all after updating, for up to another 7 days, with
-  /// nothing on screen to explain why.
+  /// app *update*, not just a restart — anyone whose weekly window had
+  /// already started under an older version of this logic would
+  /// otherwise see no change for up to another 7 days, with nothing on
+  /// screen to explain why.
+  static const _curatedPoolSize = 10;
+
   Future<void> refreshWhatsNewTmdbIfDue({bool force = false}) async {
     final key = _storage.getTmdbApiKey();
     if (key == null || key.isEmpty) return;
@@ -649,12 +763,122 @@ class PlaylistManager extends ChangeNotifier {
       }
     }
     final service = TmdbEnrichmentService(_storage, _catalogDb);
-    final vod = await whatsNewVod();
-    final series = await whatsNewSeries();
-    await service.enrichVod(vod);
-    await service.enrichSeries(series);
+    final vodIds = await _matchTrendingVod(service, key, _curatedPoolSize);
+    final seriesIds =
+        await _matchTrendingSeries(service, key, _curatedPoolSize);
+    await _storage.setWhatsNewVodIds(vodIds);
+    await _storage.setWhatsNewSeriesIds(seriesIds);
     await _storage.setWhatsNewTmdbLastRefreshed(DateTime.now());
     notifyListeners();
+  }
+
+  /// Matches TMDB's weekly-trending movies against this catalog
+  /// (`searchVod`'s own LIKE search, scoped to the enabled playlists),
+  /// stamping real TMDB data onto whichever ones actually exist in it —
+  /// the match becomes the "What's New" item itself, so it plays exactly
+  /// like any other catalog entry (same URL/playlist), just one TMDB
+  /// confirms is actually trending. Walks trending pages (most-trending
+  /// first) until [target] real matches are found or TMDB runs out of
+  /// pages to offer; a hidden/restricted-viewer match is skipped in favor
+  /// of the next search result for the same title, not just dropped
+  /// outright, since a kid profile shouldn't see a shorter list purely
+  /// because its own group happens to carry a trending title too.
+  Future<List<String>> _matchTrendingVod(
+      TmdbEnrichmentService service, String apiKey, int target) async {
+    final matched = <String>[];
+    final seenTmdbIds = <String>{};
+    final loaded = {for (final c in allCachedVod) c.id: c};
+    for (var page = 1; page <= 3 && matched.length < target; page++) {
+      final trending = await service.fetchTrendingMovies(apiKey, page: page);
+      if (trending.isEmpty) break;
+      for (final item in trending) {
+        if (matched.length >= target) break;
+        if (!seenTmdbIds.add(item.tmdbId)) continue;
+        final clean = service.cleanTitleForMatching(item.title);
+        if (clean.isEmpty) continue;
+        final results = await _catalogDb.searchVod(
+            clean, _enabledXtreamPlaylistIds,
+            limit: 10);
+        Channel? match;
+        for (final r in results) {
+          if (!_isHiddenForActiveViewer(r.playlistId, r.group)) {
+            match = r;
+            break;
+          }
+        }
+        if (match == null) continue;
+        matched.add(match.id);
+        // Stamps the canonical in-memory instance (if this item's
+        // category happens to already be loaded) same as every other
+        // TmdbEnrichmentService write — see _whatsNewVodCandidates' own
+        // matching comment for why that matters — alongside persisting
+        // it, rather than only ever writing to the DB.
+        final canonical = loaded[match.id] ?? match;
+        canonical.tmdbId = item.tmdbId;
+        unawaited(_catalogDb.setVodTmdbId(match.id, item.tmdbId));
+        if (item.releaseDate != null) {
+          canonical.releaseDate = item.releaseDate;
+          unawaited(_catalogDb.setVodReleaseDate(match.id, item.releaseDate!));
+        }
+        if (item.posterUrl != null) {
+          canonical.posterUrl = item.posterUrl;
+          unawaited(_catalogDb.setVodPosterUrl(match.id, item.posterUrl!));
+        }
+        if (item.backdropUrl != null) {
+          canonical.backdropUrl = item.backdropUrl;
+          unawaited(_catalogDb.setVodBackdropUrl(match.id, item.backdropUrl!));
+        }
+      }
+    }
+    return matched;
+  }
+
+  /// See [_matchTrendingVod]'s doc comment — same idea for series.
+  Future<List<String>> _matchTrendingSeries(
+      TmdbEnrichmentService service, String apiKey, int target) async {
+    final matched = <String>[];
+    final seenTmdbIds = <String>{};
+    final loaded = {for (final s in allCachedSeries) s.id: s};
+    for (var page = 1; page <= 3 && matched.length < target; page++) {
+      final trending = await service.fetchTrendingSeries(apiKey, page: page);
+      if (trending.isEmpty) break;
+      for (final item in trending) {
+        if (matched.length >= target) break;
+        if (!seenTmdbIds.add(item.tmdbId)) continue;
+        final clean = service.cleanTitleForMatching(item.title);
+        if (clean.isEmpty) continue;
+        final results = await _catalogDb.searchSeries(
+            clean, _enabledXtreamPlaylistIds,
+            limit: 10);
+        XtreamSeries? match;
+        for (final r in results) {
+          if (!_isHiddenForActiveViewer(r.playlistId, r.categoryId)) {
+            match = r;
+            break;
+          }
+        }
+        if (match == null) continue;
+        matched.add(match.id);
+        final canonical = loaded[match.id] ?? match;
+        canonical.tmdbId = item.tmdbId;
+        unawaited(_catalogDb.setSeriesTmdbId(match.id, item.tmdbId));
+        if (item.releaseDate != null) {
+          canonical.releaseDate = item.releaseDate;
+          unawaited(
+              _catalogDb.setSeriesReleaseDate(match.id, item.releaseDate!));
+        }
+        if (item.posterUrl != null) {
+          canonical.posterUrl = item.posterUrl;
+          unawaited(_catalogDb.setSeriesPosterUrl(match.id, item.posterUrl!));
+        }
+        if (item.backdropUrl != null) {
+          canonical.backdropUrl = item.backdropUrl;
+          unawaited(
+              _catalogDb.setSeriesBackdropUrl(match.id, item.backdropUrl!));
+        }
+      }
+    }
+    return matched;
   }
 
   /// Keeps entries whose title states the current year, plus entries that
