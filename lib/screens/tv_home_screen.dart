@@ -134,6 +134,21 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   FocusScopeNode _col1Scope = FocusScopeNode(debugLabel: 'tv-col1');
   FocusScopeNode _col2Scope = FocusScopeNode(debugLabel: 'tv-col2');
 
+  /// The groups column's own top row — whichever of Favourites/"All"/
+  /// "What's New" renders first for the currently active tab (only one of
+  /// those three ever mounts at once, so one shared node is safe).
+  /// Requested directly instead of trusting `_col1Scope.requestFocus()`'s
+  /// own "fall back to the first focusable descendant" behavior (see
+  /// [_moveColumnFocus]) — reported directly as unreliable for this
+  /// column specifically: the first Right press from the tabs rail left
+  /// no visible D-pad cursor anywhere in the groups list at all, and
+  /// Up/Down afterward behaved as though focus had actually landed
+  /// somewhere mid-list rather than at the top (Up moved further down,
+  /// Down jumped to the top) — consistent with focus having landed on the
+  /// scope node itself rather than any real row.
+  final FocusNode _firstGroupRowFocusNode =
+      FocusNode(debugLabel: 'first-group-row');
+
   /// True once a Left press at the leftmost poster in the browse grid has
   /// found nowhere further left to go, but hasn't yet been confirmed by a
   /// second such press — see [_handleBrowseLeft]. Requiring two in a row
@@ -421,6 +436,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   final FocusNode _currentChannelFocusNode =
       FocusNode(debugLabel: 'current-channel-row');
 
+  /// The plain live list's first row, when it isn't also the currently-
+  /// playing channel (which already owns [_currentChannelFocusNode]) —
+  /// see [_onGroupSelected]'s own doc comment for why this exists:
+  /// without an explicit target, switching groups left the list's scroll
+  /// offset and D-pad focus memory wherever they'd physically been in the
+  /// *previous* group's list instead of resetting to the new one's first
+  /// channel.
+  final FocusNode _firstLiveChannelFocusNode =
+      FocusNode(debugLabel: 'first-live-channel-row');
+
   /// Imperative access to the Timeline Guide's own State — lets
   /// [didPopNext] and the Up/Down key bindings below call
   /// [_TimelineGuideState.restoreFocusToChannel]/`.moveVertical` directly.
@@ -666,12 +691,38 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       if (resolved.category == 'vod' || resolved.category == 'series') {
         context.read<PlaylistManager>().ensureCategoryLoaded(
             resolved.playlistId, group, resolved.category);
+      } else {
+        _resetLiveListFocus();
       }
+      return;
+    }
+    if (_tab == 'TV') {
+      _resetLiveListFocus();
       return;
     }
     context
         .read<PlaylistManager>()
         .ensureCategoryLoaded(playlistId!, group, _categoryForTab(_tab));
+  }
+
+  /// Explicit reset instead of leaving the plain live list's scroll
+  /// offset/D-pad focus wherever they physically were in the *previous*
+  /// group — reported directly: picking a new group left the list
+  /// scrolled to roughly how far down the old one had been browsed,
+  /// landing on an unrelated channel instead of the new group's first
+  /// one. Same "explicit beats whatever's left over" fix as
+  /// [_scrollToBrowseGroup] uses for Movies/TV Shows, and
+  /// `_TimelineGuideState.didUpdateWidget`'s matching fix for the other
+  /// live guide layout.
+  void _resetLiveListFocus() {
+    if (_liveListController.hasClients) _liveListController.jumpTo(0);
+    final playlist = context.read<PlaylistManager>();
+    final channels = _currentLiveChannels(playlist);
+    if (channels.isEmpty) return;
+    final playback = context.read<PlaybackService>();
+    final firstIsPlaying = playback.currentChannel?.id == channels.first.id;
+    (firstIsPlaying ? _currentChannelFocusNode : _firstLiveChannelFocusNode)
+        .requestFocus();
   }
 
   /// Which tab a favorited group actually belongs to, and which playlist
@@ -697,18 +748,6 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     return null;
   }
 
-  /// Every `_CategoryRow` is effectively the same height regardless of how
-  /// many posters it holds (fixed 210px poster strip + header + padding —
-  /// the poster count only changes how far it scrolls *horizontally*, not
-  /// its height), so a target row's position is just `index * this` —
-  /// used instead of `Scrollable.ensureVisible` for [_scrollToBrowseGroup]
-  /// because that approach fundamentally can't reach a row the
-  /// `ListView.builder` hasn't built yet (its `GlobalKey.currentContext`
-  /// is null until it scrolls near the viewport) — exactly the case
-  /// reported: jumping to a group further down than what's currently
-  /// rendered silently did nothing.
-  static const double _categoryRowHeight = 262;
-
   bool _hasContinueWatchingRow(String idPrefix) {
     final playback = context.read<PlaybackService>();
     final storage = context.read<StorageService>();
@@ -725,24 +764,16 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     playlist.ensureCategoryLoaded(playlistId, title, _categoryForTab(_tab));
     if (!_browseScrollController.hasClients) return;
 
-    final isMovies = _tab == 'Movies';
-    final titles = isMovies
-        ? playlist.vodGroups
-            .where((g) => !g.isHidden && g.channels.isNotEmpty)
-            .map((g) => g.title)
-            .toList()
-        : playlist.seriesGroups
-            .where((g) =>
-                !g.isHidden &&
-                playlist
-                    .visibleSeries(
-                        playlistId: g.playlistId, categoryName: g.title)
-                    .isNotEmpty)
-            .map((g) => g.title)
-            .toList();
-    var index = titles.indexOf(title);
+    // Looked up in the actually-rendered row list (_browseRowKeys), not
+    // re-derived here from a separately filtered/mapped title list plus a
+    // manual Continue Watching offset — the two could drift apart
+    // (reported directly: picking a group landed the scroll at the very
+    // bottom of the whole catalog, not on the group actually tapped).
+    // Matching on (playlistId, title) together, not title alone, also
+    // can't be fooled by two different playlists sharing a category name.
+    final index = _browseRowKeys.indexWhere(
+        (k) => k != null && k.playlistId == playlistId && k.title == title);
     if (index < 0) return;
-    if (_hasContinueWatchingRow(isMovies ? 'xt_vod_' : 'xt_ep_')) index += 1;
 
     // jumpTo, not animateTo — same fix as _restoreLiveFocus's live channel
     // list, and the same real bug: jumping to a group near the bottom of a
@@ -760,6 +791,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // that was.
     if (mounted)
       _firstPosterFocusNodeForGroup(playlistId, title).requestFocus();
+    // _categoryRowHeight is an exact value now, not a guess (every row is
+    // pinned to it — see that getter's own doc comment for the drift bug
+    // this replaced), so the jumpTo above should already land precisely.
+    // This is just a cheap belt-and-suspenders correction against the
+    // row's own real on-screen position, same as `_restoreLiveFocus` does
+    // for the live channel list — effectively a no-op once it's already
+    // exactly right, but costs nothing to keep.
+    _ensureRowVisible(_keyForGroup(playlistId, title));
   }
 
   /// Right-arrow from the groups rail (browse tabs) when the user hasn't
@@ -942,6 +981,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         (_timelineGuideKey.currentState?.focusEntry() ?? false)) {
       return;
     }
+    // See _firstGroupRowFocusNode's own doc comment — only when nothing's
+    // already focused in the groups column (so returning to a previously-
+    // browsed group still restores where you left off, same as before).
+    if (target == 1 && _col1Scope.focusedChild == null) {
+      _firstGroupRowFocusNode.requestFocus();
+      return;
+    }
     scope.requestFocus();
   }
 
@@ -961,12 +1007,14 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     _browseScrollController.dispose();
     _liveListController.dispose();
     _currentChannelFocusNode.dispose();
+    _firstLiveChannelFocusNode.dispose();
     _col0Scope.dispose();
     _col1Scope.dispose();
     _col2Scope.dispose();
     for (final node in _groupFirstPosterFocusNodes.values) {
       node.dispose();
     }
+    _firstGroupRowFocusNode.dispose();
     _continueWatchingFirstFocusNode.dispose();
     _moviesWhatsNewPlayFocusNode.dispose();
     _showsWhatsNewPlayFocusNode.dispose();
@@ -1853,6 +1901,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             selected: _selectedGroup == null,
             collapsed: collapsed,
             fontSize: _groupFontSize,
+            focusNode: _firstGroupRowFocusNode,
             onTap: () => _onGroupSelected(null),
           ),
           for (final title in favoritedGroupTitles)
@@ -1893,6 +1942,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           selected: effectiveGroup == _favoritesGroupSentinel,
           collapsed: collapsed,
           fontSize: _groupFontSize,
+          focusNode: _firstGroupRowFocusNode,
           onTap: () => _onGroupSelected(_favoritesGroupSentinel),
         ),
         ..._groupRowsWithPlaylistDividers(
@@ -1966,6 +2016,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           selected: _showWhatsNew,
           collapsed: collapsed,
           fontSize: _groupFontSize,
+          focusNode: _firstGroupRowFocusNode,
           onTap: () => setState(() => _showWhatsNew = true),
         ),
         _SelectableRow(
@@ -2635,7 +2686,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             onHold: () => _toggleFavoriteWithFeedback(context, channel),
             child: _SelectableRow(
               selected: isSelected,
-              focusNode: isSelected ? _currentChannelFocusNode : null,
+              focusNode: isSelected
+                  ? _currentChannelFocusNode
+                  : (i == 0 ? _firstLiveChannelFocusNode : null),
               onTap: () => _selectChannel(channel),
               onLongPress: () => _toggleFavoriteWithFeedback(context, channel),
               leading: SizedBox(
@@ -3039,6 +3092,13 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
               : ListView.builder(
                   controller: _browseScrollController,
                   itemCount: rows.length,
+                  // Every row is exactly _categoryRowHeight tall (see its
+                  // own doc comment) — telling Flutter that explicitly
+                  // lets it compute scroll geometry analytically instead
+                  // of needing to lay out every row to know where they
+                  // are, which is what makes _scrollToBrowseGroup's
+                  // direct jumpTo to an unbuilt row exact.
+                  itemExtent: _categoryRowHeight,
                   itemBuilder: (context, i) => rows[i],
                 ),
         ),
@@ -3481,6 +3541,35 @@ double get _browseCardHeight => _browsePosterHeight +
         ? PosterCard.titleHeight * _windowsPosterScale
         : PosterCard.titleHeight);
 
+/// [_CategoryRow]'s own section-title bar — a fixed height (not left to
+/// whatever `SectionLabel`'s text happens to measure out to) specifically
+/// so [_categoryRowHeight] below is an exact, enforced number rather than
+/// a guess about font-metric-dependent text layout.
+const double _categoryRowHeaderHeight = 40;
+const double _categoryRowBottomPadding = 18;
+
+/// Every `_CategoryRow` is *made* to be exactly this tall (see its own
+/// `build`, which wraps its content in a `SizedBox` of this height) —
+/// deliberately computed from the exact same values that actually
+/// determine the row's real layout, not a separately hand-tuned constant
+/// that can silently drift out of sync with them (confirmed as a real,
+/// shipped bug: an old hand-picked value survived two later poster-size
+/// changes, each shrinking the real row without this being updated to
+/// match — reported directly, after a first fix attempt, as "math will
+/// always be wrong if groups are added or removed"). `index * this` is
+/// exactly where that row sits — used instead of `Scrollable.ensureVisible`
+/// for [_TvHomeScreenState._scrollToBrowseGroup] because that approach
+/// fundamentally can't reach a row the `ListView.builder` hasn't built
+/// yet (its `GlobalKey.currentContext` is null until it scrolls near the
+/// viewport). Also handed to that same `ListView.builder` as its
+/// `itemExtent` (see `_buildBrowseScaffold`) — telling Flutter the exact,
+/// true per-item height lets it compute scroll geometry (including
+/// `maxScrollExtent`) analytically, without needing to lay out every
+/// intervening row, which is what makes a direct, unbuilt-row `jumpTo`
+/// exact instead of an estimate in the first place.
+double get _categoryRowHeight =>
+    _categoryRowBottomPadding + _categoryRowHeaderHeight + _browseCardHeight;
+
 /// One horizontally-scrolling row of [PosterCard]s under a category title
 /// — the Netflix/Apple-TV "browse" pattern. Builds cards lazily as they
 /// scroll into view — a category can hold thousands of items.
@@ -3498,42 +3587,60 @@ class _CategoryRow<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: SectionLabel(
-              title,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16),
+    // The *whole row* is pinned to _categoryRowHeight (header slot +
+    // poster strip + bottom padding, exactly the values that make up
+    // that getter) rather than letting it size to its own intrinsic
+    // content — see _categoryRowHeight's own doc comment for why this
+    // enforcement, not just a matching number elsewhere, is the actual
+    // point: it's what makes that getter *true* instead of a guess.
+    return SizedBox(
+      height: _categoryRowHeight,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: _categoryRowBottomPadding),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              height: _categoryRowHeaderHeight,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: SectionLabel(
+                    title,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16),
+                  ),
+                ),
+              ),
             ),
-          ),
-          SizedBox(
-            // Was 210 — ~20% smaller per feedback that the catalog read
-            // too large. Windows scales back up from there — see
-            // _browseCardHeight's own doc comment.
-            height: _browseCardHeight,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 6),
-              itemCount: items.length,
-              // Flutter's default (250px, ~2 cards) only starts building/
-              // decoding a card just barely before it's visible, so a
-              // steady scroll still shows the grey-then-fade-in pop-in
-              // right at the edge of the screen. Roughly 5 cards' worth
-              // gives posters a head start decoding before they're seen —
-              // some extra memory (the image cache ceiling still bounds
-              // the total), traded for a visibly smoother scroll.
-              scrollCacheExtent: ScrollCacheExtent.pixels(_browsePosterWidth * 5),
-              itemBuilder: (context, i) => itemBuilder(items[i], i),
+            SizedBox(
+              // Was 210 — ~20% smaller per feedback that the catalog read
+              // too large. Windows scales back up from there — see
+              // _browseCardHeight's own doc comment.
+              height: _browseCardHeight,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 6),
+                itemCount: items.length,
+                // Flutter's default (250px, ~2 cards) only starts
+                // building/decoding a card just barely before it's
+                // visible, so a steady scroll still shows the grey-then-
+                // fade-in pop-in right at the edge of the screen. Roughly
+                // 5 cards' worth gives posters a head start decoding
+                // before they're seen — some extra memory (the image
+                // cache ceiling still bounds the total), traded for a
+                // visibly smoother scroll.
+                scrollCacheExtent:
+                    ScrollCacheExtent.pixels(_browsePosterWidth * 5),
+                itemBuilder: (context, i) => itemBuilder(items[i], i),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -4551,6 +4658,30 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
         _gridHScroll.jumpTo(_xFor(_floorToSlot(DateTime.now()))
             .clamp(0.0, _gridHScroll.position.maxScrollExtent));
       }
+    });
+  }
+
+  @override
+  void didUpdateWidget(_TimelineGuide old) {
+    super.didUpdateWidget(old);
+    final oldGroup = old.channels.isEmpty ? null : old.channels.first.group;
+    final newGroup =
+        widget.channels.isEmpty ? null : widget.channels.first.group;
+    if (oldGroup == newGroup) return;
+    // A different group's channel list was swapped in (not just the same
+    // group's own content refreshing) — reset scroll/focus memory instead
+    // of carrying over wherever the *previous* group had been scrolled
+    // to. Reported directly: picking a new group from the groups column
+    // left the guide scrolled down to roughly how far the old one had
+    // been browsed, landing on an unrelated channel instead of the new
+    // group's first one. jumpTo, not animateTo — same ANR-avoidance
+    // reasoning as everywhere else in this file.
+    if (_gridVScroll.hasClients) _gridVScroll.jumpTo(0);
+    _focusedRowIndex = null;
+    _focusedProgram = null;
+    _cursorSlot = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) focusEntry();
     });
   }
 

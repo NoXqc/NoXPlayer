@@ -16,6 +16,7 @@ import '../../widgets/tv_switch_list_tile.dart';
 import 'add_playlist_screen.dart';
 import 'group_management_screen.dart';
 import 'hidden_channels_screen.dart';
+import 'playlist_priority_screen.dart';
 
 /// Replaces the old single-playlist `ContentManagerScreen` — a
 /// MyTVOnline3-style list of every playlist (unlimited, not capped),
@@ -56,6 +57,19 @@ class PlaylistManagerScreen extends StatelessWidget {
                             MaterialPageRoute(
                                 builder: (_) => const AddPlaylistScreen())),
                       ),
+                      if (profiles.where((p) => p.enabled).length >= 2) ...[
+                        const Divider(height: 1),
+                        ListTile(
+                          leading: const Icon(Icons.low_priority),
+                          title: const Text('Playlist Priority'),
+                          subtitle: const Text(
+                              'Which playlist\'s groups show first, per tab'),
+                          onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                  builder: (_) =>
+                                      const PlaylistPriorityScreen())),
+                        ),
+                      ],
                       if (profiles.isNotEmpty) const Divider(height: 1),
                       for (var i = 0; i < profiles.length; i++) ...[
                         if (i > 0) const Divider(height: 1),

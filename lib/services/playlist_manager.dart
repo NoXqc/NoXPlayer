@@ -124,6 +124,20 @@ class PlaylistManager extends ChangeNotifier {
       _sessions.where((s) => s.profile.enabled).toList()
         ..sort((a, b) => a.profile.sortOrder.compareTo(b.profile.sortOrder));
 
+  /// Same as [_enabledSessionsSorted], ordered by [tabCategory]'s own
+  /// priority override instead of the shared base [PlaylistProfile
+  /// .sortOrder] — see [PlaylistProfile.sortOrderFor]'s doc comment. Used
+  /// by every getter below whose order is actually what the user sees
+  /// rendered in that specific tab (channels/tvGroups/vodGroups/
+  /// seriesGroups); everything else (connection retries, counts, favorite
+  /// lists, ...) stays on the plain base order above since nothing about
+  /// those is tab-specific or genuinely order-sensitive to the viewer.
+  List<PlaylistSession> _enabledSessionsSortedFor(String tabCategory) =>
+      _sessions.where((s) => s.profile.enabled).toList()
+        ..sort((a, b) => a.profile
+            .sortOrderFor(tabCategory)
+            .compareTo(b.profile.sortOrderFor(tabCategory)));
+
   PlaylistSession? _sessionFor(String playlistId) {
     for (final s in _sessions) {
       if (s.profile.id == playlistId) return s;
@@ -356,6 +370,36 @@ class PlaylistManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Commits a drag-reordered priority list for one tab — see
+  /// `PlaylistProfile.liveSortOrder`'s doc comment. [orderedPlaylistIds]
+  /// is every enabled playlist's id, first-to-last in the order the user
+  /// just arranged them in [PlaylistPriorityScreen]; this stamps 0, 1, 2,
+  /// ... onto that tab's override field for each one in turn. One storage
+  /// write and one notify for the whole list, not one per playlist —
+  /// dragging already fires this on every drop, and nothing here needs
+  /// per-item granularity the way a single playlist's own settings edit
+  /// does.
+  Future<void> setCategoryPriority(
+      String tabCategory, List<String> orderedPlaylistIds) async {
+    final all = _storage.getPlaylists();
+    final updated = all.map((p) {
+      final index = orderedPlaylistIds.indexOf(p.id);
+      if (index == -1) return p;
+      return switch (tabCategory) {
+        'tv' => p.copyWith(liveSortOrder: index),
+        'vod' => p.copyWith(vodSortOrder: index),
+        'series' => p.copyWith(seriesSortOrder: index),
+        _ => p,
+      };
+    }).toList();
+    await _storage.setPlaylists(updated);
+    for (final profile in updated) {
+      final session = _sessionFor(profile.id);
+      if (session != null) session.profile = profile;
+    }
+    notifyListeners();
+  }
+
   Future<void> removePlaylist(String playlistId) async {
     final updated =
         _storage.getPlaylists().where((p) => p.id != playlistId).toList();
@@ -447,21 +491,23 @@ class PlaylistManager extends ChangeNotifier {
   /// Live-browsable channels for every enabled playlist — `liveChannels`
   /// for an Xtream session, the flat M3U list for an M3U one (M3U mode has
   /// no separate live/VOD/series storage split, unlike Xtream).
-  List<Channel> get channels => _enabledSessionsSorted
+  List<Channel> get channels => _enabledSessionsSortedFor('tv')
       .expand((s) => s.isXtream ? s.liveChannels : s.channels)
       .toList();
 
   List<Channel> get allCachedVod =>
-      _enabledSessionsSorted.expand((s) => s.allCachedVod).toList();
-  List<XtreamSeries> get allCachedSeries =>
-      _enabledSessionsSorted.expand((s) => s.allCachedSeries).toList();
+      _enabledSessionsSortedFor('vod').expand((s) => s.allCachedVod).toList();
+  List<XtreamSeries> get allCachedSeries => _enabledSessionsSortedFor('series')
+      .expand((s) => s.allCachedSeries)
+      .toList();
 
   List<M3uGroup> get tvGroups =>
-      _enabledSessionsSorted.expand((s) => s.tvGroups).toList();
+      _enabledSessionsSortedFor('tv').expand((s) => s.tvGroups).toList();
   List<M3uGroup> get vodGroups =>
-      _enabledSessionsSorted.expand((s) => s.vodGroups).toList();
-  List<M3uGroup> get seriesGroups =>
-      _enabledSessionsSorted.expand((s) => s.seriesGroups).toList();
+      _enabledSessionsSortedFor('vod').expand((s) => s.vodGroups).toList();
+  List<M3uGroup> get seriesGroups => _enabledSessionsSortedFor('series')
+      .expand((s) => s.seriesGroups)
+      .toList();
 
   int? vodCategoryTotalCount(String playlistId, String categoryName) =>
       _sessionFor(playlistId)?.vodCategoryTotalCountFor(categoryName);

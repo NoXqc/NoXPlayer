@@ -81,11 +81,23 @@ class TmdbEnrichmentService {
   Future<void> enrichVod(List<Channel> items,
       {void Function(int done, int total)? onProgress}) async {
     final key = _storage.getTmdbApiKey();
+    // Deliberately NOT also gated on c.backdropUrl == null — this field
+    // didn't exist before this app version, so every item enriched by an
+    // earlier version has it null forever, same as every other item that
+    // genuinely still needs enriching. Including it here once looked like
+    // the obvious way to backfill backdrops onto already-enriched items,
+    // but reported directly as a real crash: reopening any category
+    // that had already been fully enriched silently re-queued its *entire*
+    // item count (hundreds to thousands) as "pending" again, firing that
+    // many TMDB requests and large w1280 image decodes in one burst. A
+    // backdrop only ever gets backfilled as a side effect of an item
+    // genuinely needing [releaseDate]/[posterUrl] enrichment for some
+    // other reason; items enriched before this field existed just never
+    // get one, and keep using the poster-beside-text/poster-crop fallback
+    // instead — a real trade-off, not an oversight, in exchange for not
+    // silently re-enriching a whole already-done catalog on every open.
     final pending = items
-        .where((c) =>
-            c.releaseDate == null ||
-            c.posterUrl == null ||
-            c.backdropUrl == null)
+        .where((c) => c.releaseDate == null || c.posterUrl == null)
         .toList();
     if (key == null || key.isEmpty || pending.isEmpty) {
       onProgress?.call(0, 0);
@@ -144,11 +156,9 @@ class TmdbEnrichmentService {
   Future<void> enrichSeries(List<XtreamSeries> items,
       {void Function(int done, int total)? onProgress}) async {
     final key = _storage.getTmdbApiKey();
+    // See enrichVod's matching comment — same reasoning, same fix.
     final pending = items
-        .where((s) =>
-            s.releaseDate == null ||
-            s.posterUrl == null ||
-            s.backdropUrl == null)
+        .where((s) => s.releaseDate == null || s.posterUrl == null)
         .toList();
     if (key == null || key.isEmpty || pending.isEmpty) {
       onProgress?.call(0, 0);

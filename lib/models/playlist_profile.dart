@@ -17,6 +17,9 @@ class PlaylistProfile {
     this.xtreamPassword,
     this.enabled = true,
     required this.sortOrder,
+    this.liveSortOrder,
+    this.vodSortOrder,
+    this.seriesSortOrder,
     this.syncFrequencyDays = AppConstants.defaultSyncFrequencyDays,
     required this.createdAt,
     this.expiresAt,
@@ -49,8 +52,32 @@ class PlaylistProfile {
   /// Display/load order in every merged list (Live TV groups, Movies/TV
   /// Shows categories) — lower sorts first, so "Playlist A's groups, then
   /// a separator, then Playlist B's groups" has a stable, user-visible
-  /// order instead of whatever order a Map/Set happens to iterate in.
+  /// order instead of whatever order a Map/Set happens to iterate in. The
+  /// base/fallback order — see [liveSortOrder]/[vodSortOrder]/
+  /// [seriesSortOrder] for the per-tab overrides that take priority over
+  /// this when set.
   int sortOrder;
+
+  /// Per-tab overrides of [sortOrder] — requested directly: two playlists
+  /// (an OTT and a TREX account) where the preferred order for Live TV
+  /// ("TREX's groups first") was the *opposite* of the preferred order
+  /// for Movies/TV Shows ("OTT's first"), which a single shared order
+  /// could never express at all. Null (the default for every playlist
+  /// until a user explicitly reprioritizes one of these three tabs) means
+  /// "use [sortOrder]" — nothing changes for anyone who's never touched
+  /// this, and setting one tab's priority never affects the other two.
+  int? liveSortOrder;
+  int? vodSortOrder;
+  int? seriesSortOrder;
+
+  /// [sortOrder], unless a 'tv'/'vod'/'series' override is set for
+  /// [tabCategory] — see [liveSortOrder]'s doc comment.
+  int sortOrderFor(String tabCategory) => switch (tabCategory) {
+        'tv' => liveSortOrder ?? sortOrder,
+        'vod' => vodSortOrder ?? sortOrder,
+        'series' => seriesSortOrder ?? sortOrder,
+        _ => sortOrder,
+      };
 
   /// "Update content every N days" — used to live as one global setting
   /// (`AppConstants.keySyncFrequencyDays`); now per-playlist, since two
@@ -121,6 +148,18 @@ class PlaylistProfile {
     String? xtreamPassword,
     bool? enabled,
     int? sortOrder,
+    // Nullable fields that need their own "was this even passed" flag —
+    // a plain `?? this.liveSortOrder` can't distinguish "caller wants
+    // this cleared back to null (fall back to sortOrder)" from "caller
+    // didn't mention it at all", unlike every other field above where
+    // null-means-unset was never a meaningful distinct state to begin
+    // with.
+    int? liveSortOrder,
+    bool clearLiveSortOrder = false,
+    int? vodSortOrder,
+    bool clearVodSortOrder = false,
+    int? seriesSortOrder,
+    bool clearSeriesSortOrder = false,
     int? syncFrequencyDays,
     DateTime? expiresAt,
     List<String>? backupServers,
@@ -137,6 +176,13 @@ class PlaylistProfile {
         xtreamPassword: xtreamPassword ?? this.xtreamPassword,
         enabled: enabled ?? this.enabled,
         sortOrder: sortOrder ?? this.sortOrder,
+        liveSortOrder:
+            clearLiveSortOrder ? null : (liveSortOrder ?? this.liveSortOrder),
+        vodSortOrder:
+            clearVodSortOrder ? null : (vodSortOrder ?? this.vodSortOrder),
+        seriesSortOrder: clearSeriesSortOrder
+            ? null
+            : (seriesSortOrder ?? this.seriesSortOrder),
         syncFrequencyDays: syncFrequencyDays ?? this.syncFrequencyDays,
         createdAt: createdAt,
         expiresAt: expiresAt ?? this.expiresAt,
@@ -155,6 +201,9 @@ class PlaylistProfile {
         'xtreamPassword': xtreamPassword,
         'enabled': enabled,
         'sortOrder': sortOrder,
+        'liveSortOrder': liveSortOrder,
+        'vodSortOrder': vodSortOrder,
+        'seriesSortOrder': seriesSortOrder,
         'syncFrequencyDays': syncFrequencyDays,
         'createdAt': createdAt.toIso8601String(),
         'expiresAt': expiresAt?.toIso8601String(),
@@ -174,6 +223,9 @@ class PlaylistProfile {
         xtreamPassword: json['xtreamPassword'] as String?,
         enabled: json['enabled'] as bool? ?? true,
         sortOrder: json['sortOrder'] as int? ?? 0,
+        liveSortOrder: json['liveSortOrder'] as int?,
+        vodSortOrder: json['vodSortOrder'] as int?,
+        seriesSortOrder: json['seriesSortOrder'] as int?,
         syncFrequencyDays: json['syncFrequencyDays'] as int? ??
             AppConstants.defaultSyncFrequencyDays,
         createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ??
