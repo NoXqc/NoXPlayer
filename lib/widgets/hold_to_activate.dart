@@ -48,6 +48,26 @@ class _HoldToActivateState extends State<HoldToActivate> {
   Timer? _holdTimer;
   bool _holdFired = false;
 
+  /// True only between this exact instance's own KeyDownEvent and its
+  /// matching KeyUpEvent — guards against an *orphaned* KeyUp firing
+  /// [onTap] on its own. Flutter routes a key event to whatever currently
+  /// holds primary focus at the moment that event arrives, not to
+  /// whoever held focus when the matching key-down fired — so a
+  /// `requestFocus()` call made elsewhere in response to *this* same
+  /// physical Select press (e.g. switching live-TV groups, which
+  /// explicitly refocuses the new group's first channel row right in its
+  /// own key-down handler) can move focus onto a different
+  /// `HoldToActivate` before the key is physically released. That row
+  /// then receives this press's key-*up* with no key-down of its own ever
+  /// having reached it — previously indistinguishable from a real short
+  /// press here, so it fired `onTap` reflexively. Reported directly and
+  /// confirmed: selecting Live TV's "Favourites" group from a different
+  /// group's channel list launched that new list's first channel straight
+  /// into fullscreen, with the list itself never visibly shown — exactly
+  /// this: the group-switch's own key-down retargeted focus onto that
+  /// row, and the same press's key-up then "activated" it a moment later.
+  bool _downReceived = false;
+
   @override
   void dispose() {
     _holdTimer?.cancel();
@@ -63,6 +83,7 @@ class _HoldToActivateState extends State<HoldToActivate> {
 
     if (event is KeyDownEvent) {
       _holdFired = false;
+      _downReceived = true;
       _holdTimer?.cancel();
       final onHold = widget.onHold;
       if (onHold != null) {
@@ -75,7 +96,9 @@ class _HoldToActivateState extends State<HoldToActivate> {
     }
     if (event is KeyUpEvent) {
       _holdTimer?.cancel();
-      if (!_holdFired) widget.onTap();
+      final hadMatchingDown = _downReceived;
+      _downReceived = false;
+      if (hadMatchingDown && !_holdFired) widget.onTap();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;

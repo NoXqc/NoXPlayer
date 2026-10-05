@@ -676,7 +676,25 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       _guideFocusedChannel = null;
       _guideFocusedProgram = null;
     });
-    if (group == null || group == _favoritesGroupSentinel) return;
+    if (group == null) return;
+    if (group == _favoritesGroupSentinel) {
+      // Only reachable from the Live TV tab's own pinned "Favourites" row
+      // (see _buildGroupsColumn) — same explicit reset every real live
+      // group already gets below, see _resetLiveListFocus's own doc
+      // comment. This case used to return immediately above without it,
+      // which — combined with the content list having no key to force a
+      // genuine remount across groups (see _buildLiveList's own ListView
+      // .builder) — meant Flutter could silently reuse the previous
+      // group's still-focused row Element for this list's row 0 instead
+      // of creating a fresh one. If a Select press's key-*up* for
+      // whatever row picked "Favourites" arrived after that reuse already
+      // happened, it could land on the reused row's own now-stale
+      // `HoldToActivate` state instead, auto-"pressing" it — reported
+      // directly as the first favourite channel launching into fullscreen
+      // on its own, with nothing actually tapped.
+      _resetLiveListFocus();
+      return;
+    }
     if (_tab == 'Favorites') {
       // A favorited *group* here can be a live TV group, a movies group,
       // or a TV shows group (see _showGroupOptions — long-pressing a group
@@ -1092,16 +1110,29 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       }
       return;
     }
-    // Popping fullscreen while sitting on a Movies/TV Shows tab used to
-    // leave focus restoration entirely to Flutter's own implicit handling
-    // after the pop — fine on a small catalog, but confirmed on real
-    // hardware to cause the exact same class of ANR as the fullscreen
-    // right-arrow bug (an expensive default focus search, this time
-    // triggered by the pop itself rather than a keypress) once the
-    // Movies/TV Shows catalog is large. Explicitly handing focus to the
-    // tabs rail — always small, regardless of catalog size — gives
-    // Flutter a cheap, deliberate target instead of letting it search.
-    _col0Scope.requestFocus();
+    // Popping fullscreen *or* a movie/series detail screen while sitting
+    // on a Movies/TV Shows tab used to leave focus restoration entirely
+    // to Flutter's own implicit handling after the pop — fine on a small
+    // catalog, but confirmed on real hardware to cause the exact same
+    // class of ANR as the fullscreen right-arrow bug (an expensive
+    // default focus search, this time triggered by the pop itself rather
+    // than a keypress) once the Movies/TV Shows catalog is large. Always
+    // landing on the tabs rail instead (a cheap, deliberate target
+    // regardless of catalog size) fixed the ANR, but reported directly as
+    // its own regression: backing out of a title always jumped all the
+    // way back to the tabs rail instead of back to the catalog row it was
+    // opened from. [_lastOpenedBrowseGroup] gives this an equally cheap,
+    // deliberate target for that specific row instead — the same
+    // explicit `_scrollToBrowseGroup` jump the groups rail itself already
+    // uses, never Flutter's own default search — so this keeps the ANR
+    // fix while actually landing back where the user was.
+    final openedFrom = _lastOpenedBrowseGroup;
+    _lastOpenedBrowseGroup = null;
+    if (openedFrom != null) {
+      _scrollToBrowseGroup(openedFrom.playlistId, openedFrom.title);
+    } else {
+      _col0Scope.requestFocus();
+    }
   }
 
   /// Same channel-list filtering [_buildLiveList] renders, factored out so
@@ -1275,12 +1306,26 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         MaterialPageRoute(builder: (_) => PlayerScreen(channel: channel)));
   }
 
-  void _openMovie(Channel channel) {
+  /// The catalog row a movie/series was just opened from — see
+  /// [didPopNext]'s own doc comment for why. Set right before the push,
+  /// consumed (and cleared) by the very next [didPopNext]; a `null` here
+  /// (Continue Watching, or anywhere else with no real category row to go
+  /// back to) just keeps the old "land on the tabs rail" fallback.
+  ({String playlistId, String title})? _lastOpenedBrowseGroup;
+
+  void _openMovie(Channel channel, {String? groupPlaylistId, String? groupTitle}) {
+    _lastOpenedBrowseGroup = (groupPlaylistId != null && groupTitle != null)
+        ? (playlistId: groupPlaylistId, title: groupTitle)
+        : null;
     Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => MovieDetailScreen(channel: channel)));
   }
 
-  void _openSeries(XtreamSeries series) {
+  void _openSeries(XtreamSeries series,
+      {String? groupPlaylistId, String? groupTitle}) {
+    _lastOpenedBrowseGroup = (groupPlaylistId != null && groupTitle != null)
+        ? (playlistId: groupPlaylistId, title: groupTitle)
+        : null;
     Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => SeriesDetailScreen(series: series)));
   }
@@ -2665,6 +2710,19 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
     return Consumer<PlaybackService>(
       builder: (context, playback, _) => ListView.builder(
+        // Keyed by which group is actually showing — without this,
+        // switching groups (including the Live TV tab's own "Favourites"
+        // entry) left Flutter free to reuse each row's Element/FocusNode
+        // positionally across completely different channel lists, the
+        // same class of cross-list focus leak already fixed elsewhere in
+        // this file (the browse groups rail, the tabs-to-groups column
+        // jump). Confirmed as the actual cause of a reused row's own
+        // `HoldToActivate` state receiving a stray key-up event meant for
+        // whatever was tapped in the groups column, auto-"pressing" it —
+        // reported directly as the first favourite channel launching into
+        // fullscreen on its own. A key here forces a genuinely fresh
+        // Element (and fresh `HoldToActivate` state) every time.
+        key: ValueKey('$_tab::${_selectedGroup ?? _effectiveLiveGroup(playlist)}'),
         controller: _liveListController,
         itemCount: channels.length,
         itemBuilder: (context, i) {
@@ -2951,7 +3009,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                     : null,
                 isFavorite: c.isFavorite,
                 onToggleFavorite: () => _toggleFavoriteWithFeedback(context, c),
-                onTap: () => _openMovie(c),
+                onTap: () => _openMovie(c,
+                    groupPlaylistId: group.playlistId, groupTitle: group.title),
                 onFocusGained: () {
                   _updateBrowseFocus(
                     playlist: playlist,
@@ -3054,7 +3113,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             isFavorite: s.isFavorite,
             onToggleFavorite: () =>
                 _toggleSeriesFavoriteWithFeedback(context, s),
-            onTap: () => _openSeries(s),
+            onTap: () => _openSeries(s,
+                groupPlaylistId: group.playlistId, groupTitle: group.title),
             onFocusGained: () {
               _updateBrowseFocus(
                 playlist: playlist,
