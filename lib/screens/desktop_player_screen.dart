@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -98,17 +100,26 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
   /// case, even though this screen did create it.
   bool _handedOffToMiniPlayer = false;
 
+  /// Forces a fresh re-open whenever a *live* channel's player reports
+  /// `completed` on its own. mpv's native reconnect config (see the
+  /// `demuxer-lavf-o` property set in [initState]) doesn't reliably catch
+  /// every way a live stream can end up here — confirmed directly: a
+  /// clean `lavf: EOF reached` with no reconnect attempt logged
+  /// afterward at all, despite `reconnect_at_eof=1` being set. A live
+  /// channel should never just "complete," so reacting to it here is a
+  /// recovery path this app fully controls, regardless of the exact
+  /// low-level ffmpeg cause.
+  StreamSubscription<bool>? _completedSubscription;
+
   bool get _isLive => Channel.isLiveId(_currentChannel.rawId);
   List<Channel> get _queue => widget.queue ?? const [];
-  int get _currentIndex =>
-      _queue.indexWhere((c) => c.id == _currentChannel.id);
+  int get _currentIndex => _queue.indexWhere((c) => c.id == _currentChannel.id);
   Channel? get _previousEpisode =>
       !_isLive && _currentIndex > 0 ? _queue[_currentIndex - 1] : null;
-  Channel? get _nextEpisode => !_isLive &&
-          _currentIndex >= 0 &&
-          _currentIndex < _queue.length - 1
-      ? _queue[_currentIndex + 1]
-      : null;
+  Channel? get _nextEpisode =>
+      !_isLive && _currentIndex >= 0 && _currentIndex < _queue.length - 1
+          ? _queue[_currentIndex + 1]
+          : null;
 
   @override
   void initState() {
@@ -120,27 +131,42 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
       _ownsPlayer = false;
     } else {
       _player = Player();
-      // Disables ffmpeg's demuxer-level Range-request reconnect on a
-      // live, non-seekable TS stream — confirmed (via an identical,
-      // maintainer-diagnosed bug in another mpv/ffmpeg-based player,
-      // IPTVnator) as the actual cause of a very specific symptom:
-      // playback silently freezing on its last frame after ~15-20s, no
-      // error, no black screen. mpv's default reconnect handling issues
-      // that Range reconnect periodically; this provider's live stream
-      // endpoint doesn't support it, so the reconnect attempt just hangs
-      // forever instead of either succeeding or failing cleanly. Reported
-      // directly as exactly this symptom in Multiview — not a provider
-      // connection-limit issue after all, despite looking like one.
-      (_player.platform as NativePlayer)
-          .setProperty('demuxer-lavf-o', 'reconnect_streamed=0');
+      // Best-effort mpv/ffmpeg-level reconnect tuning for a live,
+      // non-seekable TS stream — reconnect_streamed=1 is necessary for
+      // mpv to even attempt recovering a genuinely dropped/reset read
+      // (confirmed via log as `ffmpeg: tcp: ffurl_read returned -138` on
+      // one specific provider), and rw_timeout bounds any single blocked
+      // read/write (including a Range-reconnect attempt hanging forever
+      // on a server that doesn't support it — the *original* bug this
+      // property set replaces a plain reconnect_streamed=0 workaround
+      // for) to a fixed ceiling instead of hanging indefinitely.
+      //
+      // This alone isn't fully reliable, though — confirmed directly: a
+      // clean `lavf: EOF reached` with no reconnect attempt logged
+      // afterward at all, despite reconnect_at_eof=1 being set, meaning
+      // mpv doesn't catch every way a live stream can end up here. The
+      // real safety net is _completedSubscription below, which reacts at
+      // the app level instead of depending on mpv's own reconnect logic.
+      (_player.platform as NativePlayer).setProperty('demuxer-lavf-o',
+          'reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5,rw_timeout=15000000');
       _videoController = VideoController(_player);
       _player.open(Media(_currentChannel.url));
     }
     if (_isLive) _DesktopLiveHistory.record(_currentChannel);
+    if (_isLive) {
+      _completedSubscription = _player.stream.completed.listen((completed) {
+        if (completed && mounted) {
+          debugPrint(
+              '[auto-recover] live channel reported completed — reopening');
+          _reload();
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
+    _completedSubscription?.cancel();
     if (_ownsPlayer && !_handedOffToMiniPlayer) _player.dispose();
     super.dispose();
   }
@@ -215,13 +241,13 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
               else
                 ...history.map((c) => ListTile(
                       dense: true,
-                      leading: const Icon(Icons.tv,
-                          color: Colors.white54, size: 20),
+                      leading:
+                          const Icon(Icons.tv, color: Colors.white54, size: 20),
                       title: Text(c.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style:
-                              const TextStyle(color: Colors.white, fontSize: 14)),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 14)),
                       onTap: () => Navigator.of(sheetContext).pop(c),
                     )),
             ],
@@ -263,8 +289,7 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
               // only controls surface.
               Center(
                   child: Video(
-                      controller: _videoController,
-                      controls: NoVideoControls)),
+                      controller: _videoController, controls: NoVideoControls)),
               if (_controlsVisible) ...[
                 Positioned(
                   top: 0,
@@ -285,8 +310,8 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
                     child: Row(
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.arrow_back,
-                              color: Colors.white),
+                          icon:
+                              const Icon(Icons.arrow_back, color: Colors.white),
                           onPressed: _handleBack,
                         ),
                         Expanded(
@@ -434,11 +459,11 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
                                 IconButton(
                                   iconSize: 40,
                                   color: Colors.white,
-                                  icon: Icon(playing
-                                      ? Icons.pause
-                                      : Icons.play_arrow),
-                                  onPressed: () =>
-                                      playing ? _player.pause() : _player.play(),
+                                  icon: Icon(
+                                      playing ? Icons.pause : Icons.play_arrow),
+                                  onPressed: () => playing
+                                      ? _player.pause()
+                                      : _player.play(),
                                 ),
                                 if (!_isLive)
                                   IconButton(

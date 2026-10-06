@@ -385,9 +385,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         // ever touching Settings or the PIN pad at all. Hiding a channel
         // only makes things stricter, so it stays ungated either way.
         if (isHidden) {
-          final unlocked = await context
-              .read<ViewerProfileService>()
-              .requireUnlock(context);
+          final unlocked =
+              await context.read<ViewerProfileService>().requireUnlock(context);
           if (!unlocked || !mounted) return;
         }
         _toggleHiddenWithFeedback(context, channel);
@@ -459,6 +458,34 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// call is asking for. See `_TimelineGuideState._windowStart`'s doc
   /// comment for why that's ever needed at all.
   GlobalKey<_TimelineGuideState> _timelineGuideKey = GlobalKey();
+
+  /// The Timeline guide's own filter toggle button
+  /// (`_TimelineFilterButton`, rendered above its channel column).
+  /// Deliberately a *separate* node from `_timelineFilterFieldFocusNode`
+  /// below — sharing one node across the button/`TextField` swap was tried
+  /// first and confirmed broken on real hardware (the Formuler's on-screen
+  /// keyboard never opened, through two different workarounds) because a
+  /// `TextField` only reliably opens a real platform text-input connection
+  /// off a genuine focus-*gain* event, and a node that's already focused
+  /// before the `TextField` even mounts never produces one. Two separate
+  /// nodes plus a fresh `autofocus: true` on the field itself (same
+  /// pattern `SearchScreen`'s own `TextField` already uses successfully on
+  /// this exact device) sidesteps the whole problem instead of fighting it.
+  final FocusNode _timelineFilterButtonFocusNode =
+      FocusNode(debugLabel: 'timeline-filter-button');
+  final FocusNode _timelineFilterFieldFocusNode =
+      FocusNode(debugLabel: 'timeline-filter-field');
+  final TextEditingController _timelineFilterController =
+      TextEditingController();
+
+  /// Whether the Timeline guide's per-group channel filter bar is showing
+  /// in place of the live preview box — see `_buildTimelineFilterBar`.
+  bool _timelineFilterActive = false;
+
+  /// Current filter text — applied only to the Timeline guide's own
+  /// channel list (`_filteredLiveChannelsForGuide`), never the plain
+  /// "Live" list view.
+  String _timelineFilterQuery = '';
 
   /// A starting estimate only — rows can grow to two lines for a long
   /// channel name — refined by `Scrollable.ensureVisible` once the target
@@ -1033,6 +1060,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       node.dispose();
     }
     _firstGroupRowFocusNode.dispose();
+    _timelineFilterButtonFocusNode.dispose();
+    _timelineFilterFieldFocusNode.dispose();
+    _timelineFilterController.dispose();
     _continueWatchingFirstFocusNode.dispose();
     _moviesWhatsNewPlayFocusNode.dispose();
     _showsWhatsNewPlayFocusNode.dispose();
@@ -1149,6 +1179,41 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
             ? playlist.favoriteLiveChannels
             : playlist.visibleChannels(
                 groupTitle: _effectiveLiveGroup(playlist), category: 'tv');
+  }
+
+  /// [_currentLiveChannels], narrowed by [_timelineFilterQuery] — applied
+  /// only at the Timeline guide's own `channels:` argument, never inside
+  /// [_currentLiveChannels] itself, so the plain "Live" list view (which
+  /// also calls that method) is unaffected. Same case-insensitive
+  /// substring match `SearchScreen` uses for its own channel results.
+  List<Channel> _filteredLiveChannelsForGuide(PlaylistManager playlist) {
+    final channels = _currentLiveChannels(playlist);
+    final q = _timelineFilterQuery.trim().toLowerCase();
+    if (q.isEmpty) return channels;
+    return channels.where((c) => c.name.toLowerCase().contains(q)).toList();
+  }
+
+  void _openTimelineFilter() {
+    // No manual focus/keyboard plumbing needed here — _buildTimelineFilterBar's
+    // TextField carries its own autofocus: true on _timelineFilterFieldFocusNode,
+    // which is a fresh node that's never been focused before this exact
+    // moment. That's the same pattern SearchScreen's own TextField already
+    // relies on to open the keyboard reliably on this hardware — see
+    // _timelineFilterButtonFocusNode's doc comment for why the earlier
+    // shared-node approach (manual requestFocus/unfocus/refocus/
+    // TextInput.show, none of it worked) was abandoned in favor of this.
+    setState(() => _timelineFilterActive = true);
+  }
+
+  void _closeTimelineFilter() {
+    _timelineFilterController.clear();
+    setState(() {
+      _timelineFilterActive = false;
+      _timelineFilterQuery = '';
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _timelineFilterButtonFocusNode.requestFocus();
+    });
   }
 
   /// The Live TV groups column has no standalone "All" entry anymore — it
@@ -1313,7 +1378,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// back to) just keeps the old "land on the tabs rail" fallback.
   ({String playlistId, String title})? _lastOpenedBrowseGroup;
 
-  void _openMovie(Channel channel, {String? groupPlaylistId, String? groupTitle}) {
+  void _openMovie(Channel channel,
+      {String? groupPlaylistId, String? groupTitle}) {
     _lastOpenedBrowseGroup = (groupPlaylistId != null && groupTitle != null)
         ? (playlistId: groupPlaylistId, title: groupTitle)
         : null;
@@ -1342,8 +1408,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   }
 
   void _openProfilePicker() {
-    Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const ProfilePickerScreen()));
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const ProfilePickerScreen()));
   }
 
   void _openSearch() {
@@ -1682,10 +1748,26 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                                       // See _TimelineGuideState.moveVertical.
                                       if (_focusDepth == 2 &&
                                           showTimelineGuide) ...{
+                                        // Down from the filter button or
+                                        // field (two separate nodes — see
+                                        // _timelineFilterButtonFocusNode's
+                                        // doc comment for why) enters the
+                                        // guide via focusEntry() instead of
+                                        // moveVertical(1), which operates on
+                                        // a row index that's meaningless
+                                        // until the guide's actually been
+                                        // entered once.
                                         const SingleActivator(
-                                                LogicalKeyboardKey.arrowDown):
-                                            () => _timelineGuideKey.currentState
-                                                ?.moveVertical(1),
+                                            LogicalKeyboardKey
+                                                .arrowDown): () =>
+                                            (_timelineFilterButtonFocusNode
+                                                        .hasFocus ||
+                                                    _timelineFilterFieldFocusNode
+                                                        .hasFocus)
+                                                ? _timelineGuideKey.currentState
+                                                    ?.focusEntry()
+                                                : _timelineGuideKey.currentState
+                                                    ?.moveVertical(1),
                                         const SingleActivator(
                                                 LogicalKeyboardKey.arrowUp):
                                             () => _timelineGuideKey.currentState
@@ -1842,8 +1924,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
               // focus — stopping it here is the same fix as the Windows
               // branch above, just a different background player.
               unawaited(context.read<PlaybackService>().stop());
-              Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => const MultiviewScreen()));
+              Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const MultiviewScreen()));
             }
           },
         ),
@@ -2256,6 +2338,59 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     );
   }
 
+  /// Replaces [_buildTimelinePreviewBox] (and the description panel next
+  /// to it) while [_timelineFilterActive] — reclaims that row's screen
+  /// space for the filter input itself. The Android TV system on-screen
+  /// keyboard docks at the bottom of the screen, and the guide below this
+  /// row is already fairly short; shrinking this row down to just the
+  /// field (see the `SizedBox(height: 56, ...)` wrapping it in
+  /// [_buildLiveRegion]) is the only real lever available to keep the
+  /// now-narrower filtered row list visible above wherever the keyboard
+  /// ends up — whether that's actually enough headroom on a given real
+  /// device can only be confirmed on hardware, not here.
+  Widget _buildTimelineFilterBar() {
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border:
+            Border.all(color: Colors.white.withValues(alpha: 0.18), width: 1.5),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          const Icon(Icons.search, color: Colors.white70, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _timelineFilterController,
+              // A fresh node, never previously focused, with autofocus —
+              // the one thing confirmed to actually open the keyboard on
+              // the Formuler (same pattern SearchScreen already uses). See
+              // _timelineFilterButtonFocusNode's doc comment for why this
+              // isn't the shared button node.
+              focusNode: _timelineFilterFieldFocusNode,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                hintText: 'Filter channels in this group...',
+                hintStyle: TextStyle(color: Colors.white54),
+                border: InputBorder.none,
+              ),
+              onChanged: (value) =>
+                  setState(() => _timelineFilterQuery = value),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Close filter',
+            icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+            onPressed: _closeTimelineFilter,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLiveRegion(PlaylistManager playlist, EpgService epg) {
     // Kick off the live channel list's first load the moment this tab is
     // actually shown — see ensureLiveChannelsLoaded's doc comment for why
@@ -2328,94 +2463,118 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       // the guide's own channel-label column has to start below the
       // header, not run underneath it. The groups column is a sibling of
       // this whole region in the outer Row, so it stays full height.
-      final previewRow = Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Windows gets a proportionally wider video box (Expanded,
-          // instead of a fixed 284px) to match its own taller preview
-          // row below — a fixed width sized for the Android TV box's
-          // fixed 160px-tall row would look like a thin sliver once that
-          // row is several times taller on a resizable desktop window.
-          Platform.isWindows
-              ? Expanded(
-                  // flex 2:1 against the description panel's flex 1 below
-                  // (was 2:3, i.e. 40% of the row) — requested directly:
-                  // extend the mini player right by at least 50%; 2:1
-                  // gives it roughly two-thirds of the row (a ~67%
-                  // increase from 40%), well past that minimum, since the
-                  // live program description next to it doesn't need to
-                  // be nearly that wide to stay readable.
-                  flex: 2,
-                  child: Container(
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.18),
-                          width: 1.5),
-                    ),
-                    child: _buildTimelinePreviewBox(channel),
+      // While filtering, the preview box/description panel are replaced
+      // entirely by _buildTimelineFilterBar — reclaiming that row's
+      // screen space for the guide below it is the only real lever
+      // available against the system on-screen keyboard eating into an
+      // already-small guide area once it pops up (see
+      // _buildTimelineFilterBar's own doc comment).
+      final previewRow = _timelineFilterActive
+          ? _buildTimelineFilterBar()
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Windows gets a proportionally wider video box (Expanded,
+                // instead of a fixed 284px) to match its own taller preview
+                // row below — a fixed width sized for the Android TV box's
+                // fixed 160px-tall row would look like a thin sliver once that
+                // row is several times taller on a resizable desktop window.
+                Platform.isWindows
+                    ? Expanded(
+                        // flex 2:1 against the description panel's flex 1 below
+                        // (was 2:3, i.e. 40% of the row) — requested directly:
+                        // extend the mini player right by at least 50%; 2:1
+                        // gives it roughly two-thirds of the row (a ~67%
+                        // increase from 40%), well past that minimum, since the
+                        // live program description next to it doesn't need to
+                        // be nearly that wide to stay readable.
+                        flex: 2,
+                        child: Container(
+                          clipBehavior: Clip.antiAlias,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.18),
+                                width: 1.5),
+                          ),
+                          child: _buildTimelinePreviewBox(channel),
+                        ),
+                      )
+                    : Container(
+                        width: 284,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.18),
+                              width: 1.5),
+                        ),
+                        child: _buildTimelinePreviewBox(channel),
+                      ),
+                Expanded(
+                  flex: 1,
+                  child: _GuideNowPanel(
+                    focusedChannel: _guideFocusedChannel,
+                    focusedProgram: _guideFocusedProgram,
+                    playingChannel: channel,
+                    epg: epg,
                   ),
-                )
-              : Container(
-                  width: 284,
-                  clipBehavior: Clip.antiAlias,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.18),
-                        width: 1.5),
-                  ),
-                  child: _buildTimelinePreviewBox(channel),
                 ),
-          Expanded(
-            flex: 1,
-            child: _GuideNowPanel(
-              focusedChannel: _guideFocusedChannel,
-              focusedProgram: _guideFocusedProgram,
-              playingChannel: channel,
-              epg: epg,
-            ),
-          ),
-        ],
-      );
+              ],
+            );
 
       final guide = _TimelineGuide(
         key: _timelineGuideKey,
-        channels: _currentLiveChannels(playlist),
+        channels: _filteredLiveChannelsForGuide(playlist),
         epg: epg,
         onOpen: _selectChannel,
         onFocusChanged: _onGuideFocusChanged,
         onShowOptions: _showChannelOptions,
         onWindowStale: () => setState(() => _timelineGuideKey = GlobalKey()),
+        filterFocusNode: _timelineFilterButtonFocusNode,
+        onFilterToggle: _openTimelineFilter,
+        // While filtering, focus belongs to the field (its own fresh node);
+        // otherwise to the button. Only the button is actually mounted
+        // above the guide when not filtering, so requesting focus on the
+        // field node here while inactive would land nowhere — the field
+        // widget doesn't exist yet in that state.
+        onReachedTop: () => _timelineFilterActive
+            ? _timelineFilterFieldFocusNode.requestFocus()
+            : _timelineFilterButtonFocusNode.requestFocus(),
       );
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: Platform.isWindows
+        children: _timelineFilterActive
             ? [
-                // Android TV's fixed 160px preview row read as the right
-                // ratio there (reported directly), but on a much taller,
-                // resizable PC window that same fixed height left the
-                // mini player tiny against a disproportionately dominant
-                // guide below it (roughly an 85/15 split in the guide's
-                // favor on a typical window). Flex-based instead of a
-                // fixed height, so it scales with the actual window
-                // instead of a constant tuned for a TV's screen — an even
-                // 50/50 split here cuts the guide's own share by well
-                // over 40% (85 -> 50) and gives the mini player a real,
-                // substantial size instead of the sliver it was, reported
-                // directly as still too small even after the preview
-                // itself got real video in it.
-                Expanded(flex: 1, child: previewRow),
-                const Divider(height: 12),
-                Expanded(flex: 1, child: guide),
-              ]
-            : [
-                SizedBox(height: 160, child: previewRow),
+                SizedBox(height: 56, child: previewRow),
                 const Divider(height: 12),
                 Expanded(child: guide),
-              ],
+              ]
+            : Platform.isWindows
+                ? [
+                    // Android TV's fixed 160px preview row read as the right
+                    // ratio there (reported directly), but on a much taller,
+                    // resizable PC window that same fixed height left the
+                    // mini player tiny against a disproportionately dominant
+                    // guide below it (roughly an 85/15 split in the guide's
+                    // favor on a typical window). Flex-based instead of a
+                    // fixed height, so it scales with the actual window
+                    // instead of a constant tuned for a TV's screen — an even
+                    // 50/50 split here cuts the guide's own share by well
+                    // over 40% (85 -> 50) and gives the mini player a real,
+                    // substantial size instead of the sliver it was, reported
+                    // directly as still too small even after the preview
+                    // itself got real video in it.
+                    Expanded(flex: 1, child: previewRow),
+                    const Divider(height: 12),
+                    Expanded(flex: 1, child: guide),
+                  ]
+                : [
+                    SizedBox(height: 160, child: previewRow),
+                    const Divider(height: 12),
+                    Expanded(child: guide),
+                  ],
       );
     }
 
@@ -2722,7 +2881,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         // reported directly as the first favourite channel launching into
         // fullscreen on its own. A key here forces a genuinely fresh
         // Element (and fresh `HoldToActivate` state) every time.
-        key: ValueKey('$_tab::${_selectedGroup ?? _effectiveLiveGroup(playlist)}'),
+        key: ValueKey(
+            '$_tab::${_selectedGroup ?? _effectiveLiveGroup(playlist)}'),
         controller: _liveListController,
         itemCount: channels.length,
         itemBuilder: (context, i) {
@@ -3591,12 +3751,14 @@ class _GroupRowState extends State<_GroupRow> {
 // Was 1.8 — reduced ~30% per direct feedback that the first pass at
 // this was too big.
 const double _windowsPosterScale = 1.26;
-double get _browsePosterWidth =>
-    Platform.isWindows ? PosterCard.width * _windowsPosterScale : PosterCard.width;
+double get _browsePosterWidth => Platform.isWindows
+    ? PosterCard.width * _windowsPosterScale
+    : PosterCard.width;
 double get _browsePosterHeight => Platform.isWindows
     ? PosterCard.posterHeight * _windowsPosterScale
     : PosterCard.posterHeight;
-double get _browseCardHeight => _browsePosterHeight +
+double get _browseCardHeight =>
+    _browsePosterHeight +
     (Platform.isWindows
         ? PosterCard.titleHeight * _windowsPosterScale
         : PosterCard.titleHeight);
@@ -3788,11 +3950,12 @@ class _BrowseHero extends StatelessWidget {
       // height never made a poster crop read as broken the same way, so
       // it always uses the full-bleed style (now preferring a real
       // backdrop over the poster crop when one's available).
-      child: Platform.isWindows && backdropUrl != null && backdropUrl!.isNotEmpty
-          ? _buildBackdropHeroContent(scheme, big: true)
-          : Platform.isWindows
-              ? _buildWindowsHeroContent(scheme)
-              : _buildBackdropHeroContent(scheme, big: false),
+      child:
+          Platform.isWindows && backdropUrl != null && backdropUrl!.isNotEmpty
+              ? _buildBackdropHeroContent(scheme, big: true)
+              : Platform.isWindows
+                  ? _buildWindowsHeroContent(scheme)
+                  : _buildBackdropHeroContent(scheme, big: false),
     );
   }
 
@@ -3841,48 +4004,49 @@ class _BrowseHero extends StatelessWidget {
               // small/large-text extremes.
               child: SingleChildScrollView(
                 child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(width: 5, height: 36, color: scheme.secondary),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          title ?? 'Browse',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 44,
-                              fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: description == null
-                        ? const SizedBox.shrink()
-                        : Padding(
-                            key: ValueKey(description),
-                            padding: const EdgeInsets.only(left: 17),
-                            child: Text(
-                              description!,
-                              maxLines: 6,
-                              overflow: TextOverflow.ellipsis,
-                              // Requested directly: "at least 32-38" — 34
-                              // sits in the middle of that range.
-                              style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 34,
-                                  height: 1.35),
-                            ),
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                            width: 5, height: 36, color: scheme.secondary),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            title ?? 'Browse',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 44,
+                                fontWeight: FontWeight.bold),
                           ),
-                  ),
-                ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      child: description == null
+                          ? const SizedBox.shrink()
+                          : Padding(
+                              key: ValueKey(description),
+                              padding: const EdgeInsets.only(left: 17),
+                              child: Text(
+                                description!,
+                                maxLines: 6,
+                                overflow: TextOverflow.ellipsis,
+                                // Requested directly: "at least 32-38" — 34
+                                // sits in the middle of that range.
+                                style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 34,
+                                    height: 1.35),
+                              ),
+                            ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -3901,8 +4065,9 @@ class _BrowseHero extends StatelessWidget {
   /// see [backdropUrl]'s doc comment for why cropping a portrait image
   /// this way was the actual bug this exists to avoid repeating.
   Widget _buildBackdropHeroContent(ColorScheme scheme, {required bool big}) {
-    final effectiveImageUrl =
-        (backdropUrl != null && backdropUrl!.isNotEmpty) ? backdropUrl : imageUrl;
+    final effectiveImageUrl = (backdropUrl != null && backdropUrl!.isNotEmpty)
+        ? backdropUrl
+        : imageUrl;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -4152,8 +4317,9 @@ class _WhatsNewCarouselState<T> extends State<_WhatsNewCarousel<T>>
   Widget _buildPage(BuildContext context, T item) {
     final scheme = Theme.of(context).colorScheme;
     final backdrop = widget.backdropUrlOf?.call(item);
-    final imageUrl =
-        (backdrop != null && backdrop.isNotEmpty) ? backdrop : widget.imageUrlOf(item);
+    final imageUrl = (backdrop != null && backdrop.isNotEmpty)
+        ? backdrop
+        : widget.imageUrlOf(item);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6),
       child: Container(
@@ -4644,6 +4810,9 @@ class _TimelineGuide extends StatefulWidget {
       required this.onOpen,
       required this.onFocusChanged,
       required this.onShowOptions,
+      required this.filterFocusNode,
+      required this.onFilterToggle,
+      this.onReachedTop,
       this.onWindowStale});
 
   final List<Channel> channels;
@@ -4653,6 +4822,25 @@ class _TimelineGuide extends StatefulWidget {
 
   /// Hold-Select on a block — see [_TvHomeScreenState._showChannelOptions].
   final void Function(Channel channel) onShowOptions;
+
+  /// Backs the filter toggle button rendered above the channel column
+  /// (`_TimelineFilterButton`). A dedicated node, not shared with the
+  /// filter field's own — see
+  /// `_TvHomeScreenState._timelineFilterButtonFocusNode`'s doc comment
+  /// for why that sharing was tried and abandoned.
+  final FocusNode filterFocusNode;
+
+  /// Select on the filter button — see
+  /// `_TvHomeScreenState._openTimelineFilter`.
+  final VoidCallback onFilterToggle;
+
+  /// Up pressed while already at the top row ([_TimelineGuideState
+  /// .moveVertical]'s `targetRow < 0` case) — hands focus to whichever of
+  /// the button/field is actually showing instead of the previous no-op.
+  /// Confirmed safe to repurpose: nothing else ever lived above the guide
+  /// for Up to reach (the preview box there is deliberately
+  /// `ExcludeFocus`ed).
+  final VoidCallback? onReachedTop;
 
   /// This instance's fixed [_TimelineGuideState._windowStart]/`_windowEnd`
   /// has gone (or is about to go) stale — see that field's own doc
@@ -4747,7 +4935,14 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     final oldGroup = old.channels.isEmpty ? null : old.channels.first.group;
     final newGroup =
         widget.channels.isEmpty ? null : widget.channels.first.group;
-    if (oldGroup == newGroup) return;
+    // Length is also checked, not just group — the Timeline filter bar
+    // narrows/widens this same group's own channel list without changing
+    // its group at all, and would otherwise leave _focusedRowIndex/
+    // _rowBlocks pointing at rows that no longer exist (or no longer mean
+    // what they used to) in the filtered list.
+    if (oldGroup == newGroup && old.channels.length == widget.channels.length) {
+      return;
+    }
     // A different group's channel list was swapped in (not just the same
     // group's own content refreshing) — reset scroll/focus memory instead
     // of carrying over wherever the *previous* group had been scrolled
@@ -5039,7 +5234,11 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     final rowIndex = _focusedRowIndex;
     if (rowIndex == null) return;
     final targetRow = rowIndex + delta;
-    if (targetRow < 0 || targetRow >= widget.channels.length) return;
+    if (targetRow < 0) {
+      widget.onReachedTop?.call();
+      return;
+    }
+    if (targetRow >= widget.channels.length) return;
     final time = _referenceTime(_focusedProgram);
     _ensureRowVisible(targetRow);
     final blocks = _rowBlocks[targetRow];
@@ -5148,7 +5347,10 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
           height: _rulerHeight,
           child: Row(
             children: [
-              const SizedBox(width: _channelColumnWidth),
+              _TimelineFilterButton(
+                focusNode: widget.filterFocusNode,
+                onPressed: widget.onFilterToggle,
+              ),
               const VerticalDivider(width: 1),
               Expanded(
                 child: ClipRect(
@@ -5296,6 +5498,70 @@ class _TimeRuler extends StatelessWidget {
   }
 }
 
+/// Sits above the channel column, where [_TimelineGuideState]'s ruler row
+/// previously had nothing but a bare spacer — opens
+/// [_TvHomeScreenState._buildTimelineFilterBar] to narrow a large group's
+/// channel list by name. Its own [FocusNode] is handed in by the parent
+/// (see [_TimelineGuide.filterFocusNode]'s doc comment for why it's shared
+/// with the filter text field rather than owned here).
+class _TimelineFilterButton extends StatefulWidget {
+  const _TimelineFilterButton(
+      {required this.focusNode, required this.onPressed});
+
+  final FocusNode focusNode;
+  final VoidCallback onPressed;
+
+  @override
+  State<_TimelineFilterButton> createState() => _TimelineFilterButtonState();
+}
+
+class _TimelineFilterButtonState extends State<_TimelineFilterButton> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: _TimelineGuideState._channelColumnWidth,
+      height: _TimelineGuideState._rulerHeight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        child: Focus(
+          focusNode: widget.focusNode,
+          onFocusChange: (f) => setState(() => _focused = f),
+          child: InkWell(
+            // requestFocus() explicitly, not left to InkWell's own tap
+            // handling — confirmed elsewhere in this file (_ProgramBlockState)
+            // that a tap does NOT reliably focus its wrapping Focus node on
+            // its own here. Without this, a mouse click toggled filter mode
+            // but left real keyboard focus wherever it was before, so typed
+            // letters kept reaching the guide instead of the new TextField.
+            onTap: () {
+              widget.focusNode.requestFocus();
+              widget.onPressed();
+            },
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              decoration: BoxDecoration(
+                color: _focused
+                    ? scheme.primary
+                    : Colors.white.withValues(alpha: 0.06),
+                border: Border.all(
+                    color: _focused ? scheme.primary : Colors.white24),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              alignment: Alignment.center,
+              child: Icon(Icons.search,
+                  size: 16,
+                  color: _focused ? scheme.onPrimary : Colors.white70),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// The left column's per-row channel identity — purely informational, not
 /// itself focusable; D-pad focus lives entirely on the programme blocks in
 /// [_TimelineRow], same as the plain channel list never puts focus on a
@@ -5398,9 +5664,20 @@ class _TimelineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
+    // Deduped by (start, stop) — a provider/merged-EPG duplicate entry
+    // (two programmes with identical start/stop for the same channel) used
+    // to reach the Stack below with two equally-keyed Positioned children,
+    // which Flutter's own key-uniqueness check throws on (reported live:
+    // "Duplicate keys found", repeating on every rebuild of that channel's
+    // row and corrupting the guide's element tree badly enough to cascade
+    // into unrelated assertion failures elsewhere). First occurrence wins
+    // — rendering both would just be two fully overlapping blocks anyway.
+    final seenSlots = <String>{};
     final visible = programs
         .where(
             (p) => p.stop.isAfter(windowStart) && p.start.isBefore(windowEnd))
+        .where((p) => seenSlots.add(
+            '${p.start.millisecondsSinceEpoch}-${p.stop.millisecondsSinceEpoch}'))
         .toList();
     if (visible.isEmpty) {
       // A row with nothing to show used to render a totally empty Stack

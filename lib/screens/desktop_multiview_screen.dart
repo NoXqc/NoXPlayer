@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -28,14 +30,19 @@ class DesktopMultiviewScreen extends StatefulWidget {
   const DesktopMultiviewScreen({super.key});
 
   @override
-  State<DesktopMultiviewScreen> createState() =>
-      _DesktopMultiviewScreenState();
+  State<DesktopMultiviewScreen> createState() => _DesktopMultiviewScreenState();
 }
 
 class _MultiviewCell {
   Channel? channel;
   Player? player;
   VideoController? controller;
+
+  /// See `DesktopPlayerScreen`'s identical field's doc comment — mpv's
+  /// native reconnect config doesn't reliably catch every way a live
+  /// stream can end up reporting `completed` on its own, so this forces
+  /// a fresh re-open whenever that happens instead.
+  StreamSubscription<bool>? completedSubscription;
 }
 
 /// Requested directly: a smaller, 2-channel layout alongside the
@@ -61,6 +68,7 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
       // hide them — leaving them playing, muted, off-screen would still
       // hold a connection slot and a decoder for nothing visible.
       for (var i = 2; i < _cellCount; i++) {
+        _cells[i].completedSubscription?.cancel();
         _cells[i].player?.dispose();
         _cells[i] = _MultiviewCell();
       }
@@ -72,6 +80,7 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
   @override
   void dispose() {
     for (final cell in _cells) {
+      cell.completedSubscription?.cancel();
       cell.player?.dispose();
     }
     super.dispose();
@@ -79,22 +88,36 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
 
   void _assign(int index, Channel channel) {
     final cell = _cells[index];
+    cell.completedSubscription?.cancel();
     cell.player?.dispose();
     final player = Player();
-    // See DesktopPlayerScreen's identical fix for the full story — mpv's
-    // default live-reconnect handling silently stalls this provider's
-    // stream after ~15-20s (no error, just a frozen frame), confirmed as
-    // the actual cause of the exact symptom reported here, not a
-    // provider connection-limit issue despite looking like one at first.
-    (player.platform as NativePlayer)
-        .setProperty('demuxer-lavf-o', 'reconnect_streamed=0');
+    // See DesktopPlayerScreen's identical fix for the full story —
+    // reconnect_streamed=1 is necessary (not optional) to recover from a
+    // genuine dropped read on a live/non-seekable stream, which is exactly
+    // what reconnect_streamed governs; reconnect_on_network_error doesn't
+    // cover it (that one's only for failures during the initial connect).
+    // rw_timeout is what avoids reopening the *original* hang-forever bug
+    // reconnect_streamed=0 was first added for: it bounds any single
+    // blocked read/write (including a hanging Range-reconnect attempt on a
+    // server that doesn't support it) to a fixed ceiling instead of
+    // letting it hang forever, so ffmpeg's own reconnect loop can retry.
+    (player.platform as NativePlayer).setProperty('demuxer-lavf-o',
+        'reconnect=1,reconnect_at_eof=1,reconnect_streamed=1,reconnect_delay_max=5,rw_timeout=15000000');
     final controller = VideoController(player);
     player.open(Media(channel.url));
     player.setVolume(index == _activeCell ? 100 : 0);
+    final completedSubscription = player.stream.completed.listen((completed) {
+      if (completed && mounted) {
+        debugPrint(
+            '[auto-recover] multiview cell $index reported completed — reopening');
+        player.open(Media(channel.url));
+      }
+    });
     setState(() {
       cell.channel = channel;
       cell.player = player;
       cell.controller = controller;
+      cell.completedSubscription = completedSubscription;
     });
   }
 
@@ -110,6 +133,7 @@ class _DesktopMultiviewScreenState extends State<DesktopMultiviewScreen> {
   }
 
   void _clear(int index) {
+    _cells[index].completedSubscription?.cancel();
     _cells[index].player?.dispose();
     setState(() => _cells[index] = _MultiviewCell());
   }

@@ -90,3 +90,16 @@ flutter_launcher_icons:
   macos:
     generate: true
     image_path: "assets/icon/icon_flat.png"
+
+# Vendored, patched copy of video_player_android (the real engine
+# video_player_hdr delegates to on Android) — adds the Jellyfin FFmpeg
+# audio-decoder extension and prefers it as a fallback when the device's
+# own hardware decoder can't handle the format (fixes AC3/E-AC3 audio
+# playing silently on Android TV boxes with no licensed Dolby decoder).
+# See third_party/video_player_android's two patched files for exactly
+# what changed from the plain pub.dev package (currently pinned to 2.12.2,
+# matching what video_player_hdr: ^1.2.0 resolves to above) — needs manual
+# re-sync if that version ever changes.
+dependency_overrides:
+  video_player_android:
+    path: third_party/video_player_android
