@@ -77,24 +77,22 @@ public class PlatformViewVideoPlayer extends VideoPlayer {
           }
           androidx.media3.exoplayer.trackselection.DefaultTrackSelector trackSelector =
               new androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context);
-          // PREFER (not ON): falls back to the bundled FFmpeg software decoder only when
-          // the platform/hardware decoder can't handle the format — AC3/E-AC3 audio on
-          // devices with no licensed hardware Dolby decoder plays video with silent audio
-          // and no error otherwise (confirmed via ffprobe on a real provider's streams).
-          // Everything that already decodes fine in hardware is unaffected.
-          // TEMPORARY A/B diagnostic — reported directly: multiview now
-          // plays every cell's audio simultaneously regardless of the
-          // active/muted setVolume() calls, and the mini-player/live
-          // island keeps playing in the background too. Disabling just
-          // this renderers-factory swap (nothing else from the AC3 fix)
-          // isolates whether it's the actual cause before chasing a fix.
-          // DefaultRenderersFactory renderersFactory =
-          //     new DefaultRenderersFactory(context)
-          //         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+          // TEMPORARY A/B diagnostic, round 2 — round 1 (disabling this
+          // whole block) confirmed it's the actual cause of multiview/
+          // mini-player audio bleed-through reported after the AC3 fix.
+          // This round isolates WHICH part: constructing an explicit
+          // DefaultRenderersFactory at all (even with extension mode left
+          // at its OFF default, i.e. hardware-only, no FFmpeg fallback),
+          // vs. specifically turning the extension mode on. If this build
+          // (factory present, extension mode untouched) also bleeds
+          // through, the mere act of passing an explicit factory to each
+          // instance is the cause, not the FFmpeg extension specifically.
+          DefaultRenderersFactory renderersFactory =
+              new DefaultRenderersFactory(context);
           builder
               .setTrackSelector(trackSelector)
-              .setMediaSourceFactory(asset.getMediaSourceFactory(context));
-          // .setRenderersFactory(renderersFactory);
+              .setMediaSourceFactory(asset.getMediaSourceFactory(context))
+              .setRenderersFactory(renderersFactory);
           return builder.build();
         });
   }
