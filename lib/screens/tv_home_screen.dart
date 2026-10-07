@@ -487,6 +487,27 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// "Live" list view.
   String _timelineFilterQuery = '';
 
+  /// Backs [_TimelineVirtualKeyboard] on real TV/remote-control devices —
+  /// see `_buildTimelineFilterBar`'s own doc comment for why this exists
+  /// instead of just the `TextField` above. `hasFocus` is true if *any*
+  /// key in the grid currently has it, which is what the `arrowDown`/
+  /// `onReachedTop` focus-coordination below actually needs (unlike a
+  /// single `FocusNode`, which only reports true for one specific key).
+  final FocusScopeNode _timelineKeyboardScope =
+      FocusScopeNode(debugLabel: 'timeline-keyboard');
+
+  /// One [FocusNode] per key, index-matched to `_TimelineVirtualKeyboard
+  /// ._keyRows` so row/column arithmetic in its own `_moveFocus` and the
+  /// "focus the first key" calls below line up by index — same shape as
+  /// `pin_pad.dart`'s `_nodes`/`_keyValues`. Built once here (not inside
+  /// the keyboard widget itself) so requesting focus on the first key
+  /// from outside (opening the filter, or Up from the guide's top row)
+  /// doesn't need a `GlobalKey`/`State` reference into the keyboard.
+  late final List<List<FocusNode>> _timelineKeyboardNodes = List.generate(
+      _TimelineVirtualKeyboard.keyRows.length,
+      (r) => List.generate(_TimelineVirtualKeyboard.keyRows[r].length,
+          (_) => FocusNode(debugLabel: 'timeline-keyboard-key')));
+
   /// A starting estimate only — rows can grow to two lines for a long
   /// channel name — refined by `Scrollable.ensureVisible` once the target
   /// row is close enough to the viewport to have actually been built.
@@ -1063,6 +1084,12 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     _timelineFilterButtonFocusNode.dispose();
     _timelineFilterFieldFocusNode.dispose();
     _timelineFilterController.dispose();
+    _timelineKeyboardScope.dispose();
+    for (final row in _timelineKeyboardNodes) {
+      for (final node in row) {
+        node.dispose();
+      }
+    }
     _continueWatchingFirstFocusNode.dispose();
     _moviesWhatsNewPlayFocusNode.dispose();
     _showsWhatsNewPlayFocusNode.dispose();
@@ -1194,15 +1221,24 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   }
 
   void _openTimelineFilter() {
-    // No manual focus/keyboard plumbing needed here — _buildTimelineFilterBar's
-    // TextField carries its own autofocus: true on _timelineFilterFieldFocusNode,
-    // which is a fresh node that's never been focused before this exact
-    // moment. That's the same pattern SearchScreen's own TextField already
-    // relies on to open the keyboard reliably on this hardware — see
-    // _timelineFilterButtonFocusNode's doc comment for why the earlier
+    // Non-TV (phone/Windows): no manual focus/keyboard plumbing needed —
+    // _buildTimelineFilterBar's TextField carries its own autofocus: true
+    // on _timelineFilterFieldFocusNode, a fresh node never focused before
+    // this exact moment. That's the same pattern SearchScreen's own
+    // TextField already relies on to open the keyboard reliably there —
+    // see _timelineFilterButtonFocusNode's doc comment for why an earlier
     // shared-node approach (manual requestFocus/unfocus/refocus/
     // TextInput.show, none of it worked) was abandoned in favor of this.
+    //
+    // Real TV/remote devices get _TimelineVirtualKeyboard instead (see
+    // _buildTimelineFilterBar) — no system keyboard involved at all, so
+    // this explicitly focuses its first key once the grid has mounted.
     setState(() => _timelineFilterActive = true);
+    if (context.read<AppPreferences>().isTelevision) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _timelineKeyboardNodes.first.first.requestFocus();
+      });
+    }
   }
 
   void _closeTimelineFilter() {
@@ -1763,6 +1799,8 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                                             (_timelineFilterButtonFocusNode
                                                         .hasFocus ||
                                                     _timelineFilterFieldFocusNode
+                                                        .hasFocus ||
+                                                    _timelineKeyboardScope
                                                         .hasFocus)
                                                 ? _timelineGuideKey.currentState
                                                     ?.focusEntry()
@@ -2348,52 +2386,114 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// now-narrower filtered row list visible above wherever the keyboard
   /// ends up — whether that's actually enough headroom on a given real
   /// device can only be confirmed on hardware, not here.
+  /// Real TV/remote-control devices (`isTelevision`) get
+  /// [_TimelineVirtualKeyboard] instead of the `TextField` below — see its
+  /// own doc comment for why: the system on-screen keyboard proved
+  /// unreliable on real hardware (Formuler, Fire Stick) even after fixing
+  /// a real focus-steal bug that was also contributing to it. Phone
+  /// (touch) and Windows (physical keyboard) already work correctly with
+  /// the plain `TextField` and must keep doing so unchanged — gated on
+  /// `isTelevision` specifically (a device-category fact set once at
+  /// launch from a native Leanback/TV-UI-mode check), not `layoutMode`
+  /// (a user-togglable preference a phone could have set to "TV" for
+  /// other reasons while still only having touch input) or
+  /// `Platform.isWindows` (doesn't distinguish Android TV from phone at
+  /// all).
   Widget _buildTimelineFilterBar() {
+    final isTv = context.watch<AppPreferences>().isTelevision;
     return Container(
       clipBehavior: Clip.antiAlias,
-      // Centered, not top-pinned — on Windows this box keeps the normal
-      // preview row's full (roughly half-screen) height rather than
-      // collapsing (see the Column children construction in
-      // _buildLiveRegion), so without this the filter bar would otherwise
-      // sit awkwardly at the very top of a tall, mostly-empty box.
+      // Centered, not top-pinned — outside the isTv case, this box keeps
+      // the normal preview row's full height rather than collapsing (see
+      // the Column children construction in _buildLiveRegion), so without
+      // this the filter bar would otherwise sit awkwardly at the very top
+      // of a tall, mostly-empty box.
       alignment: Alignment.center,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         border:
             Border.all(color: Colors.white.withValues(alpha: 0.18), width: 1.5),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          const Icon(Icons.search, color: Colors.white70, size: 20),
-          const SizedBox(width: 8),
-          Expanded(
-            child: TextField(
-              controller: _timelineFilterController,
-              // A fresh node, never previously focused, with autofocus —
-              // the one thing confirmed to actually open the keyboard on
-              // the Formuler (same pattern SearchScreen already uses). See
-              // _timelineFilterButtonFocusNode's doc comment for why this
-              // isn't the shared button node.
-              focusNode: _timelineFilterFieldFocusNode,
-              autofocus: true,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                hintText: 'Filter channels in this group...',
-                hintStyle: TextStyle(color: Colors.white54),
-                border: InputBorder.none,
-              ),
-              onChanged: (value) =>
-                  setState(() => _timelineFilterQuery = value),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: isTv
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.search, color: Colors.white70, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _timelineFilterQuery.isEmpty
+                            ? 'Filter channels in this group...'
+                            : _timelineFilterQuery,
+                        style: TextStyle(
+                            color: _timelineFilterQuery.isEmpty
+                                ? Colors.white54
+                                : Colors.white),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close filter',
+                      icon: const Icon(Icons.close,
+                          color: Colors.white70, size: 18),
+                      onPressed: _closeTimelineFilter,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: _TimelineVirtualKeyboard(
+                    scope: _timelineKeyboardScope,
+                    nodes: _timelineKeyboardNodes,
+                    onChar: (c) => setState(() => _timelineFilterQuery += c),
+                    onSpace: () => setState(() => _timelineFilterQuery += ' '),
+                    onBackspace: () => setState(() {
+                      if (_timelineFilterQuery.isNotEmpty) {
+                        _timelineFilterQuery = _timelineFilterQuery.substring(
+                            0, _timelineFilterQuery.length - 1);
+                      }
+                    }),
+                    onClose: _closeTimelineFilter,
+                    onExitDown: () =>
+                        _timelineGuideKey.currentState?.focusEntry(),
+                  ),
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                const Icon(Icons.search, color: Colors.white70, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: _timelineFilterController,
+                    // A fresh node, never previously focused, with
+                    // autofocus — the one thing confirmed to actually open
+                    // the keyboard reliably here. See
+                    // _timelineFilterButtonFocusNode's doc comment for why
+                    // this isn't the shared button node.
+                    focusNode: _timelineFilterFieldFocusNode,
+                    autofocus: true,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      hintText: 'Filter channels in this group...',
+                      hintStyle: TextStyle(color: Colors.white54),
+                      border: InputBorder.none,
+                    ),
+                    onChanged: (value) =>
+                        setState(() => _timelineFilterQuery = value),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close filter',
+                  icon:
+                      const Icon(Icons.close, color: Colors.white70, size: 18),
+                  onPressed: _closeTimelineFilter,
+                ),
+              ],
             ),
-          ),
-          IconButton(
-            tooltip: 'Close filter',
-            icon: const Icon(Icons.close, color: Colors.white70, size: 18),
-            onPressed: _closeTimelineFilter,
-          ),
-        ],
-      ),
     );
   }
 
@@ -2539,58 +2639,69 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         onWindowStale: () => setState(() => _timelineGuideKey = GlobalKey()),
         filterFocusNode: _timelineFilterButtonFocusNode,
         onFilterToggle: _openTimelineFilter,
-        // While filtering, focus belongs to the field (its own fresh node);
-        // otherwise to the button. Only the button is actually mounted
-        // above the guide when not filtering, so requesting focus on the
-        // field node here while inactive would land nowhere — the field
-        // widget doesn't exist yet in that state.
-        onReachedTop: () => _timelineFilterActive
-            ? _timelineFilterFieldFocusNode.requestFocus()
-            : _timelineFilterButtonFocusNode.requestFocus(),
+        // While filtering, focus belongs to whichever input is actually
+        // showing (the virtual keyboard's first key on TV, the TextField
+        // elsewhere); otherwise to the button. Only the button is actually
+        // mounted above the guide when not filtering, so requesting focus
+        // on the field/keyboard here while inactive would land nowhere —
+        // neither widget exists yet in that state.
+        onReachedTop: () {
+          if (!_timelineFilterActive) {
+            _timelineFilterButtonFocusNode.requestFocus();
+          } else if (context.read<AppPreferences>().isTelevision) {
+            _timelineKeyboardNodes.first.first.requestFocus();
+          } else {
+            _timelineFilterFieldFocusNode.requestFocus();
+          }
+        },
       );
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        // The drastic collapse to a 56px bar only exists to defend against
-        // Android's on-screen keyboard covering the filtered row list —
-        // Windows has no such keyboard (a physical one is already right
-        // there), so shrinking its preview row serves no purpose and was
-        // only ever disruptive there. Reported directly: "it takes the
-        // whole screen (eliminating the mini player)... doesn't happen on
-        // Formuler" — because Windows's normal preview row is already
-        // ~50% of the window (flex-based, see below), collapsing *that*
-        // to 56px is a far more drastic, jarring change than the Android
-        // TV case's fixed-160px-to-56px shrink.
-        children: _timelineFilterActive && !Platform.isWindows
-            ? [
-                SizedBox(height: 56, child: previewRow),
-                const Divider(height: 12),
-                Expanded(child: guide),
-              ]
-            : Platform.isWindows
+        // The collapse to a taller keyboard-sized panel only applies on
+        // real TV/remote devices — that's the one case using
+        // _TimelineVirtualKeyboard (see _buildTimelineFilterBar), which
+        // needs real room for its key grid. Gated on isTelevision
+        // specifically, not Platform.isWindows: a phone with Layout
+        // manually forced to "TV" still gets the plain TextField bar (see
+        // _buildTimelineFilterBar) and must keep its normal layout too —
+        // reported directly, of the Platform.isWindows-only version of
+        // this check: "it takes the whole screen (eliminating the mini
+        // player)... doesn't happen on Formuler," because Windows's normal
+        // preview row is ~50% of the window (flex-based, see below) and
+        // collapsing that to a small bar was a far more drastic, jarring
+        // change than Android TV's fixed-160px starting point warranted.
+        children:
+            _timelineFilterActive && context.read<AppPreferences>().isTelevision
                 ? [
-                    // Android TV's fixed 160px preview row read as the right
-                    // ratio there (reported directly), but on a much taller,
-                    // resizable PC window that same fixed height left the
-                    // mini player tiny against a disproportionately dominant
-                    // guide below it (roughly an 85/15 split in the guide's
-                    // favor on a typical window). Flex-based instead of a
-                    // fixed height, so it scales with the actual window
-                    // instead of a constant tuned for a TV's screen — an even
-                    // 50/50 split here cuts the guide's own share by well
-                    // over 40% (85 -> 50) and gives the mini player a real,
-                    // substantial size instead of the sliver it was, reported
-                    // directly as still too small even after the preview
-                    // itself got real video in it.
-                    Expanded(flex: 1, child: previewRow),
-                    const Divider(height: 12),
-                    Expanded(flex: 1, child: guide),
-                  ]
-                : [
-                    SizedBox(height: 160, child: previewRow),
+                    SizedBox(height: 320, child: previewRow),
                     const Divider(height: 12),
                     Expanded(child: guide),
-                  ],
+                  ]
+                : Platform.isWindows
+                    ? [
+                        // Android TV's fixed 160px preview row read as the right
+                        // ratio there (reported directly), but on a much taller,
+                        // resizable PC window that same fixed height left the
+                        // mini player tiny against a disproportionately dominant
+                        // guide below it (roughly an 85/15 split in the guide's
+                        // favor on a typical window). Flex-based instead of a
+                        // fixed height, so it scales with the actual window
+                        // instead of a constant tuned for a TV's screen — an even
+                        // 50/50 split here cuts the guide's own share by well
+                        // over 40% (85 -> 50) and gives the mini player a real,
+                        // substantial size instead of the sliver it was, reported
+                        // directly as still too small even after the preview
+                        // itself got real video in it.
+                        Expanded(flex: 1, child: previewRow),
+                        const Divider(height: 12),
+                        Expanded(flex: 1, child: guide),
+                      ]
+                    : [
+                        SizedBox(height: 160, child: previewRow),
+                        const Divider(height: 12),
+                        Expanded(child: guide),
+                      ],
       );
     }
 
@@ -5585,6 +5696,191 @@ class _TimelineFilterButtonState extends State<_TimelineFilterButton> {
               child: Icon(Icons.search,
                   size: 16,
                   color: _focused ? scheme.onPrimary : Colors.white70),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A D-pad-navigable on-screen keyboard for the Timeline guide's channel
+/// filter on real TV/remote-control devices — see
+/// `_TvHomeScreenState._buildTimelineFilterBar`'s doc comment for why this
+/// exists instead of a `TextField` + system keyboard there (confirmed
+/// unreliable on real hardware even after fixing a genuine focus-steal
+/// bug that was also contributing to it). Modeled directly on
+/// `lib/widgets/pin_pad.dart`'s already-proven pattern: explicit
+/// `CallbackShortcuts` row/column arithmetic (never default Flutter
+/// traversal — see CLAUDE.md's D-pad rule) via [_moveFocus], and no real
+/// `TextField` anywhere in the grid at all, which also sidesteps Fire
+/// OS's "TextField swallows Back while focused" bug (same reasoning
+/// `pin_pad.dart`'s own doc comment gives for why it avoids one too).
+class _TimelineVirtualKeyboard extends StatelessWidget {
+  const _TimelineVirtualKeyboard({
+    required this.scope,
+    required this.nodes,
+    required this.onChar,
+    required this.onSpace,
+    required this.onBackspace,
+    required this.onClose,
+    required this.onExitDown,
+  });
+
+  /// A-Z, 0-9, space/backspace/close — three uniform rows of 13 so the
+  /// row/column arithmetic in [_moveFocus] stays as simple as
+  /// `pin_pad.dart`'s own (no ragged rows to special-case, same reason
+  /// its 4x3 grid is uniform).
+  static const keyRows = [
+    ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M'],
+    ['N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'],
+    [
+      '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', //
+      'space', 'back', 'close',
+    ],
+  ];
+
+  /// Reports true if *any* key in the grid currently has focus — see its
+  /// own field doc comment in `_TvHomeScreenState` for why the Up/Down
+  /// focus-coordination with the guide needs this instead of a single
+  /// node's `hasFocus`.
+  final FocusScopeNode scope;
+
+  /// Index-matched to [keyRows]; owned by `_TvHomeScreenState` (not this
+  /// widget) so "focus the first key" can be requested from outside
+  /// (opening the filter, or Up from the guide's top row) without a
+  /// `GlobalKey`/`State` reference into this widget.
+  final List<List<FocusNode>> nodes;
+
+  final void Function(String char) onChar;
+  final VoidCallback onSpace;
+  final VoidCallback onBackspace;
+  final VoidCallback onClose;
+
+  /// Down from the bottom row — exits into the (now live-filtered) guide
+  /// below instead of clamping, via the same `focusEntry()` path Up from
+  /// the guide's top row already uses to come back here. See this
+  /// widget's instantiation site for the exact callback wiring.
+  final VoidCallback onExitDown;
+
+  void _moveFocus(int rowDelta, int colDelta) {
+    final current = FocusManager.instance.primaryFocus;
+    for (var r = 0; r < nodes.length; r++) {
+      for (var c = 0; c < nodes[r].length; c++) {
+        if (nodes[r][c] != current) continue;
+        final nr = r + rowDelta;
+        if (nr >= nodes.length) {
+          onExitDown();
+          return;
+        }
+        final clampedR = nr.clamp(0, nodes.length - 1);
+        final clampedC = (c + colDelta).clamp(0, nodes[clampedR].length - 1);
+        nodes[clampedR][clampedC].requestFocus();
+        return;
+      }
+    }
+  }
+
+  void _handleKey(String value) {
+    switch (value) {
+      case 'space':
+        onSpace();
+      case 'back':
+        onBackspace();
+      case 'close':
+        onClose();
+      default:
+        onChar(value);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.arrowUp): () =>
+            _moveFocus(-1, 0),
+        const SingleActivator(LogicalKeyboardKey.arrowDown): () =>
+            _moveFocus(1, 0),
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
+            _moveFocus(0, -1),
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
+            _moveFocus(0, 1),
+      },
+      child: FocusScope(
+        node: scope,
+        child: Column(
+          children: [
+            for (var r = 0; r < keyRows.length; r++)
+              Expanded(
+                child: Row(
+                  children: [
+                    for (var c = 0; c < keyRows[r].length; c++)
+                      Expanded(
+                        child: _TimelineKeyboardKey(
+                          focusNode: nodes[r][c],
+                          label: keyRows[r][c],
+                          onPressed: () => _handleKey(keyRows[r][c]),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TimelineKeyboardKey extends StatefulWidget {
+  const _TimelineKeyboardKey(
+      {required this.focusNode, required this.label, required this.onPressed});
+
+  final FocusNode focusNode;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  State<_TimelineKeyboardKey> createState() => _TimelineKeyboardKeyState();
+}
+
+class _TimelineKeyboardKeyState extends State<_TimelineKeyboardKey> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final display = switch (widget.label) {
+      'space' => 'Space',
+      'back' => '⌫',
+      'close' => '✕',
+      final c => c,
+    };
+    return Padding(
+      padding: const EdgeInsets.all(3),
+      child: Material(
+        color: _focused ? scheme.primary : Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          // requestFocus() explicitly, not left to InkWell's own tap
+          // handling — same reasoning as _TimelineFilterButton/
+          // _ProgramBlockState elsewhere in this file.
+          focusNode: widget.focusNode,
+          onFocusChange: (f) => setState(() => _focused = f),
+          onTap: () {
+            widget.focusNode.requestFocus();
+            widget.onPressed();
+          },
+          borderRadius: BorderRadius.circular(6),
+          child: Center(
+            child: Text(
+              display,
+              style: TextStyle(
+                fontSize: widget.label == 'space' ? 12 : 16,
+                fontWeight: FontWeight.w600,
+                color: _focused ? scheme.onPrimary : Colors.white70,
+              ),
             ),
           ),
         ),

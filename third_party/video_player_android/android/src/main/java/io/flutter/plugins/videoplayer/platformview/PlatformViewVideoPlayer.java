@@ -82,13 +82,19 @@ public class PlatformViewVideoPlayer extends VideoPlayer {
           // devices with no licensed hardware Dolby decoder plays video with silent audio
           // and no error otherwise (confirmed via ffprobe on a real provider's streams).
           // Everything that already decodes fine in hardware is unaffected.
-          DefaultRenderersFactory renderersFactory =
-              new DefaultRenderersFactory(context)
-                  .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+          // TEMPORARY A/B diagnostic — reported directly: multiview now
+          // plays every cell's audio simultaneously regardless of the
+          // active/muted setVolume() calls, and the mini-player/live
+          // island keeps playing in the background too. Disabling just
+          // this renderers-factory swap (nothing else from the AC3 fix)
+          // isolates whether it's the actual cause before chasing a fix.
+          // DefaultRenderersFactory renderersFactory =
+          //     new DefaultRenderersFactory(context)
+          //         .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
           builder
               .setTrackSelector(trackSelector)
-              .setMediaSourceFactory(asset.getMediaSourceFactory(context))
-              .setRenderersFactory(renderersFactory);
+              .setMediaSourceFactory(asset.getMediaSourceFactory(context));
+          // .setRenderersFactory(renderersFactory);
           return builder.build();
         });
   }
