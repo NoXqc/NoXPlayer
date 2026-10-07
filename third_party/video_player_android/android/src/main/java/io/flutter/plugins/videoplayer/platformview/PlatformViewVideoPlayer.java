@@ -13,6 +13,8 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.audio.AudioSink;
+import androidx.media3.exoplayer.audio.DefaultAudioSink;
 import io.flutter.plugins.videoplayer.ExoPlayerEventListener;
 import io.flutter.plugins.videoplayer.VideoAsset;
 import io.flutter.plugins.videoplayer.VideoPlayer;
@@ -77,18 +79,42 @@ public class PlatformViewVideoPlayer extends VideoPlayer {
           }
           androidx.media3.exoplayer.trackselection.DefaultTrackSelector trackSelector =
               new androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context);
-          // TEMPORARY A/B diagnostic, round 2 — round 1 (disabling this
-          // whole block) confirmed it's the actual cause of multiview/
-          // mini-player audio bleed-through reported after the AC3 fix.
-          // This round isolates WHICH part: constructing an explicit
-          // DefaultRenderersFactory at all (even with extension mode left
-          // at its OFF default, i.e. hardware-only, no FFmpeg fallback),
-          // vs. specifically turning the extension mode on. If this build
-          // (factory present, extension mode untouched) also bleeds
-          // through, the mere act of passing an explicit factory to each
-          // instance is the cause, not the FFmpeg extension specifically.
+          // Root cause of the multiview/mini-player audio bleed-through
+          // (confirmed via two A/B diagnostic builds): DefaultAudioSink
+          // auto-detects the device's real HDMI passthrough capability
+          // whenever a Context reaches it, and once AC3/E-AC3 becomes
+          // passthrough-eligible, setVolume() silently becomes a no-op for
+          // that track — the compressed bitstream goes straight to the
+          // receiver, bypassing ExoPlayer's own per-instance gain stage
+          // entirely (a well-documented ExoPlayer limitation, not specific
+          // to this app). That's exactly why every simultaneous player
+          // instance's audio became un-mutable. This app has no need for
+          // genuine receiver passthrough (it's a casual viewing app, not a
+          // home-theater-focused player), so AudioSink is built without a
+          // Context below — per DefaultAudioSink's own documented
+          // behavior, that keeps it permanently at its default "no
+          // encoded audio passthrough support" capability, forcing AC3/
+          // E-AC3 to always decode to PCM (hardware MediaCodec, or the
+          // FFmpeg extension below as fallback) instead of ever being
+          // passed through as a raw bitstream — which keeps setVolume()
+          // reliable regardless of how many instances are playing at once.
           DefaultRenderersFactory renderersFactory =
-              new DefaultRenderersFactory(context);
+              new DefaultRenderersFactory(context) {
+                @Nullable
+                @Override
+                protected AudioSink buildAudioSink(
+                    Context context,
+                    boolean enableFloatOutput,
+                    boolean enableAudioOutputPlaybackParams) {
+                  //noinspection deprecation — deliberate: see the comment above.
+                  return new DefaultAudioSink.Builder()
+                      .setEnableFloatOutput(enableFloatOutput)
+                      .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
+                      .build();
+                }
+              };
+          renderersFactory.setExtensionRendererMode(
+              DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
           builder
               .setTrackSelector(trackSelector)
               .setMediaSourceFactory(asset.getMediaSourceFactory(context))

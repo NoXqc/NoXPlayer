@@ -5679,34 +5679,48 @@ class _TimelineFilterButtonState extends State<_TimelineFilterButton> {
       height: _TimelineGuideState._rulerHeight,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Focus(
-          focusNode: widget.focusNode,
-          onFocusChange: (f) => setState(() => _focused = f),
-          child: InkWell(
-            // requestFocus() explicitly, not left to InkWell's own tap
-            // handling — confirmed elsewhere in this file (_ProgramBlockState)
-            // that a tap does NOT reliably focus its wrapping Focus node on
-            // its own here. Without this, a mouse click toggled filter mode
-            // but left real keyboard focus wherever it was before, so typed
-            // letters kept reaching the guide instead of the new TextField.
-            onTap: () {
-              widget.focusNode.requestFocus();
-              widget.onPressed();
-            },
-            borderRadius: BorderRadius.circular(6),
-            child: Container(
-              decoration: BoxDecoration(
-                color: _focused
-                    ? scheme.primary
-                    : Colors.white.withValues(alpha: 0.06),
-                border: Border.all(
-                    color: _focused ? scheme.primary : Colors.white24),
-                borderRadius: BorderRadius.circular(6),
+        // HoldToActivate, not a plain InkWell — reported directly: Select
+        // did nothing at all here, on real hardware, since this button's
+        // very first version (even the plain-TextField one, before any
+        // keyboard work). This is the exact already-solved problem
+        // _ProgramBlockState's own identical wrapping exists for: this
+        // app's remotes send a variety of different "Select"-equivalent
+        // keys (select/enter/numpadEnter/gameButtonA) depending on the
+        // device, and a plain InkWell's default keyboard activation
+        // doesn't recognize all of them — HoldToActivate checks every
+        // variant explicitly instead of relying on that default.
+        child: HoldToActivate(
+          onTap: () {
+            widget.focusNode.requestFocus();
+            widget.onPressed();
+          },
+          child: Focus(
+            focusNode: widget.focusNode,
+            onFocusChange: (f) => setState(() => _focused = f),
+            child: InkWell(
+              // requestFocus() explicitly, not left to InkWell's own tap
+              // handling — confirmed elsewhere in this file
+              // (_ProgramBlockState) that a tap does NOT reliably focus its
+              // wrapping Focus node on its own here.
+              onTap: () {
+                widget.focusNode.requestFocus();
+                widget.onPressed();
+              },
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _focused
+                      ? scheme.primary
+                      : Colors.white.withValues(alpha: 0.06),
+                  border: Border.all(
+                      color: _focused ? scheme.primary : Colors.white24),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                alignment: Alignment.center,
+                child: Icon(Icons.search,
+                    size: 16,
+                    color: _focused ? scheme.onPrimary : Colors.white70),
               ),
-              alignment: Alignment.center,
-              child: Icon(Icons.search,
-                  size: 16,
-                  color: _focused ? scheme.onPrimary : Colors.white70),
             ),
           ),
         ),
@@ -5873,24 +5887,34 @@ class _TimelineKeyboardKeyState extends State<_TimelineKeyboardKey> {
       child: Material(
         color: _focused ? scheme.primary : Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(6),
-        child: InkWell(
-          // requestFocus() explicitly, not left to InkWell's own tap
-          // handling — same reasoning as _TimelineFilterButton/
-          // _ProgramBlockState elsewhere in this file.
-          focusNode: widget.focusNode,
-          onFocusChange: (f) => setState(() => _focused = f),
+        // HoldToActivate, not a plain InkWell's own keyboard activation —
+        // see _TimelineFilterButton's identical doc comment for why: a
+        // plain InkWell doesn't reliably respond to every "Select"-
+        // equivalent key this app's real remotes send.
+        child: HoldToActivate(
           onTap: () {
             widget.focusNode.requestFocus();
             widget.onPressed();
           },
-          borderRadius: BorderRadius.circular(6),
-          child: Center(
-            child: Text(
-              display,
-              style: TextStyle(
-                fontSize: widget.label == 'space' ? 12 : 16,
-                fontWeight: FontWeight.w600,
-                color: _focused ? scheme.onPrimary : Colors.white70,
+          child: InkWell(
+            // requestFocus() explicitly, not left to InkWell's own tap
+            // handling — same reasoning as _TimelineFilterButton/
+            // _ProgramBlockState elsewhere in this file.
+            focusNode: widget.focusNode,
+            onFocusChange: (f) => setState(() => _focused = f),
+            onTap: () {
+              widget.focusNode.requestFocus();
+              widget.onPressed();
+            },
+            borderRadius: BorderRadius.circular(6),
+            child: Center(
+              child: Text(
+                display,
+                style: TextStyle(
+                  fontSize: widget.label == 'space' ? 12 : 16,
+                  fontWeight: FontWeight.w600,
+                  color: _focused ? scheme.onPrimary : Colors.white70,
+                ),
               ),
             ),
           ),
