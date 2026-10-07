@@ -1246,10 +1246,9 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// below, rather than back onto the toggle button — requested directly,
   /// since landing back on the button after deliberately backing out of
   /// typing reads as a dead end rather than "take me to what I was just
-  /// looking at." [clearQuery] stays false for that same case — the guide
-  /// keeps showing whatever was already typed (so Back just hides the
-  /// keyboard, it doesn't throw away a search to browse the results of),
-  /// unlike the explicit X button, which means "done searching entirely."
+  /// looking at." [clearQuery] (default true) also resets the query in
+  /// that case — Back here means "quit filtering," not "keep the filter
+  /// applied but hide the keyboard."
   void _closeTimelineFilter({bool toGuide = false, bool clearQuery = true}) {
     if (clearQuery) _timelineFilterController.clear();
     setState(() {
@@ -1619,9 +1618,11 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           if (didPop) return;
           // Back while focus is literally inside the Timeline keyboard
           // closes it and drops into the guide instead of the normal
-          // column-by-column walk below — requested directly.
+          // column-by-column walk below — requested directly. Clears the
+          // query too (not just the keyboard UI) — Back here means
+          // "quit filtering," not "keep it applied but hide the keyboard."
           if (_timelineKeyboardScope.hasFocus) {
-            _closeTimelineFilter(toGuide: true, clearQuery: false);
+            _closeTimelineFilter(toGuide: true);
             return;
           }
           _moveColumnFocus(-1, 2);
