@@ -2644,7 +2644,15 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         key: _timelineGuideKey,
         channels: _filteredLiveChannelsForGuide(playlist),
         epg: epg,
-        onOpen: _selectChannel,
+        // Closes the filter (if it's open) before actually opening the
+        // channel — reported directly: picking a channel while filtering,
+        // going fullscreen, then backing out left the filter keyboard
+        // stuck open, since nothing on that whole round trip ever touched
+        // _timelineFilterActive on its own.
+        onOpen: (channel) {
+          if (_timelineFilterActive) _closeTimelineFilter();
+          _selectChannel(channel);
+        },
         onFocusChanged: _onGuideFocusChanged,
         onShowOptions: _showChannelOptions,
         onWindowStale: () => setState(() => _timelineGuideKey = GlobalKey()),
@@ -2685,7 +2693,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         children:
             _timelineFilterActive && context.read<AppPreferences>().isTelevision
                 ? [
-                    SizedBox(height: 320, child: previewRow),
+                    SizedBox(height: 200, child: previewRow),
                     const Divider(height: 12),
                     Expanded(child: guide),
                   ]
@@ -5041,6 +5049,20 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
   final ScrollController _rulerHScroll = ScrollController();
   final ScrollController _gridVScroll = ScrollController();
   final ScrollController _labelVScroll = ScrollController();
+
+  /// Wraps the programme grid (see [build]) so [didUpdateWidget] can check
+  /// whether focus is genuinely, currently inside the grid right now —
+  /// `.hasFocus` is true if *any* block anywhere inside currently has it.
+  /// Deliberately not inferred from [_focusedRowIndex] (tried first): that
+  /// field only records the *last* row that was ever focused and is never
+  /// cleared on blur, so once the guide had been browsed even once, it
+  /// stayed truthy forever after — reported directly: opening the
+  /// Timeline filter and typing stole focus back into the guide on every
+  /// single keystroke, not just the first, because each wrongly-triggered
+  /// `focusEntry()` call below re-set `_focusedRowIndex` itself, making
+  /// the *next* keystroke's check true all over again.
+  final FocusScopeNode _gridFocusScope =
+      FocusScopeNode(debugLabel: 'timeline-grid');
   Timer? _nowTimer;
 
   @override
@@ -5081,20 +5103,21 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     if (oldGroup == newGroup && old.channels.length == widget.channels.length) {
       return;
     }
-    // Whether the guide itself genuinely held row-level focus *before*
-    // this update — not just whether it used to, at some earlier point.
-    // Reported directly: typing into the Timeline filter field narrows
-    // this list on every keystroke (a length change, triggering this same
-    // reset path below), and unconditionally re-focusing a row afterward
-    // stole focus straight back out of the filter field after a single
-    // character — on Windows visibly ("have to click back on the field to
-    // type the next key"), and on the Formuler it's the likely reason the
-    // on-screen keyboard never got a stable enough focus session to even
-    // show. Only restore row focus here if the guide actually had it to
-    // begin with (e.g. the group-switch case this reset was built for,
-    // below) — there's nothing to restore if focus was never in a row to
-    // start with, such as while the filter field has it.
-    final hadRowFocus = _focusedRowIndex != null;
+    // Whether the guide's grid genuinely holds focus *right now* — not
+    // whether _focusedRowIndex happens to be non-null, which only records
+    // the *last* row ever focused and is never cleared on blur. That
+    // first version caused exactly the bug this comment used to describe
+    // fixing, except it kept happening on *every* keystroke, not just the
+    // first: once the guide had been browsed even once this session (an
+    // entirely normal thing to do before opening the filter),
+    // _focusedRowIndex stayed non-null forever, so the very first
+    // keystroke still wrongly called focusEntry() below — which itself
+    // re-set _focusedRowIndex via the normal focus-tracking callback,
+    // making the *next* keystroke's stale check true all over again, each
+    // time. _gridFocusScope.hasFocus reports the real, current state
+    // instead (true only while a block somewhere in the grid actually has
+    // focus this instant), so it can't fall out of sync like that.
+    final hadRowFocus = _gridFocusScope.hasFocus;
     // A different group's channel list was swapped in (not just the same
     // group's own content refreshing) — reset scroll/focus memory instead
     // of carrying over wherever the *previous* group had been scrolled
@@ -5176,6 +5199,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     _rulerHScroll.dispose();
     _gridVScroll.dispose();
     _labelVScroll.dispose();
+    _gridFocusScope.dispose();
     super.dispose();
   }
 
@@ -5544,50 +5568,53 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
               ),
               const VerticalDivider(width: 1),
               Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  controller: _gridHScroll,
-                  child: SizedBox(
-                    width: _totalWidth,
-                    height: widget.channels.length * _rowHeight,
-                    child: Stack(
-                      children: [
-                        ListView.builder(
-                          controller: _gridVScroll,
-                          itemCount: widget.channels.length,
-                          itemExtent: _rowHeight,
-                          itemBuilder: (context, i) => _TimelineRow(
-                            rowIndex: i,
-                            channel: widget.channels[i],
-                            programs: widget.epg
-                                .getPrograms(widget.channels[i].epgId),
-                            windowStart: _windowStart,
-                            windowEnd: _windowEnd,
-                            pixelsPerMinute: _pixelsPerMinute,
-                            onOpen: () => widget.onOpen(widget.channels[i]),
-                            onShowOptions: () =>
-                                widget.onShowOptions(widget.channels[i]),
-                            ensureRowVisible: _ensureRowVisible,
-                            onFocusChanged: widget.onFocusChanged,
-                            onFocusTracked: _trackFocus,
-                            onRegisterBlock: _registerBlock,
-                            onUnregisterBlock: _unregisterBlock,
-                            hScroll: _gridHScroll,
-                            epgLoading: epgLoading,
-                          ),
-                        ),
-                        Positioned(
-                          left: nowX,
-                          top: 0,
-                          bottom: 0,
-                          child: const IgnorePointer(
-                            child: SizedBox(
-                              width: 2,
-                              child: ColoredBox(color: Colors.redAccent),
+                child: FocusScope(
+                  node: _gridFocusScope,
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    controller: _gridHScroll,
+                    child: SizedBox(
+                      width: _totalWidth,
+                      height: widget.channels.length * _rowHeight,
+                      child: Stack(
+                        children: [
+                          ListView.builder(
+                            controller: _gridVScroll,
+                            itemCount: widget.channels.length,
+                            itemExtent: _rowHeight,
+                            itemBuilder: (context, i) => _TimelineRow(
+                              rowIndex: i,
+                              channel: widget.channels[i],
+                              programs: widget.epg
+                                  .getPrograms(widget.channels[i].epgId),
+                              windowStart: _windowStart,
+                              windowEnd: _windowEnd,
+                              pixelsPerMinute: _pixelsPerMinute,
+                              onOpen: () => widget.onOpen(widget.channels[i]),
+                              onShowOptions: () =>
+                                  widget.onShowOptions(widget.channels[i]),
+                              ensureRowVisible: _ensureRowVisible,
+                              onFocusChanged: widget.onFocusChanged,
+                              onFocusTracked: _trackFocus,
+                              onRegisterBlock: _registerBlock,
+                              onUnregisterBlock: _unregisterBlock,
+                              hScroll: _gridHScroll,
+                              epgLoading: epgLoading,
                             ),
                           ),
-                        ),
-                      ],
+                          Positioned(
+                            left: nowX,
+                            top: 0,
+                            bottom: 0,
+                            child: const IgnorePointer(
+                              child: SizedBox(
+                                width: 2,
+                                child: ColoredBox(color: Colors.redAccent),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -5911,7 +5938,7 @@ class _TimelineKeyboardKeyState extends State<_TimelineKeyboardKey> {
               child: Text(
                 display,
                 style: TextStyle(
-                  fontSize: widget.label == 'space' ? 12 : 16,
+                  fontSize: widget.label == 'space' ? 10 : 13,
                   fontWeight: FontWeight.w600,
                   color: _focused ? scheme.onPrimary : Colors.white70,
                 ),
