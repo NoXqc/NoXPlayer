@@ -2351,6 +2351,12 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   Widget _buildTimelineFilterBar() {
     return Container(
       clipBehavior: Clip.antiAlias,
+      // Centered, not top-pinned — on Windows this box keeps the normal
+      // preview row's full (roughly half-screen) height rather than
+      // collapsing (see the Column children construction in
+      // _buildLiveRegion), so without this the filter bar would otherwise
+      // sit awkwardly at the very top of a tall, mostly-empty box.
+      alignment: Alignment.center,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         border:
@@ -2545,7 +2551,17 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: _timelineFilterActive
+        // The drastic collapse to a 56px bar only exists to defend against
+        // Android's on-screen keyboard covering the filtered row list —
+        // Windows has no such keyboard (a physical one is already right
+        // there), so shrinking its preview row serves no purpose and was
+        // only ever disruptive there. Reported directly: "it takes the
+        // whole screen (eliminating the mini player)... doesn't happen on
+        // Formuler" — because Windows's normal preview row is already
+        // ~50% of the window (flex-based, see below), collapsing *that*
+        // to 56px is a far more drastic, jarring change than the Android
+        // TV case's fixed-160px-to-56px shrink.
+        children: _timelineFilterActive && !Platform.isWindows
             ? [
                 SizedBox(height: 56, child: previewRow),
                 const Divider(height: 12),
@@ -4943,6 +4959,20 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     if (oldGroup == newGroup && old.channels.length == widget.channels.length) {
       return;
     }
+    // Whether the guide itself genuinely held row-level focus *before*
+    // this update — not just whether it used to, at some earlier point.
+    // Reported directly: typing into the Timeline filter field narrows
+    // this list on every keystroke (a length change, triggering this same
+    // reset path below), and unconditionally re-focusing a row afterward
+    // stole focus straight back out of the filter field after a single
+    // character — on Windows visibly ("have to click back on the field to
+    // type the next key"), and on the Formuler it's the likely reason the
+    // on-screen keyboard never got a stable enough focus session to even
+    // show. Only restore row focus here if the guide actually had it to
+    // begin with (e.g. the group-switch case this reset was built for,
+    // below) — there's nothing to restore if focus was never in a row to
+    // start with, such as while the filter field has it.
+    final hadRowFocus = _focusedRowIndex != null;
     // A different group's channel list was swapped in (not just the same
     // group's own content refreshing) — reset scroll/focus memory instead
     // of carrying over wherever the *previous* group had been scrolled
@@ -4955,6 +4985,7 @@ class _TimelineGuideState extends State<_TimelineGuide> with RouteAware {
     _focusedRowIndex = null;
     _focusedProgram = null;
     _cursorSlot = null;
+    if (!hadRowFocus) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) focusEntry();
     });
