@@ -2399,36 +2399,91 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// other reasons while still only having touch input) or
   /// `Platform.isWindows` (doesn't distinguish Android TV from phone at
   /// all).
-  Widget _buildTimelineFilterBar() {
+  Widget _buildTimelineFilterBar(Channel? channel) {
     final isTv = context.watch<AppPreferences>().isTelevision;
-    return Container(
-      clipBehavior: Clip.antiAlias,
-      // Centered, not top-pinned — only for the non-TV case, where this
-      // box keeps the normal preview row's full height rather than
-      // collapsing (see the Column children construction in
-      // _buildLiveRegion), so without this the filter bar would otherwise
-      // sit awkwardly at the very top of a tall, mostly-empty box.
-      // Deliberately omitted for isTv: Alignment gives its child its own
-      // natural/loose size instead of forcing it to fill, which conflicts
-      // with the keyboard grid's Expanded below needing tight, bounded
-      // constraints to size itself against — confirmed as the actual
-      // cause of the keyboard not rendering at all on a real device: this
-      // bug trips a layout assertion in debug builds, but release builds
-      // (what a real device actually runs) strip assertions and just
-      // silently collapse the Expanded content to nothing instead.
-      alignment: isTv ? null : Alignment.center,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        border:
-            Border.all(color: Colors.white.withValues(alpha: 0.18), width: 1.5),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: isTv
-          // No mainAxisSize here — it must fill the full tight height this
-          // Container now passes straight through (see the alignment doc
-          // comment above) so the Expanded keyboard grid below has real,
-          // bounded constraints to size itself against.
-          ? Column(
+    if (!isTv) {
+      return Container(
+        clipBehavior: Clip.antiAlias,
+        // Centered, not top-pinned — this box keeps the normal preview
+        // row's full height rather than collapsing (see the Column
+        // children construction in _buildLiveRegion), so without this the
+        // filter bar would otherwise sit awkwardly at the very top of a
+        // tall, mostly-empty box.
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+              color: Colors.white.withValues(alpha: 0.18), width: 1.5),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.search, color: Colors.white70, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _timelineFilterController,
+                // A fresh node, never previously focused, with autofocus —
+                // the one thing confirmed to actually open the keyboard
+                // reliably here. See _timelineFilterButtonFocusNode's doc
+                // comment for why this isn't the shared button node.
+                focusNode: _timelineFilterFieldFocusNode,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  hintText: 'Filter channels in this group...',
+                  hintStyle: TextStyle(color: Colors.white54),
+                  border: InputBorder.none,
+                ),
+                onChanged: (value) =>
+                    setState(() => _timelineFilterQuery = value),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Close filter',
+              icon: const Icon(Icons.close, color: Colors.white70, size: 18),
+              onPressed: _closeTimelineFilter,
+            ),
+          ],
+        ),
+      );
+    }
+    // TV: half the width, translucent, with the live preview still
+    // visible alongside (and faintly through) it — reported directly,
+    // once the keyboard actually worked, that a full-width opaque panel
+    // hid the still-playing video for no reason; nothing stops it from
+    // staying visible underneath/beside a narrower, see-through one.
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.18), width: 1.5),
+            ),
+            child: _buildTimelinePreviewBox(channel),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Container(
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.18), width: 1.5),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            // No mainAxisSize here — it must fill the full tight height
+            // this Container passes straight through so the Expanded
+            // keyboard grid below has real, bounded constraints to size
+            // itself against (see the TV layout bug this already caused
+            // once, now fixed, in git history for this file).
+            child: Column(
               children: [
                 Row(
                   children: [
@@ -2472,39 +2527,10 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
                   ),
                 ),
               ],
-            )
-          : Row(
-              children: [
-                const Icon(Icons.search, color: Colors.white70, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: _timelineFilterController,
-                    // A fresh node, never previously focused, with
-                    // autofocus — the one thing confirmed to actually open
-                    // the keyboard reliably here. See
-                    // _timelineFilterButtonFocusNode's doc comment for why
-                    // this isn't the shared button node.
-                    focusNode: _timelineFilterFieldFocusNode,
-                    autofocus: true,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      hintText: 'Filter channels in this group...',
-                      hintStyle: TextStyle(color: Colors.white54),
-                      border: InputBorder.none,
-                    ),
-                    onChanged: (value) =>
-                        setState(() => _timelineFilterQuery = value),
-                  ),
-                ),
-                IconButton(
-                  tooltip: 'Close filter',
-                  icon:
-                      const Icon(Icons.close, color: Colors.white70, size: 18),
-                  onPressed: _closeTimelineFilter,
-                ),
-              ],
             ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -2587,7 +2613,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       // already-small guide area once it pops up (see
       // _buildTimelineFilterBar's own doc comment).
       final previewRow = _timelineFilterActive
-          ? _buildTimelineFilterBar()
+          ? _buildTimelineFilterBar(channel)
           : Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
