@@ -554,112 +554,118 @@ class _MultiviewCellTileState extends State<_MultiviewCellTile> {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      focusNode: widget.focusNode,
-      onTap: widget.onTap,
-      onLongPress: widget.onLongPress,
-      onFocusChange: (f) => setState(() => _focused = f),
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: widget.active
-                ? Colors.amber
-                : (_focused ? Colors.white : Colors.white24),
-            width: widget.active || _focused ? 3 : 1,
-          ),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (widget.controller != null &&
-                widget.controller!.value.isInitialized)
-              // AspectRatio wraps only the video, not the frame around it
-              // — VideoPlayerHdr has no built-in letterboxing of its own
-              // (same as PlayerControls' identical fix) and otherwise just
-              // stretches to fill whatever box it's handed.
-              Center(
-                child: AspectRatio(
-                  aspectRatio: widget.controller!.value.aspectRatio == 0
-                      ? 16 / 9
-                      : widget.controller!.value.aspectRatio,
-                  child: VideoPlayerHdr(widget.controller!,
-                      key: ObjectKey(widget.controller)),
-                ),
-              )
-            else
-              ColoredBox(
-                color: const Color(0xFF1A1A1A),
-                child: Center(
-                  child: Icon(
-                      widget.channel == null
-                          ? Icons.add_circle_outline
-                          : Icons.hourglass_empty,
-                      color: Colors.white38,
-                      size: 36),
-                ),
+    // The frame (border included) is now aspect-constrained to the video's
+    // own ratio, not just the video inside it — requested directly: an
+    // earlier version of this was reverted for looking "noticeably
+    // smaller" next to the quad grid, but quad is gone now, so there's
+    // nothing left for a full-row frame to visually match against.
+    // (A wider-than-native frame with a BoxFit.cover crop was tried first
+    // to also widen the picture itself, but VideoPlayerHdr has no
+    // intrinsic size for FittedBox to scale from — it rendered blank.)
+    final ratio =
+        widget.controller != null && widget.controller!.value.aspectRatio != 0
+            ? widget.controller!.value.aspectRatio
+            : 16 / 9;
+    return Center(
+      child: AspectRatio(
+        aspectRatio: ratio,
+        child: InkWell(
+          focusNode: widget.focusNode,
+          onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
+          onFocusChange: (f) => setState(() => _focused = f),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border.all(
+                color: widget.active
+                    ? Colors.amber
+                    : (_focused ? Colors.white : Colors.white24),
+                width: widget.active || _focused ? 3 : 1,
               ),
-            if (widget.channel != null)
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                  // Was a 2-stop gradient fading to transparent almost
-                  // immediately — reported directly as barely visible
-                  // against a bright/busy video frame. A mid-bar stop
-                  // keeps the whole header solidly dark (not just its
-                  // very top edge) before fading out underneath it, and
-                  // the text itself now carries its own shadow as a
-                  // second, independent line of contrast — the same
-                  // "readable over anything behind it" fix already used
-                  // elsewhere in this app (e.g. PosterCard's progress
-                  // label) rather than relying on the backdrop alone.
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      stops: const [0.0, 0.6, 1.0],
-                      colors: [
-                        Colors.black.withValues(alpha: 0.92),
-                        Colors.black.withValues(alpha: 0.92),
-                        Colors.transparent,
-                      ],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (widget.controller != null &&
+                    widget.controller!.value.isInitialized)
+                  VideoPlayerHdr(widget.controller!,
+                      key: ObjectKey(widget.controller))
+                else
+                  ColoredBox(
+                    color: const Color(0xFF1A1A1A),
+                    child: Center(
+                      child: Icon(
+                          widget.channel == null
+                              ? Icons.add_circle_outline
+                              : Icons.hourglass_empty,
+                          color: Colors.white38,
+                          size: 36),
                     ),
                   ),
-                  child: Row(
-                    children: [
-                      if (widget.active) ...[
-                        const Icon(Icons.volume_up,
-                            color: Colors.amber,
-                            size: 15,
-                            shadows: [
-                              Shadow(color: Colors.black, blurRadius: 4)
-                            ]),
-                        const SizedBox(width: 4),
-                      ],
-                      Expanded(
-                        child: Text(
-                          widget.channel!.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              shadows: [
-                                Shadow(color: Colors.black, blurRadius: 4)
-                              ]),
+                if (widget.channel != null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 4),
+                      // Was a 2-stop gradient fading to transparent almost
+                      // immediately — reported directly as barely visible
+                      // against a bright/busy video frame. A mid-bar stop
+                      // keeps the whole header solidly dark (not just its
+                      // very top edge) before fading out underneath it, and
+                      // the text itself now carries its own shadow as a
+                      // second, independent line of contrast — the same
+                      // "readable over anything behind it" fix already used
+                      // elsewhere in this app (e.g. PosterCard's progress
+                      // label) rather than relying on the backdrop alone.
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: const [0.0, 0.6, 1.0],
+                          colors: [
+                            Colors.black.withValues(alpha: 0.92),
+                            Colors.black.withValues(alpha: 0.92),
+                            Colors.transparent,
+                          ],
                         ),
                       ),
-                    ],
+                      child: Row(
+                        children: [
+                          if (widget.active) ...[
+                            const Icon(Icons.volume_up,
+                                color: Colors.amber,
+                                size: 15,
+                                shadows: [
+                                  Shadow(color: Colors.black, blurRadius: 4)
+                                ]),
+                            const SizedBox(width: 4),
+                          ],
+                          Expanded(
+                            child: Text(
+                              widget.channel!.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  shadows: [
+                                    Shadow(color: Colors.black, blurRadius: 4)
+                                  ]),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ),
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );
