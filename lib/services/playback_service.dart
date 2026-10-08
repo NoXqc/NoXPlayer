@@ -93,45 +93,23 @@ class PlaybackService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// True only for a brief window after an automatic cold-start "resume
-  /// last channel" call (see `main.dart`'s `_autoResumeLastChannel`, the
-  /// only caller that passes `silent: true` to [play]), ended by either
-  /// [_silentResumeTimer] or genuine user interaction with the Live TV
-  /// tab (see `TvHomeScreen.clearSilentResume`) — whichever comes first.
-  ///
-  /// Exists because the mere act of that background resume starting was
-  /// enough to make `TvHomeScreen` auto-scroll its groups column to that
-  /// channel's group and start fetching its EPG — cosmetic, unrelated to
-  /// actual stream buffering, but visible work that happened the instant
-  /// the splash screen handed off to the main UI, reading as "the cold
-  /// start is slow" for a couple of seconds on something that had nothing
-  /// to do with the stream itself. `TvHomeScreen` checks this flag to
-  /// suppress exactly that jump while it's true, while playback still
-  /// starts loading immediately regardless.
-  ///
-  /// Deliberately NOT cleared when [initFuture] resolves (an earlier
-  /// version of this did that, and it didn't actually fix anything —
-  /// `initFuture` completing means `play()`/`initialize()` have been
-  /// *called*, not that a frame has actually decoded and become visible
-  /// yet, so the jump still happened before the stream was genuinely
-  /// ready to look at, reproducing the exact same complaint). A plain
-  /// fixed grace period is a blunter but honest fix for that: long enough
-  /// that a normal cold start's stream has actually started rendering by
-  /// the time this clears on its own.
-  bool isSilentlyResuming = false;
-  Timer? _silentResumeTimer;
+  /// The live channel a previous session was last playing, surfaced by
+  /// `LiveResumeHint` as a pill the user can act on — never auto-played.
+  /// Cold launch used to start this playing silently in the background
+  /// (`main.dart`'s old `_autoResumeLastChannel`), which was itself enough
+  /// extra concurrent work (a decoder opening, an EPG fetch queued up) to
+  /// make the whole first 10-20s of a cold start feel sluggish, on top of
+  /// catalog loading that was already the slow part. Reported directly.
+  /// Set once at launch (see `main.dart`'s `_autoResumeLastChannel`, now
+  /// just a lookup) and cleared the moment *any* real [play] call happens
+  /// — whether the user actually resumed this exact channel or picked a
+  /// different one instead, the pending state has nothing left to offer
+  /// once real playback has started.
+  Channel? pendingResumeChannel;
 
-  /// Called by `TvHomeScreen` on any deliberate group/channel/tab
-  /// interaction — ends the "silent" window early even if the grace
-  /// period hasn't elapsed yet, since at that point the user has already
-  /// gone looking for it themselves.
-  void clearSilentResume() {
-    _silentResumeTimer?.cancel();
-    _silentResumeTimer = null;
-    if (isSilentlyResuming) {
-      isSilentlyResuming = false;
-      notifyListeners();
-    }
+  void setPendingResumeChannel(Channel? channel) {
+    pendingResumeChannel = channel;
+    notifyListeners();
   }
 
   Timer? _positionSaveTimer;
@@ -240,10 +218,7 @@ class PlaybackService extends ChangeNotifier {
   /// Starts playing [channel]. No-ops if it's already the current channel
   /// (so re-opening the fullscreen view for the channel the mini-player is
   /// already showing doesn't restart it).
-  ///
-  /// [silent] is only ever passed by `main.dart`'s cold-start auto-resume
-  /// — see [isSilentlyResuming]'s doc comment.
-  Future<void> play(Channel channel, {bool silent = false}) async {
+  Future<void> play(Channel channel) async {
     if (!_playlistManager.isPlaylistEnabled(channel.playlistId)) {
       error =
           'This playlist is disabled on this device — enable it in Settings > Playlist Manager to watch.';
@@ -257,16 +232,10 @@ class PlaybackService extends ChangeNotifier {
     error = null;
     reconnectStatus = null;
     _autoAdvanceDismissed = false;
-    // Always assigned (not just set true when silent) — a non-silent
-    // play() must always win, even if a previous silent resume's window
-    // was still open, otherwise a genuine user pick right after cold
-    // start could get stuck being treated as "not yet looked at".
-    _silentResumeTimer?.cancel();
-    _silentResumeTimer = null;
-    isSilentlyResuming = silent;
-    if (silent) {
-      _silentResumeTimer = Timer(const Duration(seconds: 4), clearSilentResume);
-    }
+    // Real playback has started — whatever cold-launch pill this might
+    // have been about has nothing left to offer, whether this is the same
+    // channel or a different one the user picked instead.
+    pendingResumeChannel = null;
     notifyListeners();
     unawaited(_recordRecentlyPlayed(channel));
 
@@ -537,9 +506,15 @@ class PlaybackService extends ChangeNotifier {
     await _teardown();
     currentChannel = null;
     reconnectStatus = null;
-    _silentResumeTimer?.cancel();
-    _silentResumeTimer = null;
-    isSilentlyResuming = false;
+    // Otherwise `LiveResumeHint` reads "currentChannel is null" as "show
+    // the cold-launch pending-resume pill" unconditionally — reported
+    // directly as the pill reappearing inside Multiview (which calls stop()
+    // on entry specifically to free the main tab's decode session, but
+    // never touches this field since it never calls play() either): a
+    // pending channel set once at cold launch and never consumed by a real
+    // play() call would otherwise keep surfacing long after it's stale,
+    // anywhere else in the app that also calls stop().
+    pendingResumeChannel = null;
     notifyListeners();
   }
 
@@ -581,7 +556,6 @@ class PlaybackService extends ChangeNotifier {
 
   @override
   void dispose() {
-    _silentResumeTimer?.cancel();
     _teardown();
     super.dispose();
   }

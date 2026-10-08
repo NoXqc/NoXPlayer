@@ -321,20 +321,18 @@ class _NoxIptvAppState extends State<NoxIptvApp>
         WidgetsBinding.instance
             .addPostFrameCallback((_) => _showToast('Content updated'));
       }
-      // One after another, not all at once. Each of these is heavy on
-      // its own — a decoder opening, an EPG XML parse — and firing them
-      // together while the catalog is still settling is what made the
-      // first ~20 seconds of a cold start the app's least stable moment.
-      // Also fixes a real (if quiet) ordering bug that the old
-      // three-way `unawaited` race allowed: `PlaybackService.init` reads
-      // the recently-played list from disk, so letting a resumed channel
-      // start first meant that read could land afterwards and discard
-      // the entry the resume had just added.
+      // One after another, not all at once. `_autoResumeLastChannel`
+      // itself is now cheap (see its own doc comment — it no longer opens
+      // a decoder), but `_epgService.init` is still a heavy EPG XML parse,
+      // and firing it alongside the catalog still settling was part of
+      // what made the first ~20 seconds of a cold start the app's least
+      // stable moment.
       unawaited(() async {
         await _playbackService.init();
         await _autoResumeLastChannel();
         await _epgService.init();
-        _epgService.startAutoRefresh(_storage.getRefreshInterval(), _epgSources);
+        _epgService.startAutoRefresh(
+            _storage.getRefreshInterval(), _epgSources);
         // No-op for most launches (no key set, or already refreshed this
         // week) — see PlaylistManager.refreshWhatsNewTmdbIfDue's doc
         // comment for why this is a launch-time due-check rather than an
@@ -362,12 +360,21 @@ class _NoxIptvAppState extends State<NoxIptvApp>
     }
   }
 
-  /// Resumes straight into whatever live channel was last playing — the
-  /// same "turn it on and it's on the last channel" behavior MyTvOnline
-  /// has. Scoped to live channels only (not movies/episodes): those are
+  /// Used to start playing straight into whatever live channel was last
+  /// playing — the same "turn it on and it's on the last channel" behavior
+  /// MyTvOnline has — but that meant opening a real decoder and starting a
+  /// network stream concurrently with the catalog/EPG load already running
+  /// behind the splash, which was itself enough extra work to make the
+  /// first 10-20s of a cold start feel sluggish. Reported directly. Now
+  /// just finds the channel and hands it to [PlaybackService
+  /// .setPendingResumeChannel] — `LiveResumeHint` surfaces it as a pill the
+  /// user can act on (hold Right to actually start it), nothing opens
+  /// unless they do. No-ops if something's already playing (a real user
+  /// action on this launch beat the background load) or there's nothing to
+  /// resume into.
+  ///
+  /// Scoped to live channels only (not movies/episodes): those are
   /// deliberate choices to open, a live channel is just "what's on".
-  /// No-ops if something's already playing (a real user action on this
-  /// launch beat the background load) or there's nothing to resume into.
   ///
   /// Awaits [ensureLiveChannelsLoaded] directly (unlike every other caller,
   /// which just kicks it off and lets the UI show a brief loading state) —
@@ -384,16 +391,11 @@ class _NoxIptvAppState extends State<NoxIptvApp>
     // visibleChannels, not the raw `channels` getter — a restricted
     // viewer's last-played channel may have had its group hidden since
     // they last watched (by whoever set up their profile), and silently
-    // auto-resuming into it on launch would bypass that the same way an
+    // offering it to resume into would bypass that the same way an
     // unfiltered search result would.
-    for (final channel
-        in _playlistManager.visibleChannels(category: 'tv')) {
+    for (final channel in _playlistManager.visibleChannels(category: 'tv')) {
       if (channel.id == lastId) {
-        // silent: true — see PlaybackService.isSilentlyResuming's doc
-        // comment. This still starts loading/playing right away; it
-        // just tells TvHomeScreen not to auto-jump its groups column and
-        // fetch EPG for it until the user actually looks for it.
-        _playbackService.play(channel, silent: true);
+        _playbackService.setPendingResumeChannel(channel);
         return;
       }
     }
@@ -645,9 +647,7 @@ class _NoxIptvAppState extends State<NoxIptvApp>
               return Consumer<ViewerProfileService>(
                 builder: (context, viewerService, _) {
                   final key = ValueKey(viewerService.active.id);
-                  return useTv
-                      ? TvHomeScreen(key: key)
-                      : HomeScreen(key: key);
+                  return useTv ? TvHomeScreen(key: key) : HomeScreen(key: key);
                 },
               );
             },

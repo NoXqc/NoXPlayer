@@ -272,12 +272,9 @@ public abstract class VideoPlayer implements VideoPlayerInstanceApi {
       throw new IllegalStateException(
           "Cannot set audio track type disabled: track selector is null");
     }
-    // Unlike setVolume(0), this stops ExoPlayer from decoding and mixing
-    // audio for this instance at all — see Multiview's own doc comment
-    // (multiview_screen.dart) for why that distinction matters: muting via
-    // volume alone still pays the full decode/mix cost per background
-    // slot, which is what overloads this device class's audio mixer once
-    // several slots are open at once.
+    // Only ever called once, right after creation — see this method's own
+    // Dart-side doc comment (pigeons/messages.dart) for why toggling an
+    // already-playing instance isn't safe.
     trackSelector.setParameters(
         trackSelector.buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, disabled).build());
   }

@@ -548,11 +548,6 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
 
   void _onTabChanged(String tab) {
     _disarmLeftEdge();
-    // A deliberate visit to the TV tab is exactly the "user actually
-    // looked for it" moment PlaybackService.isSilentlyResuming's doc
-    // comment describes — end the cold-start suppression window early so
-    // this tab immediately shows what's actually playing.
-    if (tab == 'TV') context.read<PlaybackService>().clearSilentResume();
     // _col1Scope/_col2Scope are shared across every tab (see the widget
     // tree below — Live TV and Movies/TV Shows both build their groups/
     // main-area columns inside the *same* FocusScopeNode instances, not
@@ -715,7 +710,6 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
   /// column mixes bare titles pulled from every playlist's favorited
   /// groups together with no single caller-known playlist.
   void _onGroupSelected(String? group, {String? playlistId}) {
-    context.read<PlaybackService>().clearSilentResume();
     setState(() {
       _selectedGroup = group;
       // Otherwise the Timeline Guide's header keeps describing a program
@@ -1281,10 +1275,6 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     final groups = playlist.tvGroups.where((g) => !g.isHidden).toList();
     if (groups.isEmpty) return null;
     final playback = context.read<PlaybackService>();
-    // See PlaybackService.isSilentlyResuming's doc comment — a cold-start
-    // background resume shouldn't auto-scroll here to a group the user
-    // never actually asked to see yet.
-    if (playback.isSilentlyResuming) return groups.first.title;
     final playing = playback.currentChannel;
     if (playing != null && groups.any((g) => g.title == playing.group)) {
       return playing.group;
@@ -1380,13 +1370,6 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
       return;
     }
     final playback = context.read<PlaybackService>();
-    // A deliberate tap always ends the cold-start suppression window,
-    // even if it's for a *different* channel than the one silently
-    // resuming — otherwise isSilentlyResuming would stay true (it's
-    // unaffected by which channel play() below actually switches to) and
-    // keep suppressing the groups-column jump for a selection the user
-    // very much did make on purpose.
-    playback.clearSilentResume();
     // Awaited deliberately — PlayerScreen's own initState also calls
     // play() (guarded to no-op if this channel's already current), but
     // that guard only works if THIS call has actually finished setting
@@ -2603,13 +2586,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // start playing inline here, in a pane that's supposed to be "what's
     // live right now" — confusing on a tab that has nothing to do with
     // movies at all.
-    // See PlaybackService.isSilentlyResuming's doc comment — a cold-start
-    // background resume shouldn't make this pane jump straight to it
-    // (and start fetching its EPG) before the user has actually looked
-    // for it; it stays on the plain placeholder below until they do, even
-    // though the stream itself is already loading regardless.
-    final rawChannel =
-        playback.isSilentlyResuming ? null : playback.currentChannel;
+    final rawChannel = playback.currentChannel;
     // rawChannel.rawId, not rawChannel.id — Channel.isLiveId expects the
     // raw, unprefixed id.
     final channel = rawChannel != null && Channel.isLiveId(rawChannel.rawId)

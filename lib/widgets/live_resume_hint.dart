@@ -28,6 +28,14 @@ import '../services/playback_service.dart';
 /// the gesture that resumes it (see [build]) for as long as it's playing
 /// somewhere other than its own fullscreen view.
 ///
+/// Also doubles as the cold-launch "resume last channel" entry point (see
+/// [PlaybackService.pendingResumeChannel]'s doc comment) — nothing is
+/// actually playing yet in that case, but the same gesture and the same
+/// pill UI both still apply, so [_resumableChannel] just picks whichever
+/// of the two applies and [_resume] pushes [PlayerScreen] either way
+/// (that screen's own `initState` always calls `play()`, a no-op if this
+/// is already the current channel, a real start if it isn't).
+///
 /// Lives directly above [MaterialApp]'s `Navigator` (see main.dart's
 /// `builder`), as a sibling of it rather than a descendant, so the hold
 /// gesture and the reminder both work from any screen — same reason the
@@ -77,15 +85,31 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
     super.dispose();
   }
 
+  /// Whichever channel the pill would act on — a real already-playing
+  /// background channel if there is one, otherwise the cold-launch
+  /// [PlaybackService.pendingResumeChannel] nothing has actually opened
+  /// yet. [PlayerScreen.initState] calling `play()` unconditionally is
+  /// what makes a single code path in [_resume] correct for both: a
+  /// no-op for the already-playing case (same channel, controller already
+  /// exists), a real start for the pending one.
+  Channel? get _resumableChannel =>
+      _playback.currentChannel ?? _playback.pendingResumeChannel;
+
   bool get _canResume {
-    final channel = _playback.currentChannel;
-    return channel != null &&
+    final channel = _resumableChannel;
+    if (channel == null ||
         // rawId, not the composite `id` — Channel.isLiveId expects the
         // raw, unprefixed id. With `id` here this always read false,
         // silently disabling this whole bubble for every live channel.
-        Channel.isLiveId(channel.rawId) &&
-        _playback.controller != null &&
-        !_playback.isFullscreenActive;
+        !Channel.isLiveId(channel.rawId)) {
+      return false;
+    }
+    if (_playback.currentChannel == null) {
+      // Cold-launch pending case — nothing is open yet at all, so there's
+      // no controller/fullscreen state to check.
+      return true;
+    }
+    return _playback.controller != null && !_playback.isFullscreenActive;
   }
 
   /// Neither of the two things already tried for a hold gesture in this
@@ -151,7 +175,7 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
   void _resume() {
     _holdTimer = null;
     if (!mounted || !_canResume) return;
-    final channel = _playback.currentChannel;
+    final channel = _resumableChannel;
     if (channel == null) return;
     widget.navigatorKey.currentState?.push(
       MaterialPageRoute(builder: (_) => PlayerScreen(channel: channel)),
@@ -160,7 +184,7 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
 
   @override
   Widget build(BuildContext context) {
-    final channel = _playback.currentChannel;
+    final channel = _resumableChannel;
     final show = _canResume && channel != null;
 
     // Always Positioned, shown or not — a bare non-Positioned child here

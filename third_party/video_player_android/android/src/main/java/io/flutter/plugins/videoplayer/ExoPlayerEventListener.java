@@ -6,6 +6,7 @@ package io.flutter.plugins.videoplayer;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
@@ -17,6 +18,25 @@ import androidx.media3.exoplayer.ExoPlayer;
 
 public abstract class ExoPlayerEventListener implements Player.Listener {
   static final long DURATION_UNSET_INITIALIZATION_TIMEOUT_MS = 2000;
+  // A live IPTV relay occasionally hands ExoPlayer a corrupted/reordered
+  // segment, which media3 (as of ~1.9) now surfaces as a fatal
+  // PlaybackException (an audio AudioSink$UnexpectedDiscontinuityException,
+  // or a video MediaCodecRenderer IndexOutOfBoundsException from garbled
+  // buffer offsets — confirmed on real hardware, both happening ~20-40s
+  // into playback regardless of channel, bitrate, or device) instead of
+  // recovering silently like older versions did. Nothing upstream of this
+  // listener ever retried on a fatal error, so every one of these
+  // permanently froze the affected player until a manual reload. The
+  // ERROR_CODE_BEHIND_LIVE_WINDOW case below already re-prepares the same
+  // ExoPlayer instance in place (no Surface/texture is touched, so there's
+  // no reload-style flash) — this generalizes that same recovery to any
+  // fatal error, capped so a genuinely broken stream (bad URL, auth
+  // failure) still gives up and surfaces to Dart instead of retry-looping
+  // forever.
+  private static final long ERROR_RETRY_WINDOW_MS = 10_000;
+  private static final int MAX_ERRORS_IN_WINDOW = 3;
+  private long errorWindowStartMs = 0;
+  private int errorsInWindow = 0;
   private boolean isInitialized = false;
   private boolean isWaitingForValidDuration = false;
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -131,6 +151,24 @@ public abstract class ExoPlayerEventListener implements Player.Listener {
     if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
       // See
       // https://exoplayer.dev/live-streaming.html#behindlivewindowexception-and-error_code_behind_live_window
+      exoPlayer.seekToDefaultPosition();
+      exoPlayer.prepare();
+      return;
+    }
+
+    long now = SystemClock.elapsedRealtime();
+    if (now - errorWindowStartMs > ERROR_RETRY_WINDOW_MS) {
+      errorWindowStartMs = now;
+      errorsInWindow = 0;
+    }
+    errorsInWindow++;
+
+    if (errorsInWindow <= MAX_ERRORS_IN_WINDOW) {
+      // In-place recovery: re-preparing the same ExoPlayer instance resets
+      // its internal renderers (including recreating the MediaCodec
+      // decoders) without releasing the Surface/texture, so playback just
+      // briefly blanks and resumes near the live edge instead of a full
+      // widget-level reload.
       exoPlayer.seekToDefaultPosition();
       exoPlayer.prepare();
     } else {

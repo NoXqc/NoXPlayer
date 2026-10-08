@@ -263,10 +263,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   /// Not part of the upstream [VideoPlayerPlatform] interface — callers
   /// reach this by casting `VideoPlayerPlatform.instance` to
-  /// [AndroidVideoPlayer] (see multiview_screen.dart). Unlike
-  /// [VideoPlayerPlatform.setVolume], this actually stops ExoPlayer from
-  /// decoding/mixing audio for this instance, instead of just silencing
-  /// an otherwise-fully-decoded track.
+  /// [AndroidVideoPlayer] (see multiview_screen.dart). Only safe to call
+  /// once, right after `createWithOptions`, before `play()` — see this
+  /// method's own doc comment on the Pigeon side for why.
   Future<void> setAudioTrackTypeDisabled(int playerId, bool disabled) {
     return _playerWith(id: playerId).setAudioTrackTypeDisabled(disabled);
   }

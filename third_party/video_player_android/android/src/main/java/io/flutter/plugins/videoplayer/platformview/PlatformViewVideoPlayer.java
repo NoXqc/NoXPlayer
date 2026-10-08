@@ -61,6 +61,17 @@ public class PlatformViewVideoPlayer extends VideoPlayer {
         options,
         () -> {
           ExoPlayer.Builder builder = new ExoPlayer.Builder(context);
+          DefaultLoadControl.Builder loadControlBuilder = new DefaultLoadControl.Builder();
+          // See TextureVideoPlayer.create()'s identical setup for why the
+          // min/max buffer is raised well past media3's default (an
+          // unconfirmed attempt to prevent the corruption/discontinuity
+          // before it happens, not just recover faster from it) and why
+          // the playback-start thresholds are still cut down regardless.
+          loadControlBuilder.setBufferDurationsMs(
+              /* minBufferMs= */ 90_000,
+              /* maxBufferMs= */ 120_000,
+              /* bufferForPlaybackMs= */ 500,
+              /* bufferForPlaybackAfterRebufferMs= */ 500);
           if (options.backBufferDurationMs != null) {
             if (options.backBufferDurationMs < 0) {
               throw new IllegalArgumentException("backBufferDurationMs must be at least 0");
@@ -70,13 +81,10 @@ public class PlatformViewVideoPlayer extends VideoPlayer {
               // DefaultLoadControl.
               int backBufferInt =
                   (int) Math.min(options.backBufferDurationMs.longValue(), Integer.MAX_VALUE);
-              DefaultLoadControl loadControl =
-                  new DefaultLoadControl.Builder()
-                      .setBackBuffer(backBufferInt, /* retainBackBufferFromKeyframe= */ true)
-                      .build();
-              builder.setLoadControl(loadControl);
+              loadControlBuilder.setBackBuffer(backBufferInt, /* retainBackBufferFromKeyframe= */ true);
             }
           }
+          builder.setLoadControl(loadControlBuilder.build());
           androidx.media3.exoplayer.trackselection.DefaultTrackSelector trackSelector =
               new androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context);
           // Root cause of the multiview/mini-player audio bleed-through
@@ -113,8 +121,22 @@ public class PlatformViewVideoPlayer extends VideoPlayer {
                       .build();
                 }
               };
+          // ON, not PREFER: PREFER makes ExoPlayer always choose the
+          // software FFmpeg decoder over the hardware one for any format
+          // the extension supports at all, not just the ones the hardware
+          // genuinely can't handle (AC3/E-AC3 on a device with no licensed
+          // Dolby decoder, this extension's original reason for existing
+          // here) — reported directly as real instability on a Formuler
+          // under Multiview's concurrent-decode load with this set to
+          // PREFER: an audio-focused cell's plain AAC audio was being
+          // needlessly software-decoded instead of using the hardware
+          // decoder it could handle natively, and that's what gave out
+          // after ~35-60s with 3 simultaneous streams — never stress-
+          // tested under concurrent load when PREFER was first set, only
+          // as a single always-on stream. ON keeps the software decoder
+          // purely as a fallback for formats hardware truly can't do.
           renderersFactory.setExtensionRendererMode(
-              DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+              DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
           builder
               .setTrackSelector(trackSelector)
               .setMediaSourceFactory(asset.getMediaSourceFactory(context))

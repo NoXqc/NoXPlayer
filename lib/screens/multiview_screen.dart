@@ -18,17 +18,32 @@ import '../widgets/hold_to_activate.dart';
 /// cross-platform video engine in this app (see `pubspec.yaml`'s
 /// media_kit comment), so each platform needs its own.
 ///
-/// Worth naming plainly: `video_player_hdr` renders via a platform view
-/// specifically to dodge an Android GPU-texture rendering bug, and this
-/// app has documented history of a *shared-decode-session* platform-view
-/// bug on real Fire Stick hardware (see `LiveResumeHint`'s doc comment —
-/// the scrapped "Live Island" pill: one decode session rendered in two
-/// places at once corrupted both). This screen doesn't do that — every
-/// cell owns a fully independent `VideoPlayerHdrController`/decode
-/// session, never shared — so that specific bug doesn't apply here.
-/// Requested directly regardless, citing TiviMate's own multiview running
-/// fine even on older Fire Sticks; verify on real hardware rather than
-/// trusting that confidently, the same as everything else in this app.
+/// Worth naming plainly: `video_player_hdr` can render via a platform view
+/// (adopted elsewhere in this app, see `playback_service.dart`'s own doc
+/// comment, specifically to dodge an Android GPU-texture rendering bug on
+/// a *single* fullscreen stream) or a plain texture. This screen uses
+/// [VideoViewType.textureView], not platform views — confirmed directly on
+/// real hardware (a Formuler) via a live CPU/thread dump during a glitch:
+/// with 3-4 simultaneous platform views, the app alone was pegging ~94%
+/// of a CPU core concentrated in the main thread/RenderThread/GC, not any
+/// audio or video codec thread — the signature of Android's hybrid-
+/// composition overhead for multiple concurrent platform views, not an
+/// actual decode bottleneck. A plain texture is a cheap GPU blit per
+/// instance instead, which is exactly the "many simultaneous small tiles"
+/// shape this screen has (the opposite of the single large fullscreen
+/// view platform-view rendering was adopted for elsewhere).
+///
+/// This re-opens a different, already-fixed bug's risk, though: this
+/// app has documented history of a *shared-decode-session* texture bug on
+/// real Fire Stick hardware (see `LiveResumeHint`'s doc comment — the
+/// scrapped "Live Island" pill: one decode session rendered in two places
+/// at once corrupted both). [_MultiviewFullscreenView] reuses a cell's
+/// already-playing controller rather than starting a second decode
+/// session, but the grid's own cell tile stays mounted underneath while
+/// that route is pushed on top (`Navigator.push` doesn't unmount the
+/// previous route) — the same two-simultaneous-consumers shape. Needs
+/// real-hardware verification specifically on that promote-to-fullscreen
+/// flow, the same as everything else in this app.
 class MultiviewScreen extends StatefulWidget {
   const MultiviewScreen({super.key});
 
@@ -36,13 +51,24 @@ class MultiviewScreen extends StatefulWidget {
   State<MultiviewScreen> createState() => _MultiviewScreenState();
 }
 
-/// Not part of [VideoPlayerHdrController]'s own API — only reachable by
-/// casting [VideoPlayerPlatform.instance] to our vendored
-/// [AndroidVideoPlayer] (see that package's own doc comment on
-/// `setAudioTrackTypeDisabled` for why `setVolume(0)` alone isn't enough
-/// for this screen specifically). No-op on any platform other than
-/// Android (iOS/Windows don't hit this method at all today, but this
-/// guards it anyway rather than assuming).
+/// Not part of the upstream [VideoPlayerPlatform] interface — callers
+/// reach this by casting [VideoPlayerPlatform.instance] to our vendored
+/// [AndroidVideoPlayer]. Stops ExoPlayer from decoding/mixing audio for
+/// this instance at all (unlike [VideoPlayerHdrController.setVolume],
+/// which still pays that cost at zero gain) — background Multiview audio
+/// was overloading this device class's audio mixer once several slots
+/// were open at once (confirmed via a live `dumpsys media.audio_flinger`
+/// capture on a Formuler showing constant AudioTrack churn/teardown).
+///
+/// Only ever called once, from [_assign], right after a controller is
+/// created — never to toggle an already-playing instance's state. That
+/// was tried first (toggling whichever cell became active/inactive) and
+/// reliably destabilized the toggled cell a few seconds later (a frozen
+/// frame with looping audio, or vice versa) on real hardware, even
+/// delayed and debounced. [_setActive] now recreates a cell via [_assign]
+/// instead of toggling it in place whenever its role needs to change,
+/// specifically so this is never called against a controller that's
+/// already stable/playing.
 Future<void> _setAudioEnabled(
     VideoPlayerHdrController controller, bool enabled) async {
   final platform = VideoPlayerPlatform.instance;
@@ -63,36 +89,22 @@ class _MultiviewCell {
   final FocusNode focusNode = FocusNode(debugLabel: 'multiview-cell');
 }
 
-/// Requested directly: a smaller, 2-channel layout alongside the
-/// original 4-channel grid — fewer simultaneous decode sessions when you
-/// only actually want to watch two things, and each cell gets twice the
-/// width to show it. This screen always keeps 4 `_cells` allocated
-/// regardless of which is active; only [dual]'s own two extra cells get
-/// disposed when switching down to it (see `_setLayout`) to actually
-/// free their connections/decode sessions rather than just hiding them.
-enum _MultiviewLayout { dual, quad }
-
+/// The 4-channel grid was removed — every extra concurrent stream raises
+/// how often two cells' independent reconnect cycles collide and trip the
+/// provider-side discontinuity documented on `ExoPlayerEventListener
+/// .onPlayerError`, and 2 cells measurably held up far better in testing
+/// than 3-4. Fixed at 2 now rather than configurable.
 class _MultiviewScreenState extends State<MultiviewScreen> {
-  static const _cellCount = 4;
+  static const _cellCount = 2;
   final List<_MultiviewCell> _cells =
       List.generate(_cellCount, (_) => _MultiviewCell());
   int _activeCell = 0;
-  _MultiviewLayout _layout = _MultiviewLayout.quad;
 
-  void _setLayout(_MultiviewLayout layout) {
-    if (layout == _layout) return;
-    if (layout == _MultiviewLayout.dual) {
-      for (var i = 2; i < _cellCount; i++) {
-        final cell = _cells[i];
-        final old = cell.controller;
-        cell.channel = null;
-        cell.controller = null;
-        unawaited(old?.dispose());
-      }
-      if (_activeCell >= 2) _activeCell = 0;
-    }
-    setState(() => _layout = layout);
-  }
+  /// The cell index currently promoted to [_MultiviewFullscreenView], if
+  /// any — see [_openFullscreen]'s own doc comment for why its grid tile
+  /// needs to stop rendering its own video widget for as long as that's
+  /// true.
+  int? _promotedCell;
 
   @override
   void initState() {
@@ -145,7 +157,7 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
     );
     try {
-      await newController.initialize(viewType: VideoViewType.platformView);
+      await newController.initialize(viewType: VideoViewType.textureView);
       if (!mounted) {
         unawaited(newController.dispose());
         return;
@@ -157,23 +169,16 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
         cell.channel = channel;
         cell.controller = newController;
       });
-      // Actually stops decoding/mixing audio for background slots (see
-      // this file's own doc comment on `_setAudioEnabled`) rather than
-      // just muting an otherwise-fully-decoded track — background
-      // Multiview audio was overloading this device class's FastMixer
-      // once several slots were open at once, stalling every slot, not
-      // just muting them (confirmed via a live `dumpsys media.audio_flinger`
-      // capture on a Formuler showing constant AudioTrack churn/teardown).
-      //
-      // Deliberately delayed, and skipped entirely for the active cell:
-      // applying this immediately after creation (before the renderer has
-      // produced a first frame) corrupted the video surface solid green
-      // on real hardware — the same renderer-reset risk the vendored
+      // See this file's own doc comment on `_setAudioEnabled` for why
+      // this is only ever applied once, right here at creation — never to
+      // an already-playing cell. Still delayed (not called immediately
+      // after creation): doing so corrupted the video surface solid green
+      // on real hardware, the same renderer-reset risk the vendored
       // player's own video-dimension-change workaround already documents
       // for this exact trackSelector API. 300ms mirrors that workaround's
       // own delay. The `cell.controller == newController` check guards
-      // against the slot having already been reassigned or disposed by
-      // the time this fires.
+      // against this cell having already been reassigned again by the
+      // time this fires.
       if (!isActive) {
         await Future.delayed(const Duration(milliseconds: 300));
         if (cell.controller == newController) {
@@ -210,16 +215,23 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
     unawaited(old?.dispose());
   }
 
-  void _setActive(int index) {
-    if (_cells[index].channel == null) return;
+  /// Recreates both the newly- and previously-active cells via [_assign]
+  /// rather than toggling either one's audio state in place — see this
+  /// file's own doc comment on `_setAudioEnabled` for why. Costs a brief
+  /// reconnect/rebuffer on both instead of an instant mute/unmute, the
+  /// accepted trade-off for never touching an already-stable cell's audio
+  /// state again. A no-op if [index] is already the active cell.
+  Future<void> _setActive(int index) async {
+    final newChannel = _cells[index].channel;
+    if (newChannel == null) return;
+    final previousActive = _activeCell;
+    if (previousActive == index) return;
     setState(() => _activeCell = index);
-    for (var i = 0; i < _cells.length; i++) {
-      final controller = _cells[i].controller;
-      if (controller == null) continue;
-      final isActive = i == _activeCell;
-      controller.setVolume(isActive ? 1.0 : 0.0);
-      unawaited(_setAudioEnabled(controller, isActive));
-    }
+    final previousChannel = _cells[previousActive].channel;
+    await Future.wait([
+      _assign(index, newChannel),
+      if (previousChannel != null) _assign(previousActive, previousChannel),
+    ]);
   }
 
   /// True while a picker push is already in flight — [HoldToActivate]'s
@@ -317,13 +329,28 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
   Future<void> _openFullscreen(int index) async {
     final cell = _cells[index];
     final channel = cell.channel;
+    if (channel == null) return;
+    // Awaited — if this index wasn't already active, `_setActive` tears
+    // down and recreates it (see that method's own doc comment), so the
+    // controller to actually show fullscreen doesn't exist yet until this
+    // finishes.
+    await _setActive(index);
     final controller = cell.controller;
-    if (channel == null || controller == null) return;
-    _setActive(index);
+    if (!mounted || controller == null) return;
+    // Now that this screen uses textureView (see this file's own top doc
+    // comment), the grid tile staying mounted underneath while
+    // [_MultiviewFullscreenView] renders the exact same controller on top
+    // is the known shared-decode-session bug's shape — two simultaneous
+    // consumers of the same texture. Suppressing the grid tile's own
+    // video widget for the promoted index (it falls back to the existing
+    // "no controller" placeholder) avoids that outright, regardless of
+    // view type.
+    setState(() => _promotedCell = index);
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) =>
           _MultiviewFullscreenView(channel: channel, controller: controller),
     ));
+    if (mounted) setState(() => _promotedCell = null);
   }
 
   @override
@@ -348,24 +375,6 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 8),
-                    PopupMenuButton<_MultiviewLayout>(
-                      tooltip: 'Layout',
-                      icon: const Icon(Icons.grid_view, color: Colors.white),
-                      onSelected: _setLayout,
-                      itemBuilder: (context) => [
-                        CheckedPopupMenuItem(
-                          value: _MultiviewLayout.dual,
-                          checked: _layout == _MultiviewLayout.dual,
-                          child: const Text('2 channels'),
-                        ),
-                        CheckedPopupMenuItem(
-                          value: _MultiviewLayout.quad,
-                          checked: _layout == _MultiviewLayout.quad,
-                          child: const Text('4 channels'),
-                        ),
-                      ],
-                    ),
                     const Spacer(),
                     const Icon(Icons.volume_up, color: Colors.amber, size: 16),
                     const SizedBox(width: 4),
@@ -395,6 +404,37 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                         'Multiview is limited by each playlist\'s maximum '
                         'connections — check Playlist Manager if channels '
                         'stall after a few seconds.',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Requested directly, after an extensive real-hardware
+              // investigation traced Multiview's periodic freezes/
+              // buffering to the upstream provider's own server closing
+              // and re-establishing each stream's connection every few
+              // seconds — concurrent cells' independent reconnect cycles
+              // occasionally collide, which media3 detects and fails
+              // fast on (see ExoPlayerEventListener.onPlayerError). That
+              // failure is now caught and auto-recovered, but the
+              // provider-side cause itself isn't something this app can
+              // fix — this sets the right expectation instead of letting
+              // a stall look like a silent bug.
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.amber, size: 14),
+                    SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Freezing or buffering can happen — the app will '
+                        'relaunch that channel automatically. If it '
+                        'doesn\'t, hold Select on the stream and choose '
+                        'Reload.',
                         style: TextStyle(color: Colors.white54, fontSize: 11),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
@@ -442,53 +482,20 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                   // available height, i.e. 1.3x the even-split baseline —
                   // once both cells are filled they're back to equal flex
                   // (13:13) and split evenly like a normal multiview grid.
-                  child: _layout == _MultiviewLayout.dual
-                      ? Column(
-                          children: [
-                            Expanded(
-                                flex: _cells[0].channel != null ? 13 : 7,
-                                child: Padding(
-                                    padding: const EdgeInsets.all(3),
-                                    child: _buildCell(0))),
-                            Expanded(
-                                flex: _cells[1].channel != null ? 13 : 7,
-                                child: Padding(
-                                    padding: const EdgeInsets.all(3),
-                                    child: _buildCell(1))),
-                          ],
-                        )
-                      : Column(
-                          children: [
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                      child: Padding(
-                                          padding: const EdgeInsets.all(3),
-                                          child: _buildCell(0))),
-                                  Expanded(
-                                      child: Padding(
-                                          padding: const EdgeInsets.all(3),
-                                          child: _buildCell(1))),
-                                ],
-                              ),
-                            ),
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                      child: Padding(
-                                          padding: const EdgeInsets.all(3),
-                                          child: _buildCell(2))),
-                                  Expanded(
-                                      child: Padding(
-                                          padding: const EdgeInsets.all(3),
-                                          child: _buildCell(3))),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                  child: Column(
+                    children: [
+                      Expanded(
+                          flex: _cells[0].channel != null ? 13 : 7,
+                          child: Padding(
+                              padding: const EdgeInsets.all(3),
+                              child: _buildCell(0))),
+                      Expanded(
+                          flex: _cells[1].channel != null ? 13 : 7,
+                          child: Padding(
+                              padding: const EdgeInsets.all(3),
+                              child: _buildCell(1))),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -509,7 +516,9 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
       child: _MultiviewCellTile(
         focusNode: cell.focusNode,
         channel: cell.channel,
-        controller: cell.controller,
+        // null (not cell.controller) while this exact cell is promoted to
+        // fullscreen — see _openFullscreen's own doc comment.
+        controller: index == _promotedCell ? null : cell.controller,
         active: active,
         onTap: onTap,
         onLongPress:
@@ -681,7 +690,6 @@ class _MultiviewFullscreenViewState extends State<_MultiviewFullscreenView> {
   void initState() {
     super.initState();
     widget.controller.setVolume(1.0);
-    unawaited(_setAudioEnabled(widget.controller, true));
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _backFocus.requestFocus());
   }

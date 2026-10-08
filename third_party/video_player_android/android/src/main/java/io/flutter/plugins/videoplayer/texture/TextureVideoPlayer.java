@@ -13,7 +13,10 @@ import androidx.annotation.VisibleForTesting;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.audio.AudioSink;
+import androidx.media3.exoplayer.audio.DefaultAudioSink;
 import io.flutter.plugins.videoplayer.ExoPlayerEventListener;
 import io.flutter.plugins.videoplayer.VideoAsset;
 import io.flutter.plugins.videoplayer.VideoPlayer;
@@ -58,6 +61,31 @@ public final class TextureVideoPlayer extends VideoPlayer implements SurfaceProd
         options,
         () -> {
           ExoPlayer.Builder builder = new ExoPlayer.Builder(context);
+          DefaultLoadControl.Builder loadControlBuilder = new DefaultLoadControl.Builder();
+          // A live IPTV relay stream occasionally throws a fatal renderer
+          // error (an audio AudioSink$UnexpectedDiscontinuityException, or
+          // a video MediaCodecRenderer IndexOutOfBoundsException from
+          // garbled buffer offsets — see ExoPlayerEventListener's own doc
+          // comment) that ExoPlayerEventListener.onPlayerError recovers
+          // from by re-preparing this same player instance, but confirmed
+          // on real hardware that recovering faster doesn't help much —
+          // the stream still visibly freezes for 10-15s because the
+          // underlying corruption/discontinuity already happened well
+          // before the exception is even thrown. Raising the min/max
+          // buffer far past media3's default (50s) gives the player much
+          // more cushion against whatever network jitter under Multiview's
+          // concurrent-connection load is causing that corruption in the
+          // first place — this is a prevention attempt, not yet confirmed
+          // to help; if it doesn't reduce how often this happens, revert
+          // it rather than keep carrying the extra memory/latency cost.
+          // The playback-start thresholds stay cut down from the default
+          // (5000ms after a rebuffer) so that when a freeze does happen,
+          // at least the resume itself isn't adding its own extra delay.
+          loadControlBuilder.setBufferDurationsMs(
+              /* minBufferMs= */ 90_000,
+              /* maxBufferMs= */ 120_000,
+              /* bufferForPlaybackMs= */ 500,
+              /* bufferForPlaybackAfterRebufferMs= */ 500);
           if (options.backBufferDurationMs != null) {
             if (options.backBufferDurationMs < 0) {
               throw new IllegalArgumentException("backBufferDurationMs must be at least 0");
@@ -67,18 +95,47 @@ public final class TextureVideoPlayer extends VideoPlayer implements SurfaceProd
               // DefaultLoadControl.
               int backBufferInt =
                   (int) Math.min(options.backBufferDurationMs.longValue(), Integer.MAX_VALUE);
-              DefaultLoadControl loadControl =
-                  new DefaultLoadControl.Builder()
-                      .setBackBuffer(backBufferInt, /* retainBackBufferFromKeyframe= */ true)
-                      .build();
-              builder.setLoadControl(loadControl);
+              loadControlBuilder.setBackBuffer(backBufferInt, /* retainBackBufferFromKeyframe= */ true);
             }
           }
+          builder.setLoadControl(loadControlBuilder.build());
           androidx.media3.exoplayer.trackselection.DefaultTrackSelector trackSelector =
               new androidx.media3.exoplayer.trackselection.DefaultTrackSelector(context);
+          // Same audio setup as PlatformViewVideoPlayer.create() — see that
+          // class's own doc comment for the full HDMI-passthrough/
+          // setVolume() story. This class didn't need it when every
+          // texture-view instance was a single always-visible stream, but
+          // Multiview switched to texture views (see multiview_screen.dart's
+          // own doc comment on the CPU cost of platform views) without
+          // carrying this fix along — left every Multiview cell on the
+          // stock, Context-aware AudioSink and no FFmpeg-decoder
+          // preference, silently reintroducing both bugs this was written
+          // to avoid.
+          DefaultRenderersFactory renderersFactory =
+              new DefaultRenderersFactory(context) {
+                @Nullable
+                @Override
+                protected AudioSink buildAudioSink(
+                    Context context,
+                    boolean enableFloatOutput,
+                    boolean enableAudioOutputPlaybackParams) {
+                  //noinspection deprecation — deliberate: see the comment above.
+                  return new DefaultAudioSink.Builder()
+                      .setEnableFloatOutput(enableFloatOutput)
+                      .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
+                      .build();
+                }
+              };
+          // ON, not PREFER — see PlatformViewVideoPlayer.create()'s own doc
+          // comment for the full story (real Multiview instability traced
+          // to PREFER needlessly software-decoding plain AAC instead of
+          // using the hardware decoder).
+          renderersFactory.setExtensionRendererMode(
+              DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
           builder
               .setTrackSelector(trackSelector)
-              .setMediaSourceFactory(asset.getMediaSourceFactory(context));
+              .setMediaSourceFactory(asset.getMediaSourceFactory(context))
+              .setRenderersFactory(renderersFactory);
           return builder.build();
         });
   }

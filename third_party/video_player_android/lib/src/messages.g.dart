@@ -1380,9 +1380,11 @@ class VideoPlayerInstanceApi {
   }
 
   /// Enables or disables the audio renderer entirely (as opposed to
-  /// [setVolume], which still decodes and mixes audio at zero gain).
-  /// Used by Multiview to stop paying the decode/mix cost for background
-  /// slots that are always muted anyway.
+  /// [setVolume], which still decodes and mixes audio at zero gain). Only
+  /// ever called once, right after this instance is created, before
+  /// `play()` — never to toggle an already-playing instance's state,
+  /// which was confirmed on real hardware to destabilize it a few
+  /// seconds later (see multiview_screen.dart's own doc comment).
   Future<void> setAudioTrackTypeDisabled(bool disabled) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.video_player_android.VideoPlayerInstanceApi.setAudioTrackTypeDisabled$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(

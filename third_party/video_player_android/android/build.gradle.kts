@@ -60,7 +60,9 @@ android {
         implementation("androidx.media3:media3-exoplayer-rtsp:${exoplayerVersion}")
         implementation("androidx.media3:media3-exoplayer-smoothstreaming:${exoplayerVersion}")
         // Software fallback decoder for AC3/E-AC3/DTS/TrueHD — see the
-        // EXTENSION_RENDERER_MODE_PREFER setup in PlatformViewVideoPlayer.java.
+        // EXTENSION_RENDERER_MODE_ON setup in PlatformViewVideoPlayer.java/
+        // TextureVideoPlayer.java (ON, not PREFER, so it only engages for
+        // formats the hardware genuinely can't decode).
         // Built by the Jellyfin project specifically for this Android-TV-class
         // "no licensed hardware Dolby decoder" gap; GPL-3.0, matching this app's own license.
         implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1")
