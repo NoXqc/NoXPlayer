@@ -1,7 +1,7 @@
 name: nox_iptv
 description: "NoX IPTV - an M3U/EPG IPTV player for Android phones, boxes, and Firesticks."
 publish_to: 'none'
-version: 3.50.9+173
+version: 3.50.10+174
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -47,6 +47,12 @@ dependencies:
   media_kit: ^1.1.11
   media_kit_video: ^1.2.5
   media_kit_libs_windows_video: ^1.0.10
+  # Used directly (not just transitively through video_player_hdr) by
+  # multiview_screen.dart, to reach our vendored video_player_android's
+  # setAudioTrackTypeDisabled — see third_party/video_player_android's own
+  # doc comment on that method for why.
+  video_player_android: ^2.12.2
+  video_player_platform_interface: ^6.9.0
   # Windows only — Check for Updates has no silent-install path there
   # (unlike Android's FileProvider + package-installer intent, see
   # AppUpdateService's own doc comment), so it hands the release zip's

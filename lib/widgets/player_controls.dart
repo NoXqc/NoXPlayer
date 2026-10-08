@@ -10,6 +10,7 @@ import '../services/app_preferences.dart';
 import '../services/epg_service.dart';
 import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
+import '../utils/video_quality.dart';
 import 'epg_guide.dart';
 
 /// Renders whatever [PlaybackService] is currently playing.
@@ -409,6 +410,8 @@ class PlayerControls extends StatelessWidget {
                           color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                   ),
+                  _QualityBadge(controller: controller),
+                  const SizedBox(width: 8),
                   if (showSeek)
                     Text(
                       '${_formatDuration(position)} / ${_formatDuration(duration)}',
@@ -591,45 +594,45 @@ class _RecallPickerSheet extends StatelessWidget {
           borderRadius: const BorderRadius.all(Radius.circular(12)),
         ),
         child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Text(
-              'Recall — recently watched',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold),
-            ),
-          ),
-          if (channels.isEmpty)
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             const Padding(
-              padding: EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Text(
-                'No other live channels watched yet this session.',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
+                'Recall — recently watched',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold),
               ),
-            )
-          else
-            ...channels.map((c) => ListTile(
-                  dense: true,
-                  visualDensity: VisualDensity.compact,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16),
-                  leading: const Icon(Icons.tv,
-                      color: Colors.white54, size: 20),
-                  title: Text(c.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white, fontSize: 14)),
-                  onTap: () {
-                    Navigator.of(context).pop();
-                    context.read<PlaybackService>().play(c);
-                  },
-                )),
-        ],
+            ),
+            if (channels.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'No other live channels watched yet this session.',
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
+                ),
+              )
+            else
+              ...channels.map((c) => ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    leading:
+                        const Icon(Icons.tv, color: Colors.white54, size: 20),
+                    title: Text(c.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 14)),
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      context.read<PlaybackService>().play(c);
+                    },
+                  )),
+          ],
         ),
       ),
     );
@@ -661,6 +664,108 @@ class _LiveRemainingLabel extends StatelessWidget {
     return Text(
       minutes < 1 ? 'Ending now' : '$minutes min left',
       style: const TextStyle(color: Colors.white70, fontSize: 12),
+    );
+  }
+}
+
+/// Real decoded resolution/frame-rate tier, not the channel's (often
+/// aspirational) name — see `video_quality.dart`'s own doc comment for
+/// why this reads the actual selected video track instead. Polls rather
+/// than reacting to an event: `video_player_hdr` doesn't publicly expose
+/// its internal video-track-changed event stream, and polling every few
+/// seconds is more than enough for a cosmetic badge — adaptive-bitrate
+/// switches aren't frequent enough to need anything faster. Hidden
+/// entirely below 1080p or whenever track info isn't available at all,
+/// same "don't show something that can't be trusted" reasoning as
+/// [_AudioTrackButton] hiding for a single-track stream.
+class _QualityBadge extends StatefulWidget {
+  const _QualityBadge({required this.controller});
+
+  final VideoPlayerHdrController controller;
+
+  @override
+  State<_QualityBadge> createState() => _QualityBadgeState();
+}
+
+class _QualityBadgeState extends State<_QualityBadge> {
+  String? _label;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
+  }
+
+  @override
+  void didUpdateWidget(_QualityBadge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _label = null;
+      _refresh();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    if (!widget.controller.isVideoTrackSupportAvailable()) return;
+    try {
+      final tracks = await widget.controller.getVideoTracks();
+      VideoTrack? selected;
+      for (final track in tracks) {
+        if (track.isSelected) {
+          selected = track;
+          break;
+        }
+      }
+      final height = selected?.height;
+      if (!mounted || height == null) return;
+      final label =
+          qualityLabelForTrack(height: height, frameRate: selected?.frameRate);
+      if (label != _label) setState(() => _label = label);
+    } catch (_) {
+      // Not every stream/platform combination reports track info — leave
+      // the badge hidden rather than show something stale/wrong.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _label;
+    if (label == null) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    // Same blended duo-tone glow as poster_card.dart's own focus glow —
+    // one shadow, not two, for the same compositing-cost reason
+    // documented there.
+    final glowColor = Color.lerp(scheme.primary, scheme.secondary, 0.5)!;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: glowColor, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: glowColor.withValues(alpha: 0.6),
+            blurRadius: 10,
+            spreadRadius: 0.5,
+          ),
+        ],
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+            color: glowColor,
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5),
+      ),
     );
   }
 }

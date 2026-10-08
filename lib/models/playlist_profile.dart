@@ -23,6 +23,7 @@ class PlaylistProfile {
     this.syncFrequencyDays = AppConstants.defaultSyncFrequencyDays,
     required this.createdAt,
     this.expiresAt,
+    this.maxConnections,
     List<String>? backupServers,
     this.lastWorkingServer,
   }) : backupServers = backupServers ?? <String>[];
@@ -97,6 +98,20 @@ class PlaylistProfile {
   /// next connect rather than whatever it was when first added.
   DateTime? expiresAt;
 
+  /// From the Xtream account's own `user_info.max_connections` — null for
+  /// M3U playlists, and also null for an account that hasn't reported one
+  /// yet or reports "0" (conventionally "unlimited" on Xtream panels; see
+  /// [XtreamApiService.maxConnections]'s own doc comment). Refreshed on
+  /// every successful connect, same reasoning as [expiresAt]: a provider
+  /// can change an account's concurrent-stream allowance after it was
+  /// first added. Shown in Playlist Manager and Multiview specifically
+  /// because of a real, confirmed-on-hardware source of confusion: a
+  /// provider's own backend enforcing its connection cap *per stream*
+  /// (not per device) looks identical to a local playback bug — Multiview
+  /// slots beyond the account's limit stall a few seconds in, with no
+  /// error, no matter how healthy the device or network is.
+  int? maxConnections;
+
   /// Alternate server URLs for this same account, tried in order when
   /// [xtreamServer] itself can't be reached (see
   /// `PlaylistSession.connectWithFallback`). Same username/password —
@@ -162,6 +177,7 @@ class PlaylistProfile {
     bool clearSeriesSortOrder = false,
     int? syncFrequencyDays,
     DateTime? expiresAt,
+    int? maxConnections,
     List<String>? backupServers,
     String? lastWorkingServer,
   }) =>
@@ -186,6 +202,7 @@ class PlaylistProfile {
         syncFrequencyDays: syncFrequencyDays ?? this.syncFrequencyDays,
         createdAt: createdAt,
         expiresAt: expiresAt ?? this.expiresAt,
+        maxConnections: maxConnections ?? this.maxConnections,
         backupServers: backupServers ?? List<String>.from(this.backupServers),
         lastWorkingServer: lastWorkingServer ?? this.lastWorkingServer,
       );
@@ -207,6 +224,7 @@ class PlaylistProfile {
         'syncFrequencyDays': syncFrequencyDays,
         'createdAt': createdAt.toIso8601String(),
         'expiresAt': expiresAt?.toIso8601String(),
+        'maxConnections': maxConnections,
         'backupServers': backupServers,
         'lastWorkingServer': lastWorkingServer,
       };
@@ -233,6 +251,7 @@ class PlaylistProfile {
         expiresAt: json['expiresAt'] == null
             ? null
             : DateTime.tryParse(json['expiresAt'] as String),
+        maxConnections: json['maxConnections'] as int?,
         backupServers: (json['backupServers'] as List?)
                 ?.map((e) => e.toString())
                 .where((s) => s.isNotEmpty)

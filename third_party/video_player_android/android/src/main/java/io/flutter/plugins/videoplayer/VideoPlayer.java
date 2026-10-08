@@ -267,6 +267,24 @@ public abstract class VideoPlayer implements VideoPlayerInstanceApi {
   // TODO: Migrate to stable API, see https://github.com/flutter/flutter/issues/147039.
   @UnstableApi
   @Override
+  public void setAudioTrackTypeDisabled(boolean disabled) {
+    if (trackSelector == null) {
+      throw new IllegalStateException(
+          "Cannot set audio track type disabled: track selector is null");
+    }
+    // Unlike setVolume(0), this stops ExoPlayer from decoding and mixing
+    // audio for this instance at all — see Multiview's own doc comment
+    // (multiview_screen.dart) for why that distinction matters: muting via
+    // volume alone still pays the full decode/mix cost per background
+    // slot, which is what overloads this device class's audio mixer once
+    // several slots are open at once.
+    trackSelector.setParameters(
+        trackSelector.buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, disabled).build());
+  }
+
+  // TODO: Migrate to stable API, see https://github.com/flutter/flutter/issues/147039.
+  @UnstableApi
+  @Override
   public @NonNull NativeVideoTrackData getVideoTracks() {
     List<ExoPlayerVideoTrackData> videoTracks = new ArrayList<>();
 

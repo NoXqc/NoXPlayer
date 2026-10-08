@@ -334,6 +334,18 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
                                         ? Colors.redAccent
                                         : null,
                                   ),
+                                // Same "only shown once actually reported"
+                                // rule as Expires above — see
+                                // PlaylistProfile.maxConnections' own doc
+                                // comment for why this is worth surfacing:
+                                // a provider's own per-stream connection
+                                // cap is easy to mistake for a playback
+                                // bug, especially in Multiview.
+                                if (profile.maxConnections != null)
+                                  _DetailRow(
+                                    label: 'Max connections',
+                                    value: '${profile.maxConnections}',
+                                  ),
                               ] else
                                 _DetailRow(
                                     label: 'M3U URL',
@@ -456,8 +468,8 @@ class _PlaylistDetailScreenState extends State<_PlaylistDetailScreen> {
                               Padding(
                                 padding: const EdgeInsets.only(top: 8),
                                 child: OutlinedButton.icon(
-                                  icon: const Icon(
-                                      Icons.visibility_off_outlined),
+                                  icon:
+                                      const Icon(Icons.visibility_off_outlined),
                                   label: const Text('Hidden Channels'),
                                   onPressed: () => Navigator.of(context).push(
                                     MaterialPageRoute(

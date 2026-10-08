@@ -17,7 +17,9 @@ VideoPlayerInstanceApi _productionApiProvider(int playerId) {
 }
 
 /// The non-test implementation of `_videoEventStreamProvider`.
-Stream<PlatformVideoEvent> _productionVideoEventStreamProvider(String streamIdentifier) {
+Stream<PlatformVideoEvent> _productionVideoEventStreamProvider(
+  String streamIdentifier,
+) {
   return pigeon.videoEvents(instanceName: streamIdentifier);
 }
 
@@ -27,11 +29,14 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
   /// Creates a new Android video player implementation instance.
   AndroidVideoPlayer({
     @visibleForTesting AndroidVideoPlayerApi? pluginApi,
-    @visibleForTesting VideoPlayerInstanceApi Function(int playerId)? playerApiProvider,
-    Stream<PlatformVideoEvent> Function(String streamIdentifier)? videoEventStreamProvider,
+    @visibleForTesting
+    VideoPlayerInstanceApi Function(int playerId)? playerApiProvider,
+    Stream<PlatformVideoEvent> Function(String streamIdentifier)?
+    videoEventStreamProvider,
   }) : _api = pluginApi ?? AndroidVideoPlayerApi(),
        _playerApiProvider = playerApiProvider ?? _productionApiProvider,
-       _videoEventStreamProvider = videoEventStreamProvider ?? _productionVideoEventStreamProvider;
+       _videoEventStreamProvider =
+           videoEventStreamProvider ?? _productionVideoEventStreamProvider;
 
   final AndroidVideoPlayerApi _api;
   // A method to create VideoPlayerInstanceApi instances, which can be
@@ -39,7 +44,8 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
   final VideoPlayerInstanceApi Function(int playerId) _playerApiProvider;
   // A method to create video event stream instances, which can be
   // overridden for testing.
-  final Stream<PlatformVideoEvent> Function(String streamIdentifier) _videoEventStreamProvider;
+  final Stream<PlatformVideoEvent> Function(String streamIdentifier)
+  _videoEventStreamProvider;
 
   final Map<int, _PlayerInstance> _players = <int, _PlayerInstance>{};
 
@@ -84,9 +90,14 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
       case DataSourceType.asset:
         final String? asset = dataSource.asset;
         if (asset == null) {
-          throw ArgumentError('"asset" must be non-null for an asset data source');
+          throw ArgumentError(
+            '"asset" must be non-null for an asset data source',
+          );
         }
-        final String key = await _api.getLookupKeyForAsset(asset, dataSource.package);
+        final String key = await _api.getLookupKeyForAsset(
+          asset,
+          dataSource.package,
+        );
         uri = 'asset:///$key';
       case DataSourceType.network:
         uri = dataSource.uri;
@@ -110,7 +121,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
     final VideoPlayerViewState state;
     switch (options.viewType) {
       case VideoViewType.textureView:
-        final TexturePlayerIds ids = await _api.createForTextureView(pigeonCreationOptions);
+        final TexturePlayerIds ids = await _api.createForTextureView(
+          pigeonCreationOptions,
+        );
         playerId = ids.playerId;
         state = VideoPlayerTextureViewState(textureId: ids.textureId);
       case VideoViewType.platformView:
@@ -201,7 +214,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
     final VideoPlayerViewState viewState = _playerWith(id: playerId).viewState;
 
     return switch (viewState) {
-      VideoPlayerTextureViewState(:final int textureId) => Texture(textureId: textureId),
+      VideoPlayerTextureViewState(:final int textureId) => Texture(
+        textureId: textureId,
+      ),
       VideoPlayerPlatformViewState() => PlatformViewPlayer(playerId: playerId),
     };
   }
@@ -213,7 +228,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<List<VideoAudioTrack>> getAudioTracks(int playerId) async {
-    final NativeAudioTrackData nativeData = await _playerWith(id: playerId).getAudioTracks();
+    final NativeAudioTrackData nativeData = await _playerWith(
+      id: playerId,
+    ).getAudioTracks();
     final tracks = <VideoAudioTrack>[];
 
     // Convert ExoPlayer tracks to VideoAudioTrack
@@ -244,6 +261,16 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
     return _playerWith(id: playerId).selectAudioTrack(trackId);
   }
 
+  /// Not part of the upstream [VideoPlayerPlatform] interface — callers
+  /// reach this by casting `VideoPlayerPlatform.instance` to
+  /// [AndroidVideoPlayer] (see multiview_screen.dart). Unlike
+  /// [VideoPlayerPlatform.setVolume], this actually stops ExoPlayer from
+  /// decoding/mixing audio for this instance, instead of just silencing
+  /// an otherwise-fully-decoded track.
+  Future<void> setAudioTrackTypeDisabled(int playerId, bool disabled) {
+    return _playerWith(id: playerId).setAudioTrackTypeDisabled(disabled);
+  }
+
   @override
   bool isAudioTrackSupportAvailable() {
     // Android with ExoPlayer supports audio track selection
@@ -252,7 +279,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
 
   @override
   Future<List<VideoTrack>> getVideoTracks(int playerId) async {
-    final NativeVideoTrackData nativeData = await _playerWith(id: playerId).getVideoTracks();
+    final NativeVideoTrackData nativeData = await _playerWith(
+      id: playerId,
+    ).getVideoTracks();
     final tracks = <VideoTrack>[];
 
     // Convert ExoPlayer tracks to VideoTrack
@@ -263,7 +292,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
         // Generate label from resolution if not provided
         final String? label =
             track.label ??
-            (track.width != null && track.height != null ? '${track.height}p' : null);
+            (track.width != null && track.height != null
+                ? '${track.height}p'
+                : null);
         tracks.add(
           VideoTrack(
             id: trackId,
@@ -298,7 +329,9 @@ class AndroidVideoPlayer extends VideoPlayerPlatform {
     return player ?? (throw StateError('No active player with ID $id.'));
   }
 
-  PlatformVideoFormat? _platformVideoFormatFromVideoFormat(VideoFormat? format) {
+  PlatformVideoFormat? _platformVideoFormatFromVideoFormat(
+    VideoFormat? format,
+  ) {
     return switch (format) {
       VideoFormat.dash => PlatformVideoFormat.dash,
       VideoFormat.hls => PlatformVideoFormat.hls,
@@ -331,7 +364,8 @@ class _PlayerInstance {
   }
 
   final VideoPlayerInstanceApi _api;
-  final StreamController<VideoEvent> _eventStreamController = StreamController<VideoEvent>();
+  final StreamController<VideoEvent> _eventStreamController =
+      StreamController<VideoEvent>();
   late final StreamSubscription<dynamic> _eventSubscription;
   bool _isDisposed = false;
   Timer? _bufferPollingTimer;
@@ -357,6 +391,10 @@ class _PlayerInstance {
 
   Future<void> setVolume(double volume) {
     return _api.setVolume(volume);
+  }
+
+  Future<void> setAudioTrackTypeDisabled(bool disabled) {
+    return _api.setAudioTrackTypeDisabled(disabled);
   }
 
   Future<void> setPlaybackSpeed(double speed) {
@@ -499,7 +537,9 @@ class _PlayerInstance {
 
       _eventStreamController.add(
         VideoEvent(
-          eventType: buffering ? VideoEventType.bufferingStart : VideoEventType.bufferingEnd,
+          eventType: buffering
+              ? VideoEventType.bufferingStart
+              : VideoEventType.bufferingEnd,
         ),
       );
       // Trigger an extra buffer position check, so that clients have an
@@ -540,7 +580,9 @@ class _PlayerInstance {
 
         // Start polling for buffer position, since there is no buffer position
         // event to listen to.
-        _bufferPollingTimer = Timer.periodic(const Duration(seconds: 1), (Timer timer) async {
+        _bufferPollingTimer = Timer.periodic(const Duration(seconds: 1), (
+          Timer timer,
+        ) async {
           final int position = await _api.getBufferedPosition();
           if (!_isDisposed) {
             _updateBufferPosition(position);
@@ -548,7 +590,10 @@ class _PlayerInstance {
         });
       case IsPlayingStateEvent _:
         _eventStreamController.add(
-          VideoEvent(eventType: VideoEventType.isPlayingStateUpdate, isPlaying: event.isPlaying),
+          VideoEvent(
+            eventType: VideoEventType.isPlayingStateUpdate,
+            isPlaying: event.isPlaying,
+          ),
         );
       case PlaybackStateChangeEvent _:
         switch (event.state) {
@@ -564,7 +609,9 @@ class _PlayerInstance {
             // should be synchronous with the state change.
             break;
           case PlatformPlaybackState.ended:
-            _eventStreamController.add(VideoEvent(eventType: VideoEventType.completed));
+            _eventStreamController.add(
+              VideoEvent(eventType: VideoEventType.completed),
+            );
           case PlatformPlaybackState.unknown:
             // Ignore unknown states. This isn't an error since the media
             // framework could add new states in the future.
@@ -577,7 +624,8 @@ class _PlayerInstance {
       case AudioTrackChangedEvent _:
         // Complete the audio track selection completer if it exists
         // This signals that the track selection has completed
-        if (_audioTrackSelectionCompleter != null && !_audioTrackSelectionCompleter!.isCompleted) {
+        if (_audioTrackSelectionCompleter != null &&
+            !_audioTrackSelectionCompleter!.isCompleted) {
           _audioTrackSelectionCompleter!.complete();
         }
       case VideoTrackChangedEvent _:
@@ -599,7 +647,9 @@ class _PlayerInstance {
   // Turns a single buffer position, which is what ExoPlayer reports, into the
   // DurationRange array expected by [VideoEventType.bufferingUpdate].
   List<DurationRange> _bufferRangeForPosition(int milliseconds) {
-    return <DurationRange>[DurationRange(Duration.zero, Duration(milliseconds: milliseconds))];
+    return <DurationRange>[
+      DurationRange(Duration.zero, Duration(milliseconds: milliseconds)),
+    ];
   }
 }
 

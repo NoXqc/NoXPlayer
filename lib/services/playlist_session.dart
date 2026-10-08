@@ -722,6 +722,17 @@ class PlaylistSession {
             .toList();
         await storage.setPlaylists(updated);
       }
+      // Same reasoning/pattern as expiresAt just above — see
+      // PlaylistProfile.maxConnections' own doc comment for why this is
+      // worth persisting and surfacing to the user at all.
+      if (api.maxConnections != profile.maxConnections) {
+        profile.maxConnections = api.maxConnections;
+        final updated = storage
+            .getPlaylists()
+            .map((p) => p.id == profile.id ? profile : p)
+            .toList();
+        await storage.setPlaylists(updated);
+      }
 
       liveCategories = await api.getLiveCategories();
       final liveCategoryNames = {for (final c in liveCategories) c.id: c.name};

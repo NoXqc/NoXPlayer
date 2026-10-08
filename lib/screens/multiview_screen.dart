@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player_android/video_player_android.dart';
 import 'package:video_player_hdr/video_player_hdr.dart';
+import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import '../models/channel.dart';
 import '../services/playlist_manager.dart';
@@ -32,6 +34,27 @@ class MultiviewScreen extends StatefulWidget {
 
   @override
   State<MultiviewScreen> createState() => _MultiviewScreenState();
+}
+
+/// Not part of [VideoPlayerHdrController]'s own API — only reachable by
+/// casting [VideoPlayerPlatform.instance] to our vendored
+/// [AndroidVideoPlayer] (see that package's own doc comment on
+/// `setAudioTrackTypeDisabled` for why `setVolume(0)` alone isn't enough
+/// for this screen specifically). No-op on any platform other than
+/// Android (iOS/Windows don't hit this method at all today, but this
+/// guards it anyway rather than assuming).
+Future<void> _setAudioEnabled(
+    VideoPlayerHdrController controller, bool enabled) async {
+  final platform = VideoPlayerPlatform.instance;
+  if (platform is! AndroidVideoPlayer) return;
+  // video_player_hdr marks `textureId` @visibleForTesting — its own doc
+  // comment says "shouldn't be used by anyone depending on the plugin".
+  // Deliberate here anyway: it's the same int video_player_android calls
+  // playerId (both sides of that call are our own vendored copy), and
+  // there's no other way to address a specific instance from outside the
+  // controller. Re-check this if video_player_hdr's version ever bumps.
+  // ignore: invalid_use_of_visible_for_testing_member
+  await platform.setAudioTrackTypeDisabled(controller.textureId, !enabled);
 }
 
 class _MultiviewCell {
@@ -127,12 +150,36 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
         unawaited(newController.dispose());
         return;
       }
-      await newController.setVolume(index == _activeCell ? 1.0 : 0.0);
+      final isActive = index == _activeCell;
+      await newController.setVolume(isActive ? 1.0 : 0.0);
       await newController.play();
       setState(() {
         cell.channel = channel;
         cell.controller = newController;
       });
+      // Actually stops decoding/mixing audio for background slots (see
+      // this file's own doc comment on `_setAudioEnabled`) rather than
+      // just muting an otherwise-fully-decoded track — background
+      // Multiview audio was overloading this device class's FastMixer
+      // once several slots were open at once, stalling every slot, not
+      // just muting them (confirmed via a live `dumpsys media.audio_flinger`
+      // capture on a Formuler showing constant AudioTrack churn/teardown).
+      //
+      // Deliberately delayed, and skipped entirely for the active cell:
+      // applying this immediately after creation (before the renderer has
+      // produced a first frame) corrupted the video surface solid green
+      // on real hardware — the same renderer-reset risk the vendored
+      // player's own video-dimension-change workaround already documents
+      // for this exact trackSelector API. 300ms mirrors that workaround's
+      // own delay. The `cell.controller == newController` check guards
+      // against the slot having already been reassigned or disposed by
+      // the time this fires.
+      if (!isActive) {
+        await Future.delayed(const Duration(milliseconds: 300));
+        if (cell.controller == newController) {
+          await _setAudioEnabled(newController, false);
+        }
+      }
     } catch (_) {
       unawaited(newController.dispose());
       if (mounted) {
@@ -167,7 +214,11 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
     if (_cells[index].channel == null) return;
     setState(() => _activeCell = index);
     for (var i = 0; i < _cells.length; i++) {
-      _cells[i].controller?.setVolume(i == _activeCell ? 1.0 : 0.0);
+      final controller = _cells[i].controller;
+      if (controller == null) continue;
+      final isActive = i == _activeCell;
+      controller.setVolume(isActive ? 1.0 : 0.0);
+      unawaited(_setAudioEnabled(controller, isActive));
     }
   }
 
@@ -270,8 +321,8 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
     if (channel == null || controller == null) return;
     _setActive(index);
     await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => _MultiviewFullscreenView(
-          channel: channel, controller: controller),
+      builder: (_) =>
+          _MultiviewFullscreenView(channel: channel, controller: controller),
     ));
   }
 
@@ -321,6 +372,34 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                     const Text(
                         '= audio — Select to switch, hold Select for options',
                         style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  ],
+                ),
+              ),
+              // Not a theoretical caveat — confirmed directly on real
+              // hardware: a provider's own backend enforcing its
+              // connection cap *per stream* (not per device) looks
+              // exactly like a local playback bug otherwise. A slot
+              // beyond the account's limit just stalls a few seconds in,
+              // silently, no error shown. See PlaylistProfile
+              // .maxConnections' own doc comment, and that field's "Max
+              // connections" row in Playlist Manager, for the actual
+              // number a given account allows.
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, color: Colors.amber, size: 14),
+                    SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Multiview is limited by each playlist\'s maximum '
+                        'connections — check Playlist Manager if channels '
+                        'stall after a few seconds.',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -433,7 +512,8 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
         controller: cell.controller,
         active: active,
         onTap: onTap,
-        onLongPress: cell.channel == null ? null : () => _showCellActions(index),
+        onLongPress:
+            cell.channel == null ? null : () => _showCellActions(index),
       ),
     );
   }
@@ -601,6 +681,7 @@ class _MultiviewFullscreenViewState extends State<_MultiviewFullscreenView> {
   void initState() {
     super.initState();
     widget.controller.setVolume(1.0);
+    unawaited(_setAudioEnabled(widget.controller, true));
     WidgetsBinding.instance
         .addPostFrameCallback((_) => _backFocus.requestFocus());
   }

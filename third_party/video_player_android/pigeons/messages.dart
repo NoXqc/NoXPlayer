@@ -7,7 +7,8 @@ import 'package:pigeon/pigeon.dart';
 @ConfigurePigeon(
   PigeonOptions(
     dartOut: 'lib/src/messages.g.dart',
-    kotlinOut: 'android/src/main/kotlin/io/flutter/plugins/videoplayer/Messages.kt',
+    kotlinOut:
+        'android/src/main/kotlin/io/flutter/plugins/videoplayer/Messages.kt',
     kotlinOptions: KotlinOptions(package: 'io.flutter.plugins.videoplayer'),
     copyrightHeader: 'pigeons/copyright.txt',
   ),
@@ -235,6 +236,12 @@ abstract class VideoPlayerInstanceApi {
 
   /// Selects which audio track is chosen for playback from its [groupIndex] and [trackIndex]
   void selectAudioTrack(int groupIndex, int trackIndex);
+
+  /// Enables or disables the audio renderer entirely (as opposed to
+  /// [setVolume], which still decodes and mixes audio at zero gain).
+  /// Used by Multiview to stop paying the decode/mix cost for background
+  /// slots that are always muted anyway.
+  void setAudioTrackTypeDisabled(bool disabled);
 
   /// Gets the available video tracks for the video.
   NativeVideoTrackData getVideoTracks();
