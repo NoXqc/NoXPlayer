@@ -10,6 +10,7 @@ import '../../utils/tv_theme.dart';
 import '../../widgets/pin_pad.dart';
 import '../../widgets/settings_scaffold.dart';
 import '../../widgets/tv_app_bar_button.dart';
+import '../../widgets/tv_menu_tile.dart';
 import '../../widgets/tv_switch_list_tile.dart';
 import 'group_management_screen.dart';
 import 'hidden_channels_screen.dart';
@@ -107,10 +108,11 @@ class ProfilesScreen extends StatelessWidget {
         body: ListView(
           children: [
             for (final profile in viewers.profiles)
-              _ProfileTile(profile: profile, isActive: profile.id == viewers.active.id),
-            ListTile(
+              _ProfileTile(
+                  profile: profile, isActive: profile.id == viewers.active.id),
+            TvMenuTile(
               leading: const CircleAvatar(child: Icon(Icons.add)),
-              title: const Text('Add Profile'),
+              title: 'Add Profile',
               onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const _AddProfileScreen())),
             ),
@@ -128,14 +130,16 @@ class _ProfileTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
+    return TvMenuTile(
       leading: CircleAvatar(
-        backgroundColor: _profileColors[profile.colorIndex % _profileColors.length],
+        backgroundColor:
+            _profileColors[profile.colorIndex % _profileColors.length],
         child: Text(profile.name.isEmpty ? '?' : profile.name[0].toUpperCase()),
       ),
-      title: Text(profile.name),
-      subtitle: profile.isRestricted ? const Text('Restricted') : null,
-      trailing: isActive ? const Icon(Icons.check_circle) : null,
+      title: profile.name,
+      subtitle: profile.isRestricted ? 'Restricted' : null,
+      trailing:
+          isActive ? const Icon(Icons.check_circle) : const SizedBox.shrink(),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
           builder: (_) => _ProfileDetailScreen(profileId: profile.id))),
     );
@@ -221,8 +225,7 @@ class _ProfileDetailScreenState extends State<_ProfileDetailScreen> {
   Widget build(BuildContext context) {
     final viewers = context.watch<ViewerProfileService>();
     final playlist = context.watch<PlaylistManager>();
-    final profile = viewers.profiles.firstWhere(
-        (p) => p.id == widget.profileId,
+    final profile = viewers.profiles.firstWhere((p) => p.id == widget.profileId,
         orElse: ViewerProfile.main);
     final isActive = viewers.active.id == profile.id;
     final isMain = profile.isMain;
@@ -247,15 +250,17 @@ class _ProfileDetailScreenState extends State<_ProfileDetailScreen> {
               ],
         body: ListView(
           children: [
-            ListTile(
-              leading: const Icon(Icons.swap_horiz),
-              title: Text(isActive ? 'This is the active profile' : 'Switch to this profile'),
+            TvMenuTile(
+              icon: Icons.swap_horiz,
+              title: isActive
+                  ? 'This is the active profile'
+                  : 'Switch to this profile',
               enabled: !isActive,
-              onTap: isActive ? null : () => viewers.switchTo(context, profile.id),
+              onTap: () => viewers.switchTo(context, profile.id),
             ),
-            ListTile(
-              leading: const Icon(Icons.edit),
-              title: const Text('Rename'),
+            TvMenuTile(
+              icon: Icons.edit,
+              title: 'Rename',
               onTap: () => _rename(profile),
             ),
             const Divider(),
@@ -265,9 +270,9 @@ class _ProfileDetailScreenState extends State<_ProfileDetailScreen> {
                   style: TextStyle(fontWeight: FontWeight.w600)),
             ),
             for (final p in playlist.profiles) ...[
-              ListTile(
-                leading: const Icon(Icons.folder_outlined),
-                title: Text('Groups — ${p.name}'),
+              TvMenuTile(
+                icon: Icons.folder_outlined,
+                title: 'Groups — ${p.name}',
                 onTap: () async {
                   final ok = await _ensureActive(profile);
                   if (!ok) return;
@@ -276,9 +281,9 @@ class _ProfileDetailScreenState extends State<_ProfileDetailScreen> {
                       builder: (_) => GroupManagementScreen(playlistId: p.id)));
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.visibility_off_outlined),
-                title: Text('Hidden channels — ${p.name}'),
+              TvMenuTile(
+                icon: Icons.visibility_off_outlined,
+                title: 'Hidden channels — ${p.name}',
                 onTap: () async {
                   final ok = await _ensureActive(profile);
                   if (!ok) return;
@@ -423,12 +428,12 @@ class _AddProfileScreenState extends State<_AddProfileScreen> {
             const SizedBox(height: 16),
             TvSwitchListTile(
               title: const Text('Restricted'),
-              subtitle: const Text(
-                  'For a child — hides every group, including adult '
-                  'content, by default. A parent unhides specific '
-                  'categories per playlist afterward in Group Management. '
-                  'A PIN is required to switch away from this profile or '
-                  'to open Settings while it\'s active.'),
+              subtitle:
+                  const Text('For a child — hides every group, including adult '
+                      'content, by default. A parent unhides specific '
+                      'categories per playlist afterward in Group Management. '
+                      'A PIN is required to switch away from this profile or '
+                      'to open Settings while it\'s active.'),
               value: _isRestricted,
               onChanged: (v) => setState(() => _isRestricted = v),
             ),

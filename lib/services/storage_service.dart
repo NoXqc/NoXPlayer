@@ -152,9 +152,6 @@ class StorageService {
   Future<void> setRefreshInterval(int minutes) =>
       _prefs.setInt(AppConstants.keyRefreshInterval, minutes);
 
-  String getThemeMode() =>
-      _prefs.getString(AppConstants.keyThemeMode) ?? 'dark';
-
   /// Null/empty means "release-date sorting is off" — `TmdbEnrichmentService`
   /// treats a missing key as a no-op rather than erroring, so a user who
   /// never sets one just never sees that sort option do anything, instead
@@ -186,8 +183,6 @@ class StorageService {
       _prefs.getStringList(AppConstants.keyWhatsNewSeriesIds) ?? [];
   Future<void> setWhatsNewSeriesIds(List<String> ids) =>
       _prefs.setStringList(AppConstants.keyWhatsNewSeriesIds, ids);
-  Future<void> setThemeMode(String mode) =>
-      _prefs.setString(AppConstants.keyThemeMode, mode);
 
   bool getShowClock() => _prefs.getBool(AppConstants.keyShowClock) ?? true;
   Future<void> setShowClock(bool value) =>
@@ -229,10 +224,9 @@ class StorageService {
       _prefs.setStringList(_vk(AppConstants.keyFavorites), ids.toList());
 
   Set<String> getFavoriteSeries() =>
-      (_prefs.getStringList(_vk(AppConstants.keyFavoriteSeries)) ?? [])
-          .toSet();
-  Future<void> setFavoriteSeries(Set<String> ids) => _prefs.setStringList(
-      _vk(AppConstants.keyFavoriteSeries), ids.toList());
+      (_prefs.getStringList(_vk(AppConstants.keyFavoriteSeries)) ?? []).toSet();
+  Future<void> setFavoriteSeries(Set<String> ids) =>
+      _prefs.setStringList(_vk(AppConstants.keyFavoriteSeries), ids.toList());
 
   // --- Hidden / favorited groups (per playlist, per viewer) -----------------
   // Group identity is (playlistId, title), not just title — two different
@@ -253,8 +247,7 @@ class StorageService {
   /// namespaced per playlist and per viewer via the key suffixes, same as
   /// [getHiddenGroups].
   Set<String> getHiddenChannels(String playlistId) =>
-      (_prefs.getStringList(
-                  _vkp(AppConstants.keyHiddenChannels, playlistId)) ??
+      (_prefs.getStringList(_vkp(AppConstants.keyHiddenChannels, playlistId)) ??
               [])
           .toSet();
   Future<void> setHiddenChannels(String playlistId, Set<String> rawIds) =>
@@ -334,11 +327,10 @@ class StorageService {
           '${AppConstants.keyAutoPairedEpgOverrides}_$playlistId',
           rawIds.toList());
 
-  Set<String> getFavoritedGroups(String playlistId) =>
-      (_prefs.getStringList(
-                  _vkp(AppConstants.keyFavoritedGroups, playlistId)) ??
-              [])
-          .toSet();
+  Set<String> getFavoritedGroups(String playlistId) => (_prefs.getStringList(
+              _vkp(AppConstants.keyFavoritedGroups, playlistId)) ??
+          [])
+      .toSet();
   Future<void> setFavoritedGroups(String playlistId, Set<String> groups) =>
       _prefs.setStringList(
           _vkp(AppConstants.keyFavoritedGroups, playlistId), groups.toList());
@@ -533,8 +525,7 @@ class StorageService {
   Future<void> setParentalPin(Map<String, dynamic> record) =>
       _prefs.setString(AppConstants.keyParentalPin, jsonEncode(record));
 
-  Future<void> clearParentalPin() =>
-      _prefs.remove(AppConstants.keyParentalPin);
+  Future<void> clearParentalPin() => _prefs.remove(AppConstants.keyParentalPin);
 
   /// Consecutive wrong-PIN attempts — persisted (not just in memory) so
   /// restarting the app doesn't reset a lockout a kid could otherwise use

@@ -34,12 +34,6 @@ class ThemeScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 children: [
                   TvSwitchListTile(
-                    title: const Text('Dark theme'),
-                    value: prefs.themeMode == ThemeMode.dark,
-                    onChanged: (value) => prefs
-                        .setThemeMode(value ? ThemeMode.dark : ThemeMode.light),
-                  ),
-                  TvSwitchListTile(
                     title: const Text('Show clock'),
                     subtitle:
                         const Text('Displays the current time in the top bar'),
@@ -48,13 +42,6 @@ class ThemeScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   const SectionLabel('Theme color'),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Drives the TV browse screens (tabs, groups, catalog) — those '
-                    'always stay dark regardless of the switch above, the same '
-                    'way most streaming apps do.',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 12,

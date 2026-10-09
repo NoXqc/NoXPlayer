@@ -6,7 +6,6 @@ import 'package:provider/provider.dart';
 import 'package:video_player_hdr/video_player_hdr.dart';
 
 import '../models/channel.dart';
-import '../services/app_preferences.dart';
 import '../services/epg_service.dart';
 import '../services/playback_service.dart';
 import '../services/playlist_manager.dart';
@@ -1100,9 +1099,9 @@ class _SkipButtonState extends State<_SkipButton> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
-    final focusFill =
-        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
+    // Every palette now gets the same contour + gradient-sheen treatment
+    // — see `TvHomeScreen._SelectableRow`'s doc comment for the full
+    // story.
     return Focus(
       onKeyEvent: _handleKeyEvent,
       onFocusChange: (f) {
@@ -1117,9 +1116,35 @@ class _SkipButtonState extends State<_SkipButton> {
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: _focused ? focusFill : Colors.transparent,
+            color: _focused ? null : Colors.transparent,
+            gradient: _focused
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.black,
+                      Color.lerp(Colors.black, scheme.primaryContainer, 0.4)!,
+                      Colors.black,
+                    ],
+                    stops: const [0.0, 0.5, 1.0],
+                  )
+                : null,
+            border:
+                _focused ? Border.all(color: scheme.primary, width: 2) : null,
+            boxShadow: _focused
+                ? [
+                    BoxShadow(
+                        color: scheme.primary.withValues(alpha: 0.45),
+                        blurRadius: 12)
+                  ]
+                : const [],
           ),
-          child: Icon(widget.icon, color: Colors.white, size: 28),
+          // `scheme.tertiary` — a dedicated icon/symbol-glyph accent,
+          // separate from the border/gradient accent (`scheme.primary`)
+          // — see `buildPaletteColorScheme`'s own doc comment for why
+          // (Habs: white contour, blue icons).
+          child: Icon(widget.icon,
+              color: _focused ? scheme.tertiary : Colors.white, size: 28),
         ),
       ),
     );

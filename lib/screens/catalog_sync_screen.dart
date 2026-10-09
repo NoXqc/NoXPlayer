@@ -1,8 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../services/app_preferences.dart';
 import '../services/playlist_manager.dart';
+import '../utils/tv_theme.dart';
 import '../widgets/mode_button.dart';
 
 /// The actual progress UI for a full catalog sync — phase text + a
@@ -103,8 +106,18 @@ class CatalogSyncScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Same fix, same reason, as CatalogSyncPromptScreen's own doc comment
+    // — this also renders from main.dart's bootstrap gate with its own
+    // MaterialApp, which previously meant CatalogSyncBody's progress
+    // indicator fell back to Flutter's stock default ColorScheme instead
+    // of the user's palette.
+    final palette = context.watch<AppPreferences>().palette;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: buildPaletteColorScheme(palette, Brightness.dark),
+        useMaterial3: true,
+      ),
       home: Scaffold(
         backgroundColor: Colors.black,
         body: CatalogSyncBody(

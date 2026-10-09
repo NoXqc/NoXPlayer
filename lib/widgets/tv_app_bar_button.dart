@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-import '../services/app_preferences.dart';
 import '../utils/tv_theme.dart';
 
 /// A top-bar action button (back arrow, an icon action, a text action like
@@ -48,40 +46,81 @@ class _TvAppBarButtonState extends State<TvAppBarButton> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    // Same Minimalist-aware treatment as ModeButton — a translucent glass
-    // fill instead of a flat opaque one for that palette. See ModeButton's
-    // own doc comment for why.
-    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
-    final useGlass = isMinimal && _focused;
-    final focusFill =
-        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
-    final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
+    // Every palette now gets the same contour + gradient-sheen treatment
+    // — see `TvHomeScreen._SelectableRow`'s doc comment for the full
+    // story. Minimalist's previous translucent-glass alternative is
+    // retired in favor of this — its `scheme.primary` already resolves
+    // to white (see `buildPaletteColorScheme`), so no palette-specific
+    // branching is needed here at all.
+    final focusForeground = scheme.primary;
     final isIcon = widget.icon != null;
     final shape = isIcon ? const CircleBorder() : const StadiumBorder();
+    final focusedShape = isIcon
+        ? CircleBorder(side: BorderSide(color: scheme.primary, width: 2))
+        : StadiumBorder(side: BorderSide(color: scheme.primary, width: 2));
 
+    // `scheme.tertiary` — a dedicated icon/symbol-glyph accent, separate
+    // from the text/border/gradient accent (`focusForeground`) — see
+    // `buildPaletteColorScheme`'s own doc comment for why (Habs: white
+    // contour/text, blue icons).
     Widget content = isIcon
-        ? Icon(widget.icon, color: _focused ? focusForeground : Colors.white)
+        ? Icon(widget.icon, color: _focused ? scheme.tertiary : Colors.white)
         : Text(widget.label!,
             style: TextStyle(
                 color: _focused ? focusForeground : Colors.white,
                 fontWeight: FontWeight.w600));
 
-    Widget button = MinimalGlassFocus(
-      active: useGlass,
-      borderRadius: isIcon ? 24 : 20,
-      child: Material(
-        color: _focused && !useGlass ? focusFill : Colors.transparent,
-        shape: shape,
-        child: InkWell(
-          focusNode: widget.focusNode,
-          customBorder: shape,
-          onTap: widget.onTap,
-          onFocusChange: (f) => setState(() => _focused = f),
-          child: Padding(
-            padding: isIcon
-                ? const EdgeInsets.all(10)
-                : const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: content,
+    Widget button = Container(
+      // Always present (even with an empty shadow list) rather than
+      // conditionally wrapped — MinimalGlassFocus's own doc comment below
+      // has the full story on why changing a focus widget's ancestor
+      // shape between builds corrupts its FocusNode on real hardware.
+      decoration: BoxDecoration(
+        shape: isIcon ? BoxShape.circle : BoxShape.rectangle,
+        borderRadius: isIcon ? null : BorderRadius.circular(20),
+        // A flat `black87` fill here photographed as more "filled" than
+        // the real diagonal sheen `_SelectableRow`/`_GroupRow` use for the
+        // exact same focus state — see their doc comment.
+        gradient: _focused
+            ? LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.black,
+                  Color.lerp(Colors.black, scheme.primaryContainer, 0.4)!,
+                  Colors.black,
+                ],
+                stops: const [0.0, 0.5, 1.0],
+              )
+            : null,
+        boxShadow: _focused
+            ? [
+                BoxShadow(
+                    color: scheme.primary.withValues(alpha: 0.45),
+                    blurRadius: 12)
+              ]
+            : const [],
+      ),
+      // MinimalGlassFocus's own blur special-case is retired now that
+      // every palette uses the gradient-sheen above instead — see
+      // ModeButton's identical comment for why the wrapper itself stays.
+      child: MinimalGlassFocus(
+        active: false,
+        borderRadius: isIcon ? 24 : 20,
+        child: Material(
+          color: Colors.transparent,
+          shape: _focused ? focusedShape : shape,
+          child: InkWell(
+            focusNode: widget.focusNode,
+            customBorder: shape,
+            onTap: widget.onTap,
+            onFocusChange: (f) => setState(() => _focused = f),
+            child: Padding(
+              padding: isIcon
+                  ? const EdgeInsets.all(10)
+                  : const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: content,
+            ),
           ),
         ),
       ),

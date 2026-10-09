@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-import '../services/app_preferences.dart';
 import 'tv_app_bar_button.dart';
 
 /// Every Settings-family screen's background used to be whatever flat,
@@ -91,36 +89,15 @@ class _SettingsGradientBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.watch<AppPreferences>().palette;
-    // Flat black, no gradient at all — the whole point of the
-    // Minimalist palette. Everything painted on top of this (panels,
-    // focus fills) already goes translucent-white/"glass" instead of a
-    // saturated color for this same palette, so this stays a true flat
-    // black rather than a very-dark tint of it.
-    if (palette.isMinimal) return const ColoredBox(color: Colors.black);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          // Blended heavily toward black, not just "toward" it — reported
-          // directly as "way too aggressive", reading as a near-full-
-          // saturation color wash across the entire screen (sidebar,
-          // groups column, and — being behind every translucent
-          // Colors.white.withValues(alpha: ~0.06) row/block fill
-          // elsewhere in this app — bleeding straight through those too)
-          // instead of a mostly-black background with just a hint of the
-          // palette's hue. Focus/selected-state fills elsewhere already
-          // use the palette at full saturation (scheme.primary/
-          // .secondary, untouched by this), so that contrast against a
-          // much darker backdrop is actually the point, not a side effect
-          // to correct for.
-          colors: [
-            Color.lerp(palette.primary, Colors.black, 0.82)!,
-            Color.lerp(palette.secondary, Colors.black, 0.92)!,
-          ],
-        ),
-      ),
-    );
+    // Flat OLED black for every palette now, not just Minimalist/Dark
+    // Gold — confirmed directly: "the only detail you forgot is to change
+    // other palettes background to OLED black." Everything painted on top
+    // of this (panels, focus fills) already goes translucent/"glass" or
+    // uses the palette at full saturation (the gradient-sheen focus
+    // treatment's own `scheme.primary`) instead of relying on this
+    // background for any color, so a flat black backdrop is correct for
+    // every palette, the same way it was always correct for Minimalist
+    // and Dark/Gold specifically.
+    return const ColoredBox(color: Colors.black);
   }
 }

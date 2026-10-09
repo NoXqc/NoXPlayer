@@ -1569,18 +1569,12 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // Streaming-app convention: always dark on the TV screen, regardless of
     // the phone's light/dark setting, but still keyed off the user's chosen
     // cyberpunk palette so Settings > Theme actually drives this screen and
-    // not just the Settings menu itself. Material's own tonal derivation
-    // gives accessible contrast colors (onPrimary etc.); the secondary/
-    // tertiary override makes the second accent deliberate instead of
-    // algorithmically derived from the same single hue.
-    final darkScheme = applyPaletteHighlight(
-        ColorScheme.fromSeed(
-          seedColor: prefs.palette.primary,
-          brightness: Brightness.dark,
-        ).copyWith(
-            secondary: prefs.palette.secondary,
-            tertiary: prefs.palette.secondary),
-        prefs.palette);
+    // not just the Settings menu itself. Goes through the same shared
+    // buildPaletteColorScheme every other palette-aware screen uses (see
+    // its own doc comment) rather than reimplementing the seeding/override
+    // here a second time — this screen (top bar, sidebar, live list) is
+    // exactly the surface a second copy would silently diverge from.
+    final darkScheme = buildPaletteColorScheme(prefs.palette, Brightness.dark);
 
     final isBrowseTab = _tab == 'Movies' || _tab == 'TV Shows';
     // Only meaningful on the Live TV/Favorites side (the browse tabs have
@@ -3548,7 +3542,22 @@ class _SelectableRowState extends State<_SelectableRow> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
+    // Every palette now gets the same contour + diagonal gradient-sheen
+    // focus treatment — border + a dark->accent->dark gradient using this
+    // palette's own `scheme.primary` as the accent — instead of a flat
+    // solid fill, confirmed directly on real hardware as reading
+    // "creamy"/pastel for Dark/Gold specifically, then extended to every
+    // palette once that one looked right: "all palettes should reflect
+    // these new themes... make sure all tabs all rows all groups guide
+    // etc matched the gold theme." Minimalist's previous frosted-glass
+    // blur treatment is retired in favor of this, for the same reason —
+    // `useGlass` stays false now, and `scheme.primary` already resolves
+    // to white for Minimalist (see `buildPaletteColorScheme`), so this
+    // needs no palette-specific branching at all. The persistent
+    // "selected" border below already gave this row a contour; this just
+    // extends that same language to the live D-pad focus state too,
+    // distinguishing the two via a soft glow (the outer Container near
+    // the bottom) rather than a filled block.
     // Focus (where the D-pad cursor currently is) and "selected" (this is
     // the channel actually playing, which stays true while focus has moved
     // on to browse something else) are different facts and were rendered
@@ -3558,146 +3567,180 @@ class _SelectableRowState extends State<_SelectableRow> {
     // cursor gets the solid fill now; "currently playing" gets a quieter
     // tinted/outlined treatment instead.
     final isPlaying = widget.selected && !_focused;
-    // A flat primary fill on focus read as one more grey/purple box, but
-    // `Ink`'s gradient decoration turned out to have a real cost: on this
-    // hardware (weak enough that Impeller is disabled elsewhere in the
-    // app) it showed a brief white/grey flash whenever a row rebuilt
-    // during scrolling or navigation — `Ink` re-registers its paint with
-    // the nearest Material a frame behind a plain `color`. A blended flat
-    // color computed once still reads as "the palette", not just primary,
-    // with none of that risk.
-    // Minimalist's `scheme.primary`/`.secondary` are opaque-ish white/
-    // white70 (see `buildPaletteColorScheme`) — blending them the same way
-    // as every other palette would read as a solid near-white block, not
-    // the "glass" look. Same translucent-white-fill + solid-white-text
-    // pattern as `_tvButtonStyle`/`TvSwitchListTile` use elsewhere.
-    final useGlass = isMinimal && _focused;
-    final focusedColor = isMinimal
-        ? Colors.white.withValues(alpha: 0.16)
-        : Color.lerp(scheme.primary, scheme.secondary, 0.5)!;
-    final unfocusedColor = isPlaying
-        ? scheme.primary.withValues(alpha: 0.18)
-        : Colors.white.withValues(alpha: 0.04);
-    final focusedForeground = isMinimal ? Colors.white : scheme.onPrimary;
+    final unfocusedColor =
+        isPlaying ? Colors.transparent : Colors.white.withValues(alpha: 0.04);
+    final focusedForeground = scheme.primary;
     final foregroundColor = _focused
         ? focusedForeground
         : (isPlaying ? scheme.primary : Colors.white);
-    final iconColor = _focused
-        ? focusedForeground
-        : (isPlaying ? scheme.primary : Colors.white70);
+    // `scheme.tertiary` — a dedicated icon/symbol-glyph accent, separate
+    // from the text/border/gradient accent (`scheme.primary`) — see
+    // `buildPaletteColorScheme`'s own doc comment for why (Habs: white
+    // contour/text, blue icons).
+    final iconColor =
+        (_focused || isPlaying) ? scheme.tertiary : Colors.white70;
     final leadingWidget =
         widget.leading ?? Icon(widget.icon, color: iconColor, size: 20);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      child: MinimalGlassFocus(
-        active: useGlass,
-        borderRadius: 8,
-        child: Material(
-          color: (_focused && !useGlass) ? focusedColor : unfocusedColor,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            // A persistent marker for "this is actually the active tab /
-            // now playing", independent of D-pad focus — confirmed on
-            // hardware as a real gap: once focus moved to a different row,
-            // there was no visible difference between "the cursor is
-            // resting here" and "this is genuinely selected", since both
-            // states used the identical solid fill. Reported directly: the
-            // cursor sat on Movies while TV Shows was still the real
-            // active tab (its content was still on screen) and Movies
-            // looked selected instead. A border persists through focus
-            // changes, unlike the fill.
-            side: widget.selected
-                ? BorderSide(color: scheme.primary, width: 2)
-                : BorderSide.none,
-          ),
-          child: InkWell(
-            focusNode: widget.focusNode,
-            borderRadius: BorderRadius.circular(8),
-            onTap: widget.onTap,
-            onLongPress: widget.onLongPress,
-            onFocusChange: (f) {
-              setState(() => _focused = f);
-              if (f) _ensureVisible(context);
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              child: widget.collapsed
-                  ? Center(
-                      child: Stack(
-                        clipBehavior: Clip.none,
+      child: Container(
+        // Always present (even with an empty shadow list) rather than
+        // conditionally wrapped — MinimalGlassFocus's own doc comment just
+        // below has the full story on why changing a focus widget's
+        // ancestor shape between builds corrupts its FocusNode on real
+        // hardware; the same rule applies one level up, here.
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          // A flat `Colors.black87` fill here photographed as a much
+          // bigger gold wash than it read live (the glow below bleeding
+          // into a near-opaque black in a phone camera's auto-exposure) —
+          // reported directly as still looking "filled". A real diagonal
+          // sheen (dark -> accent-tinted -> dark), using this palette's own
+          // `scheme.primary`, is what the owner actually asked for
+          // ("shiny/mirror"); this paints it, and Material's own `color`
+          // below turns transparent to let it show through only when
+          // focused. Every palette uses this now, including Minimalist —
+          // see this method's own history for why its previous distinct
+          // frosted-glass treatment was retired in favor of the same look
+          // everything else gets.
+          gradient: _focused
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.black,
+                    Color.lerp(Colors.black, scheme.primaryContainer, 0.4)!,
+                    Colors.black,
+                  ],
+                  stops: const [0.0, 0.5, 1.0],
+                )
+              : null,
+          boxShadow: _focused
+              ? [
+                  BoxShadow(
+                      color: scheme.primary.withValues(alpha: 0.35),
+                      blurRadius: 10)
+                ]
+              : const [],
+        ),
+        // MinimalGlassFocus's own blur special-case is retired now that
+        // every palette uses the gradient-sheen above instead — see
+        // ModeButton's identical comment for why the wrapper itself stays.
+        child: MinimalGlassFocus(
+          active: false,
+          borderRadius: 8,
+          child: Material(
+            color: _focused ? Colors.transparent : unfocusedColor,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+              // A persistent marker for "this is actually the active tab /
+              // now playing", independent of D-pad focus — confirmed on
+              // hardware as a real gap: once focus moved to a different row,
+              // there was no visible difference between "the cursor is
+              // resting here" and "this is genuinely selected", since both
+              // states used the identical solid fill. Reported directly: the
+              // cursor sat on Movies while TV Shows was still the real
+              // active tab (its content was still on screen) and Movies
+              // looked selected instead. A border persists through focus
+              // changes, unlike the fill — and now also shows it for the
+              // live focus state itself, since that state no longer has a
+              // solid fill of its own to lean on.
+              side: _focused
+                  ? BorderSide(color: scheme.primary, width: 2.5)
+                  : widget.selected
+                      ? BorderSide(color: scheme.primary, width: 1.5)
+                      : BorderSide.none,
+            ),
+            child: InkWell(
+              focusNode: widget.focusNode,
+              borderRadius: BorderRadius.circular(8),
+              onTap: widget.onTap,
+              onLongPress: widget.onLongPress,
+              onFocusChange: (f) {
+                setState(() => _focused = f);
+                if (f) _ensureVisible(context);
+              },
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                child: widget.collapsed
+                    ? Center(
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            leadingWidget,
+                            if (isPlaying)
+                              Positioned(
+                                right: -3,
+                                top: -3,
+                                child: Icon(Icons.circle,
+                                    size: 8, color: scheme.tertiary),
+                              ),
+                          ],
+                        ),
+                      )
+                    : Row(
                         children: [
                           leadingWidget,
-                          if (isPlaying)
-                            Positioned(
-                              right: -3,
-                              top: -3,
-                              child: Icon(Icons.circle,
-                                  size: 8, color: scheme.primary),
-                            ),
-                        ],
-                      ),
-                    )
-                  : Row(
-                      children: [
-                        leadingWidget,
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                children: [
-                                  if (isPlaying) ...[
-                                    Icon(Icons.play_arrow,
-                                        size: 14, color: scheme.primary),
-                                    const SizedBox(width: 4),
-                                  ],
-                                  Expanded(
-                                    child: Text(
-                                      widget.label,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: foregroundColor,
-                                        fontSize: widget.fontSize,
-                                        fontWeight: (_focused || isPlaying)
-                                            ? FontWeight.bold
-                                            : FontWeight.normal,
-                                        // The Live TV list floats translucent
-                                        // over the video now — a shadow keeps
-                                        // the name readable no matter how
-                                        // bright/busy whatever's playing
-                                        // behind it is. Harmless on the solid
-                                        // backgrounds this row is also used
-                                        // on (tabs, groups).
-                                        shadows: const [
-                                          Shadow(
-                                              color: Colors.black,
-                                              blurRadius: 4)
-                                        ],
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Row(
+                                  children: [
+                                    if (isPlaying) ...[
+                                      Icon(Icons.play_arrow,
+                                          size: 14, color: scheme.tertiary),
+                                      const SizedBox(width: 4),
+                                    ],
+                                    Expanded(
+                                      child: Text(
+                                        widget.label,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: foregroundColor,
+                                          fontSize: widget.fontSize,
+                                          fontWeight: (_focused || isPlaying)
+                                              ? FontWeight.bold
+                                              : FontWeight.normal,
+                                          // The Live TV list floats translucent
+                                          // over the video now — a shadow keeps
+                                          // the name readable no matter how
+                                          // bright/busy whatever's playing
+                                          // behind it is. Harmless on the solid
+                                          // backgrounds this row is also used
+                                          // on (tabs, groups).
+                                          shadows: const [
+                                            Shadow(
+                                                color: Colors.black,
+                                                blurRadius: 4)
+                                          ],
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                              if (widget.subtitle != null)
-                                DefaultTextStyle.merge(
-                                  style: TextStyle(
-                                    color: _focused
-                                        ? focusedForeground.withValues(
-                                            alpha: 0.85)
-                                        : Colors.white54,
-                                  ),
-                                  child: widget.subtitle!,
+                                  ],
                                 ),
-                            ],
+                                if (widget.subtitle != null)
+                                  DefaultTextStyle.merge(
+                                    style: TextStyle(
+                                      color: _focused
+                                          ? focusedForeground.withValues(
+                                              alpha: 0.85)
+                                          : Colors.white54,
+                                    ),
+                                    child: widget.subtitle!,
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                        if (widget.trailing != null) widget.trailing!,
-                      ],
-                    ),
+                          if (widget.trailing != null) widget.trailing!,
+                        ],
+                      ),
+              ),
             ),
           ),
         ),
@@ -3830,19 +3873,28 @@ class _GroupRowState extends State<_GroupRow> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
     final highlighted = widget.selected || _focused;
-    final useGlass = isMinimal && _focused;
-    // Same translucent-white-fill + solid-white-text swap as
-    // `_SelectableRow`'s own isMinimal branch — see its doc comment.
-    final focusedForeground = isMinimal ? Colors.white : scheme.onPrimary;
-    final backgroundColor = (_focused && !useGlass)
-        ? scheme.primary
-        : widget.selected
-            ? scheme.primary.withValues(alpha: 0.18)
-            : Colors.white.withValues(alpha: 0.04);
+    // Every palette now gets the same contour + gradient-sheen treatment
+    // — see `_SelectableRow`'s doc comment for the full story. This is
+    // the real playlist groups list specifically — confirmed directly as
+    // the one place the original `_SelectableRow` contour fix never
+    // reached, since this is a wholly separate widget (only the
+    // "Favourites" pseudo-entry and the sidebar tabs go through
+    // `_SelectableRow`; every actual group from the playlist renders
+    // through here instead).
+    final focusedForeground = scheme.primary;
+    // Focused or merely selected, both are border-only now (see `side:`
+    // below) rather than a filled block — see `_SelectableRow`'s doc
+    // comment for the full story.
+    final backgroundColor = (_focused || widget.selected)
+        ? Colors.transparent
+        : Colors.white.withValues(alpha: 0.04);
     final foregroundColor = highlighted ? focusedForeground : Colors.white;
-    final iconColor = highlighted ? focusedForeground : Colors.white70;
+    // `scheme.tertiary` — a dedicated icon/symbol-glyph accent, separate
+    // from the text/border/gradient accent (`focusedForeground`) — see
+    // `buildPaletteColorScheme`'s own doc comment for why (Habs: white
+    // contour/text, blue icons).
+    final iconColor = highlighted ? scheme.tertiary : Colors.white70;
 
     final iconWidget = Stack(
       clipBehavior: Clip.none,
@@ -3853,8 +3905,7 @@ class _GroupRowState extends State<_GroupRow> {
             right: -4,
             top: -4,
             child: Icon(Icons.star,
-                size: 12,
-                color: highlighted ? focusedForeground : Colors.amber),
+                size: 12, color: highlighted ? scheme.tertiary : Colors.amber),
           ),
       ],
     );
@@ -3872,37 +3923,83 @@ class _GroupRowState extends State<_GroupRow> {
           child: GestureDetector(
             onTap: widget.onTap,
             onLongPress: widget.onLongPress,
-            child: MinimalGlassFocus(
-              active: useGlass,
-              borderRadius: 8,
-              child: Material(
-                color: backgroundColor,
+            child: Container(
+              // Always present (even with an empty shadow list) rather
+              // than conditionally wrapped — MinimalGlassFocus's own doc
+              // comment just below has the full story on why changing a
+              // focus widget's ancestor shape between builds corrupts its
+              // FocusNode on real hardware.
+              decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  child: widget.collapsed
-                      ? Center(child: iconWidget)
-                      : Row(
-                          children: [
-                            iconWidget,
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                widget.label,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: foregroundColor,
-                                  fontSize: widget.fontSize,
-                                  fontWeight: highlighted
-                                      ? FontWeight.bold
-                                      : FontWeight.normal,
+                // Same diagonal sheen as `_SelectableRow` — see its doc
+                // comment for the full story (every palette, including
+                // Minimalist, gets this now).
+                gradient: _focused
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.black,
+                          Color.lerp(
+                              Colors.black, scheme.primaryContainer, 0.4)!,
+                          Colors.black,
+                        ],
+                        stops: const [0.0, 0.5, 1.0],
+                      )
+                    : null,
+                boxShadow: _focused
+                    ? [
+                        BoxShadow(
+                            color: scheme.primary.withValues(alpha: 0.35),
+                            blurRadius: 10)
+                      ]
+                    : const [],
+              ),
+              // MinimalGlassFocus's own blur special-case is retired now
+              // that every palette uses the gradient-sheen above instead —
+              // see ModeButton's identical comment for why the wrapper
+              // itself stays.
+              child: MinimalGlassFocus(
+                active: false,
+                borderRadius: 8,
+                child: Material(
+                  color: backgroundColor,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    // Same persistent-marker reasoning as `_SelectableRow`'s
+                    // own `side:` — see its doc comment.
+                    side: _focused
+                        ? BorderSide(color: scheme.primary, width: 2.5)
+                        : widget.selected
+                            ? BorderSide(color: scheme.primary, width: 1.5)
+                            : BorderSide.none,
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    child: widget.collapsed
+                        ? Center(child: iconWidget)
+                        : Row(
+                            children: [
+                              iconWidget,
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  widget.label,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: foregroundColor,
+                                    fontSize: widget.fontSize,
+                                    fontWeight: highlighted
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
+                  ),
                 ),
               ),
             ),
@@ -5727,6 +5824,11 @@ class _TimelineFilterButtonState extends State<_TimelineFilterButton> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // Every palette now gets the same contour + diagonal sheen as
+    // `_SelectableRow`/`_GroupRow` for this exact focus state — see
+    // `_SelectableRow`'s doc comment for the full story. This button was
+    // the one spot the original fix never reached, confirmed directly on
+    // real hardware.
     return SizedBox(
       width: _TimelineGuideState._channelColumnWidth,
       height: _TimelineGuideState._rulerHeight,
@@ -5762,17 +5864,33 @@ class _TimelineFilterButtonState extends State<_TimelineFilterButton> {
               borderRadius: BorderRadius.circular(6),
               child: Container(
                 decoration: BoxDecoration(
-                  color: _focused
-                      ? scheme.primary
-                      : Colors.white.withValues(alpha: 0.06),
+                  color: _focused ? null : Colors.white.withValues(alpha: 0.06),
+                  gradient: _focused
+                      ? LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.black,
+                            Color.lerp(
+                                Colors.black, scheme.primaryContainer, 0.4)!,
+                            Colors.black,
+                          ],
+                          stops: const [0.0, 0.5, 1.0],
+                        )
+                      : null,
                   border: Border.all(
                       color: _focused ? scheme.primary : Colors.white24),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 alignment: Alignment.center,
+                // `scheme.tertiary` — a dedicated icon/symbol-glyph
+                // accent, separate from the border/gradient accent
+                // (`scheme.primary`) — see `buildPaletteColorScheme`'s
+                // own doc comment for why (Habs: white contour, blue
+                // icons).
                 child: Icon(Icons.search,
                     size: 16,
-                    color: _focused ? scheme.onPrimary : Colors.white70),
+                    color: _focused ? scheme.tertiary : Colors.white70),
               ),
             ),
           ),
@@ -6278,6 +6396,18 @@ class _ProgramBlockState extends State<_ProgramBlock> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // Every palette now gets the same contour + gradient-sheen treatment
+    // — see `_SelectableRow`'s doc comment for the full story. Originally
+    // Dark/Gold-only: this guide, with several blocks simultaneously
+    // solid-filled at once (one "now playing" badge per visible channel
+    // row), read as a wall of pastel wash — "a big bunch of colours" —
+    // rather than a backdrop with the odd gold accent.
+    final accent = scheme.primary;
+    // Dedicated gradient-sheen accent — see `buildPaletteColorScheme`'s
+    // own doc comment for why it's kept separate from `accent` (Habs:
+    // the gradient was blending toward the focus-text white instead of
+    // the actual brand red before this split existed).
+    final gradientAccent = scheme.primaryContainer;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 1),
       // Same HoldToActivate-over-InkWell shape as the plain live list's
@@ -6324,13 +6454,41 @@ class _ProgramBlockState extends State<_ProgramBlock> {
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: _focused
-                    ? scheme.primary
+                    ? null
                     : widget.isNow
-                        ? scheme.primaryContainer.withValues(alpha: 0.55)
+                        ? Colors.black87
                         : Colors.white.withValues(alpha: 0.06),
+                // Same real diagonal sheen as `_SelectableRow`'s own focus
+                // fix — see its doc comment for why a flat `black87` fill
+                // photographed as more "filled" than it read live.
+                gradient: _focused
+                    ? LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.black,
+                          Color.lerp(Colors.black, gradientAccent, 0.4)!,
+                          Colors.black,
+                        ],
+                        stops: const [0.0, 0.5, 1.0],
+                      )
+                    : null,
                 border: Border.all(
-                    color: _focused ? scheme.primary : Colors.white24),
+                  color: _focused
+                      ? accent
+                      : widget.isNow
+                          ? accent.withValues(alpha: 0.85)
+                          : Colors.white24,
+                  width: _focused ? 2 : (widget.isNow ? 1.5 : 1),
+                ),
                 borderRadius: BorderRadius.circular(6),
+                boxShadow: _focused
+                    ? [
+                        BoxShadow(
+                            color: accent.withValues(alpha: 0.5),
+                            blurRadius: 10)
+                      ]
+                    : const [],
               ),
               alignment: Alignment.centerLeft,
               // A block wider than the viewport (a long "now playing"
@@ -6361,7 +6519,7 @@ class _ProgramBlockState extends State<_ProgramBlock> {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           color: _focused
-                              ? scheme.onPrimary
+                              ? accent
                               : widget.program == null
                                   ? Colors.white54
                                   : Colors.white,

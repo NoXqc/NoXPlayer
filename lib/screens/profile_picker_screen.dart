@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/viewer_profile_service.dart';
 import '../utils/tv_theme.dart';
 import '../widgets/settings_scaffold.dart';
+import '../widgets/tv_menu_tile.dart';
 
 /// Switch between viewer profiles — reached from the tabs column's own
 /// profile row (TV) or the equivalent action on the phone layout. A plain
@@ -27,17 +28,18 @@ class ProfilePickerScreen extends StatelessWidget {
         body: ListView(
           children: [
             for (final profile in viewers.profiles)
-              ListTile(
+              TvMenuTile(
                 autofocus: profile.id == viewers.active.id,
                 leading: CircleAvatar(
-                  child: Text(
-                      profile.name.isEmpty ? '?' : profile.name[0].toUpperCase()),
+                  child: Text(profile.name.isEmpty
+                      ? '?'
+                      : profile.name[0].toUpperCase()),
                 ),
-                title: Text(profile.name),
-                subtitle: profile.isRestricted ? const Text('Restricted') : null,
+                title: profile.name,
+                subtitle: profile.isRestricted ? 'Restricted' : null,
                 trailing: profile.id == viewers.active.id
                     ? const Icon(Icons.check_circle)
-                    : null,
+                    : const SizedBox.shrink(),
                 onTap: () async {
                   final switched = await viewers.switchTo(context, profile.id);
                   if (!switched) return;

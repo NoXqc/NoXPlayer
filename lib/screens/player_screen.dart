@@ -743,25 +743,58 @@ class _TopBarIconButtonState extends State<_TopBarIconButton> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    // Same translucent-white-fill swap as everywhere else for Minimalist
-    // — see `_tvButtonStyle`'s doc comment.
-    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
-    final focusFill =
-        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
-    final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
+    // Every palette now gets the same contour + gradient-sheen treatment
+    // — see `TvHomeScreen._SelectableRow`'s doc comment for the full
+    // story.
     final button = Padding(
       padding: const EdgeInsets.all(4),
-      child: Material(
-        color: _focused ? focusFill : Colors.transparent,
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: widget.onPressed,
-          onFocusChange: (f) => setState(() => _focused = f),
-          child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Icon(widget.icon,
-                color: _focused ? focusForeground : Colors.white, size: 22),
+      child: Container(
+        // Always present (even with an empty shadow list) — see
+        // MinimalGlassFocus's doc comment elsewhere for why a focus
+        // widget's ancestor shape must stay stable across builds.
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          // A flat `black87` fill here photographed as more "filled" than
+          // the real diagonal sheen `_SelectableRow`/`_GroupRow` use for
+          // the exact same focus state — see their doc comment.
+          gradient: _focused
+              ? LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.black,
+                    Color.lerp(Colors.black, scheme.primaryContainer, 0.4)!,
+                    Colors.black,
+                  ],
+                  stops: const [0.0, 0.5, 1.0],
+                )
+              : null,
+          boxShadow: _focused
+              ? [
+                  BoxShadow(
+                      color: scheme.primary.withValues(alpha: 0.45),
+                      blurRadius: 12)
+                ]
+              : const [],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          shape: _focused
+              ? CircleBorder(side: BorderSide(color: scheme.primary, width: 2))
+              : const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: widget.onPressed,
+            onFocusChange: (f) => setState(() => _focused = f),
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              // `scheme.tertiary` — a dedicated icon/symbol-glyph accent,
+              // separate from the border/gradient accent
+              // (`focusForeground`) — see `buildPaletteColorScheme`'s own
+              // doc comment for why (Habs: white contour, blue icons).
+              child: Icon(widget.icon,
+                  color: _focused ? scheme.tertiary : Colors.white, size: 22),
+            ),
           ),
         ),
       ),

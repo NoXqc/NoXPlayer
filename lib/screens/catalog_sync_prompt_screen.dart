@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../services/app_preferences.dart';
+import '../utils/tv_theme.dart';
 import '../widgets/mode_button.dart';
 
 /// Asks before the automatic full catalog sync runs — this fires from
@@ -25,8 +28,22 @@ class CatalogSyncPromptScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // This screen renders from main.dart's bootstrap gate, before the
+    // app's real MaterialApp/theme tree exists yet, so it has to carry
+    // its own MaterialApp — but that previously meant its own ModeButtons
+    // fell back to Flutter's stock default ColorScheme (an un-seeded,
+    // purple-ish M3 baseline) instead of the user's actual palette,
+    // reported directly as "not sure how this purple gradient got there".
+    // AppPreferences is already in scope (this runs inside main.dart's
+    // MultiProvider), so it can build the exact same themed ColorScheme
+    // the real app uses once it's up.
+    final palette = context.watch<AppPreferences>().palette;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        colorScheme: buildPaletteColorScheme(palette, Brightness.dark),
+        useMaterial3: true,
+      ),
       home: Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(

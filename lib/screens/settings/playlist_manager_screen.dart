@@ -12,6 +12,7 @@ import '../../widgets/section_label.dart';
 import '../../widgets/settings_panel.dart';
 import '../../widgets/settings_scaffold.dart';
 import '../../widgets/tv_app_bar_button.dart';
+import '../../widgets/tv_menu_tile.dart';
 import '../../widgets/tv_switch_list_tile.dart';
 import 'add_playlist_screen.dart';
 import 'group_management_screen.dart';
@@ -50,20 +51,20 @@ class PlaylistManagerScreen extends StatelessWidget {
                   SettingsPanel(
                     padding: EdgeInsets.zero,
                     children: [
-                      ListTile(
-                        leading: const Icon(Icons.add),
-                        title: const Text('Add Playlist'),
+                      TvMenuTile(
+                        icon: Icons.add,
+                        title: 'Add Playlist',
                         onTap: () => Navigator.of(context).push(
                             MaterialPageRoute(
                                 builder: (_) => const AddPlaylistScreen())),
                       ),
                       if (profiles.where((p) => p.enabled).length >= 2) ...[
                         const Divider(height: 1),
-                        ListTile(
-                          leading: const Icon(Icons.low_priority),
-                          title: const Text('Playlist Priority'),
-                          subtitle: const Text(
-                              'Which playlist\'s groups show first, per tab'),
+                        TvMenuTile(
+                          icon: Icons.low_priority,
+                          title: 'Playlist Priority',
+                          subtitle:
+                              'Which playlist\'s groups show first, per tab',
                           onTap: () => Navigator.of(context).push(
                               MaterialPageRoute(
                                   builder: (_) =>
@@ -98,10 +99,10 @@ class _PlaylistRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(profile.isXtream ? Icons.dns : Icons.link),
-      title: Text(profile.name),
-      subtitle: Text(profile.isXtream ? 'Xtream Codes' : 'M3U'),
+    return TvMenuTile(
+      icon: profile.isXtream ? Icons.dns : Icons.link,
+      title: profile.name,
+      subtitle: profile.isXtream ? 'Xtream Codes' : 'M3U',
       trailing: Icon(
         profile.enabled ? Icons.check_circle : Icons.pause_circle_outline,
         color: profile.enabled ? Colors.greenAccent : Colors.white38,

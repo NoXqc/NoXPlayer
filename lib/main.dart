@@ -611,14 +611,12 @@ class _NoxIptvAppState extends State<NoxIptvApp>
                 DesktopLiveResumeHint(navigatorKey: _navigatorKey),
             ],
           ),
-          themeMode: prefs.themeMode,
+          // Always dark, regardless of the OS/system light-dark setting —
+          // a deliberate streaming-app convention (Netflix/YouTube/Plex
+          // all do this too), confirmed directly: "keep it always dark and
+          // remove the toggle". No `darkTheme`/`themeMode` at all, so
+          // there's nothing for a system-level light-mode change to flip.
           theme: ThemeData(
-            brightness: Brightness.light,
-            colorScheme:
-                buildPaletteColorScheme(prefs.palette, Brightness.light),
-            useMaterial3: true,
-          ),
-          darkTheme: ThemeData(
             brightness: Brightness.dark,
             colorScheme:
                 buildPaletteColorScheme(prefs.palette, Brightness.dark),

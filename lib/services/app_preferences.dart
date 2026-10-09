@@ -17,7 +17,6 @@ class AppPreferences extends ChangeNotifier {
 
   final StorageService _storage;
 
-  late ThemeMode themeMode;
   late bool showClock;
   late CyberpunkPalette palette;
   late String layoutMode; // 'auto', 'phone', 'tv'
@@ -30,8 +29,6 @@ class AppPreferences extends ChangeNotifier {
   bool isTelevision = false;
 
   Future<void> init() async {
-    themeMode =
-        _storage.getThemeMode() == 'light' ? ThemeMode.light : ThemeMode.dark;
     showClock = _storage.getShowClock();
     palette = _paletteById(_storage.getPaletteId());
     layoutMode = _storage.getLayoutMode();
@@ -45,12 +42,6 @@ class AppPreferences extends ChangeNotifier {
     final resolved = id == 'green_orange' ? 'habs' : id;
     return AppConstants.cyberpunkPalettes.firstWhere((p) => p.id == resolved,
         orElse: () => AppConstants.cyberpunkPalettes.first);
-  }
-
-  void setThemeMode(ThemeMode mode) {
-    themeMode = mode;
-    _storage.setThemeMode(mode == ThemeMode.light ? 'light' : 'dark');
-    notifyListeners();
   }
 
   void setShowClock(bool value) {

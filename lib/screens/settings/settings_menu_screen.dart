@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:provider/provider.dart';
 
-import '../../services/app_preferences.dart';
 import '../../utils/tv_theme.dart';
 import '../../widgets/settings_scaffold.dart';
+import '../../widgets/tv_menu_tile.dart';
 import 'add_playlist_screen.dart';
 import 'check_updates_screen.dart';
 import 'epg_settings_screen.dart';
@@ -39,35 +38,36 @@ class SettingsMenuScreen extends StatelessWidget {
               title: 'Settings',
               body: ListView(
                 children: [
-                  _MenuTile(
+                  TvMenuTile(
                     icon: Icons.playlist_add,
                     title: 'Add Playlist',
                     subtitle: 'M3U URL or Xtream Codes login',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const AddPlaylistScreen())),
                   ),
-                  _MenuTile(
+                  TvMenuTile(
                     icon: Icons.video_library_outlined,
                     title: 'Playlist Manager',
                     subtitle: 'Every playlist: login, groups, enable/disable',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const PlaylistManagerScreen())),
                   ),
-                  _MenuTile(
+                  TvMenuTile(
                     icon: Icons.people_outline,
                     title: 'Profiles',
-                    subtitle: 'Separate favorites, history & hidden groups per viewer',
+                    subtitle:
+                        'Separate favorites, history & hidden groups per viewer',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const ProfilesScreen())),
                   ),
-                  _MenuTile(
+                  TvMenuTile(
                     icon: Icons.palette_outlined,
                     title: 'Theme',
-                    subtitle: 'Dark mode, clock, accent color, layout',
+                    subtitle: 'Clock, accent color, layout',
                     onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => const ThemeScreen())),
                   ),
-                  _MenuTile(
+                  TvMenuTile(
                     icon: Icons.calendar_month_outlined,
                     title: 'EPG',
                     subtitle:
@@ -75,14 +75,14 @@ class SettingsMenuScreen extends StatelessWidget {
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const EpgSettingsScreen())),
                   ),
-                  _MenuTile(
+                  TvMenuTile(
                     icon: Icons.movie_filter_outlined,
                     title: 'TMDB (Release Dates)',
                     subtitle: 'Optional key for sorting by real release date',
                     onTap: () => Navigator.of(context).push(MaterialPageRoute(
                         builder: (_) => const TmdbSettingsScreen())),
                   ),
-                  _MenuTile(
+                  TvMenuTile(
                     icon: Icons.system_update_outlined,
                     title: 'Check for Updates',
                     subtitle: 'Download and install the latest release',
@@ -122,69 +122,5 @@ class SettingsMenuScreen extends StatelessWidget {
                 ],
               ),
             ));
-  }
-}
-
-class _MenuTile extends StatefulWidget {
-  const _MenuTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  State<_MenuTile> createState() => _MenuTileState();
-}
-
-class _MenuTileState extends State<_MenuTile> {
-  bool _focused = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final isMinimal = context.watch<AppPreferences>().palette.isMinimal;
-    // ListTile's own focus overlay is a translucent tint blended under
-    // the label — stays subtle at any alpha. An explicit solid tileColor
-    // on focus (same treatment as _SelectableRow elsewhere) is what
-    // actually reads as "obvious" from a couch. Minimalist swaps that
-    // solid fill for a translucent one (matching `_tvButtonStyle`'s own
-    // glass pattern) — a fully opaque `scheme.primary` fill would just be
-    // a solid white block, not glass, and its computed `onPrimary` text
-    // would end up dark and hard to read against it.
-    final useGlass = isMinimal && _focused;
-    final focusFill =
-        isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
-    final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
-    return MinimalGlassFocus(
-      active: useGlass,
-      borderRadius: 8,
-      child: ListTile(
-        onFocusChange: (f) => setState(() => _focused = f),
-        tileColor: _focused && !useGlass ? focusFill : null,
-        leading: CircleAvatar(
-          backgroundColor: _focused
-              ? focusForeground.withValues(alpha: 0.2)
-              : scheme.primary.withValues(alpha: 0.16),
-          foregroundColor: _focused ? focusForeground : scheme.primary,
-          child: Icon(widget.icon),
-        ),
-        title: Text(widget.title,
-            style: TextStyle(color: _focused ? focusForeground : null)),
-        subtitle: Text(
-          widget.subtitle,
-          style: TextStyle(
-              color: _focused ? focusForeground.withValues(alpha: 0.85) : null),
-        ),
-        trailing:
-            Icon(Icons.chevron_right, color: _focused ? focusForeground : null),
-        onTap: widget.onTap,
-      ),
-    );
   }
 }

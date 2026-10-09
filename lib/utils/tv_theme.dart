@@ -7,33 +7,87 @@ import '../models/cyberpunk_palette.dart';
 import '../services/app_preferences.dart';
 import 'constants.dart';
 
-/// Shared by both `main.dart`'s root `MaterialApp.theme`/`darkTheme` and
+/// Shared by both `main.dart`'s root `MaterialApp.theme` and
 /// [withTvThemeIfNeeded] below — having two separate copies of the
 /// Minimalist-palette override is exactly how it went missing from the
 /// root theme the first time (reported directly: `TvHomeScreen`'s own
 /// sidebar still rendered solid purple, because it inherits the root
 /// theme, built via `colorSchemeSeed: prefs.palette.primary` directly,
 /// not this file's own override).
-/// Swaps in [CyberpunkPalette.highlight] as the scheme's primary (with a
-/// readable dark text color on top of it) when the palette has one; a
-/// no-op for every palette that doesn't. Shared with `TvHomeScreen`,
-/// which builds its own dark scheme instead of calling
-/// [buildPaletteColorScheme].
-ColorScheme applyPaletteHighlight(
-    ColorScheme scheme, CyberpunkPalette palette) {
-  final h = palette.highlight;
-  if (h == null) return scheme;
-  return scheme.copyWith(primary: h, onPrimary: const Color(0xFF10163A));
-}
-
 ColorScheme buildPaletteColorScheme(
     CyberpunkPalette palette, Brightness brightness) {
+  final isDark = brightness == Brightness.dark;
+  if (palette.trueBlack) {
+    // Same reasoning as the isMinimal branch below (its own comment has the
+    // full story): skip ColorScheme.fromSeed entirely rather than let its
+    // HCT tonal derivation mute a saturated accent, and keep surfaceTint
+    // transparent so no elevated surface picks up a stray hue wash.
+    //
+    // Deliberately `primary: palette.primary`, NOT `palette.highlight` —
+    // confirmed directly on real hardware as "looks like a Game Boy":
+    // scheme.primary gets painted as a full solid fill across wide areas
+    // (the selected sidebar tab, every simultaneous "now playing" guide
+    // badge via primaryContainer below) — the same role white plays for
+    // the Habs palette, i.e. it needs to be the *strong, saturated* color,
+    // not a pale tint. `highlight` (the bright champagne shine) stays out
+    // of the ColorScheme entirely here and is used only where it's
+    // genuinely decorative — the wordmark's gradient middle stop
+    // (`_TvTopBar` reads `palette.highlight` directly) — rather than
+    // flooding every focus/selected/"now" surface with a pastel wash.
+    const onFocus = Color(0xFF1A1203);
+    final base = isDark ? const ColorScheme.dark() : const ColorScheme.light();
+    return base.copyWith(
+      primary: palette.primary,
+      onPrimary: onFocus,
+      // `primaryContainer` is this app's dedicated gradient-sheen accent
+      // (kept separate from `primary`, which drives the focus
+      // border/text) — matches `primary` here, same as every palette
+      // below, since gold has no highlight substitute to diverge from.
+      primaryContainer: palette.primary,
+      onPrimaryContainer: palette.primary,
+      secondary: palette.secondary,
+      onSecondary: Colors.white,
+      secondaryContainer: palette.secondary.withValues(alpha: 0.18),
+      onSecondaryContainer: palette.secondary,
+      // `tertiary` is this app's dedicated icon/symbol-glyph accent (kept
+      // separate from `primary`, which drives the focus border/gradient/
+      // text) — matches `primary` here, same as every palette below,
+      // since gold has no highlight substitute to diverge from.
+      tertiary: palette.primary,
+      surface: isDark ? Colors.black : Colors.white,
+      surfaceTint: Colors.transparent,
+    );
+  }
   if (!palette.isMinimal) {
-    return applyPaletteHighlight(
+    final seeded =
         ColorScheme.fromSeed(seedColor: palette.primary, brightness: brightness)
-            .copyWith(
-                secondary: palette.secondary, tertiary: palette.secondary),
-        palette);
+            .copyWith(secondary: palette.secondary);
+    final hasHighlight = palette.highlight != null;
+    // A palette using `highlight` (currently only Habs) used to have
+    // `primary` substituted with that neutral stand-in (white) for the
+    // focus border/gradient/text — reverted per direct feedback: "make
+    // the selector red all along with the contour, there is already a
+    // lot of white... red contour and inside gradient red." Explicitly
+    // `palette.primary` (the raw hex), not `seeded.primary` (the
+    // HCT-derived tone `ColorScheme.fromSeed` would otherwise give it) —
+    // same reasoning as Dark/Gold's own fix: HCT tonal derivation can
+    // mute a saturated accent in dark mode.
+    return seeded.copyWith(
+      primary: hasHighlight ? palette.primary : seeded.primary,
+      onPrimary: hasHighlight ? Colors.white : seeded.onPrimary,
+      // `tertiary`: this app's dedicated icon/symbol-glyph accent — for a
+      // highlight palette, icons carry the palette's *other* brand color
+      // (secondary) instead, so they read distinctly from the
+      // border/gradient/text (still primary/red) — confirmed directly:
+      // "the symbols and logos blue." For every palette without a
+      // highlight substitute, this still matches `primary` exactly (no
+      // visible change).
+      tertiary: hasHighlight ? palette.secondary : seeded.primary,
+      // `primaryContainer`: this app's dedicated gradient-sheen accent —
+      // now the same color as `primary` everywhere (border and gradient
+      // both red for Habs), per the direct feedback above.
+      primaryContainer: hasHighlight ? palette.primary : seeded.primary,
+    );
   }
   // Deliberately NOT `ColorScheme.fromSeed(seedColor: Colors.white, ...)`
   // — a fully desaturated seed has no real hue for Material's HCT
@@ -46,7 +100,6 @@ ColorScheme buildPaletteColorScheme(
   // Material baseline scheme and overriding every field real widgets in
   // this app actually read is the only way to guarantee no hidden hue
   // survives.
-  final isDark = brightness == Brightness.dark;
   final neutral = isDark ? Colors.white : Colors.black;
   final neutralDim = isDark ? Colors.white70 : Colors.black54;
   final onNeutral = isDark ? Colors.black : Colors.white;
@@ -54,13 +107,19 @@ ColorScheme buildPaletteColorScheme(
   return base.copyWith(
     primary: neutral,
     onPrimary: onNeutral,
-    primaryContainer: neutral.withValues(alpha: 0.18),
+    // Same dedicated gradient-sheen accent as every other palette — see
+    // the non-minimal branch's own comment. Matches `primary` here too
+    // (no highlight substitute for Minimalist to diverge from).
+    primaryContainer: neutral,
     onPrimaryContainer: neutral,
     secondary: neutralDim,
     onSecondary: onNeutral,
     secondaryContainer: neutral.withValues(alpha: 0.12),
     onSecondaryContainer: neutral,
-    tertiary: neutralDim,
+    // Same dedicated icon/symbol-glyph accent as every other palette —
+    // see the non-minimal branch's own comment. Matches `primary` here
+    // too (no highlight substitute for Minimalist to diverge from).
+    tertiary: neutral,
     surface: isDark ? Colors.black : Colors.white,
     surfaceTint: Colors.transparent,
   );
@@ -186,12 +245,10 @@ Widget withTvThemeIfNeeded(BuildContext context, WidgetBuilder builder) {
       // for a solid fill + thick bright border matching `_SelectableRow`'s
       // treatment elsewhere in the app — the actual "obvious highlight"
       // the Live TV list already has.
-      outlinedButtonTheme: OutlinedButtonThemeData(
-          style: _tvButtonStyle(scheme, isMinimal: palette.isMinimal)),
-      filledButtonTheme: FilledButtonThemeData(
-          style: _tvButtonStyle(scheme, isMinimal: palette.isMinimal)),
-      textButtonTheme: TextButtonThemeData(
-          style: _tvButtonStyle(scheme, isMinimal: palette.isMinimal)),
+      outlinedButtonTheme:
+          OutlinedButtonThemeData(style: _tvButtonStyle(scheme)),
+      filledButtonTheme: FilledButtonThemeData(style: _tvButtonStyle(scheme)),
+      textButtonTheme: TextButtonThemeData(style: _tvButtonStyle(scheme)),
       // Plain `IconButton`s (player bar: Recall, Favorite, Reload,
       // Pause/skip) had no theme of their own, so they fell back to
       // Flutter's stock `IconButton` focus treatment — the same weak
@@ -199,24 +256,29 @@ Widget withTvThemeIfNeeded(BuildContext context, WidgetBuilder builder) {
       // button type above, for the exact same reported reason. Reusing
       // `_tvButtonStyle` directly keeps this consistent with the rest of
       // the app rather than inventing a second "obvious focus" look.
-      iconButtonTheme: IconButtonThemeData(
-          style: _tvButtonStyle(scheme, isMinimal: palette.isMinimal)),
+      // `isIcon: true` — its content is a glyph, not a label, so it gets
+      // the dedicated icon/symbol accent (`scheme.tertiary`) instead of
+      // `scheme.primary` — see `buildPaletteColorScheme`'s own doc
+      // comment for why (Habs: white contour/text, blue icons).
+      iconButtonTheme:
+          IconButtonThemeData(style: _tvButtonStyle(scheme, isIcon: true)),
     ),
     child: Builder(builder: builder),
   );
 }
 
-ButtonStyle _tvButtonStyle(ColorScheme scheme, {required bool isMinimal}) {
-  // Every other palette's focused button is a fully solid fill — already
-  // proven as the fix for a real "can't tell where my selector is"
-  // complaint (see the comment above), which a translucent glass fill
-  // would risk reintroducing. Minimalist keeps that same legibility via
-  // a crisp, fully-opaque white border and label instead of relying on
-  // fill contrast, so the *fill* itself is free to be genuinely glassy.
-  final focusFill =
-      isMinimal ? Colors.white.withValues(alpha: 0.16) : scheme.primary;
-  final focusForeground = isMinimal ? Colors.white : scheme.onPrimary;
-  final focusBorder = isMinimal ? Colors.white : scheme.primary;
+/// Every palette now gets the same border + accent-colored text focus
+/// treatment — see `TvHomeScreen._SelectableRow`'s doc comment for the
+/// full story (originally Dark/Gold-only, since a solid fill reads
+/// "creamy"/pastel; `LiveResumeHint`'s near-black-fill + bright-border
+/// pill look reused here instead). `ButtonStyle.backgroundColor` can't
+/// paint a gradient like `_SelectableRow`/`_GroupRow` do for this same
+/// state, so this stays transparent — the border + glow (added by each
+/// consuming theme's `focusColor`, already set above) carry it instead.
+ButtonStyle _tvButtonStyle(ColorScheme scheme, {bool isIcon = false}) {
+  const focusFill = Colors.transparent;
+  final focusForeground = isIcon ? scheme.tertiary : scheme.primary;
+  final focusBorder = scheme.primary;
   return ButtonStyle(
     backgroundColor: WidgetStateProperty.resolveWith((states) {
       if (states.contains(WidgetState.focused)) return focusFill;

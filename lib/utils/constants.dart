@@ -44,7 +44,6 @@ class AppConstants {
   static const String keyM3uUrl = 'nox_m3u_url';
   static const String keyEpgUrl = 'nox_epg_url';
   static const String keyRefreshInterval = 'nox_refresh_interval_minutes';
-  static const String keyThemeMode = 'nox_theme_mode';
   static const String keyTmdbApiKey = 'nox_tmdb_api_key';
   static const String keyWhatsNewTmdbLastRefreshed =
       'nox_whats_new_tmdb_last_refreshed';
@@ -209,34 +208,37 @@ class AppConstants {
     // orElse, both of which fall back to cyberpunkPalettes.first.
     //
     // primary/secondary here are the same purple/magenta as the
-    // Purple/Magenta entry below — not shown as a colored gradient/fill
+    // Neon Purple entry below — not shown as a colored gradient/fill
     // anywhere (see CyberpunkPalette.isMinimal), just kept as the
     // wordmark's own accent so it isn't plain white too.
     CyberpunkPalette(
       id: 'minimal',
-      label: 'Minimalist',
+      label: 'Platinum',
       primary: Color(0xFF7C3AED),
       secondary: Color(0xFFE91E8C),
       isMinimal: true,
     ),
     CyberpunkPalette(
       id: 'red_blue',
-      label: 'Red / Blue',
+      label: 'Rosé',
       primary: Color(0xFFE5393F),
       secondary: Color(0xFF2979FF),
     ),
     CyberpunkPalette(
       id: 'purple_magenta',
-      label: 'Purple / Magenta',
+      label: 'Neon Purple',
       primary: Color(0xFF7C3AED),
       secondary: Color(0xFFE91E8C),
     ),
     // Replaced the old Green / Orange palette (id 'green_orange', still
     // mapped to this one — see AppPreferences._paletteById). Bleu-blanc-
     // rouge: the red is the Canadiens' own C8102E; the blue is lifted well
-    // above the team's near-navy so the wordmark gradient and focus glow
-    // stay readable on this UI's black backgrounds. The white is the
-    // focus/selected color (see CyberpunkPalette.highlight).
+    // above the team's near-navy so it stays readable on this UI's black
+    // backgrounds, and doubles as the icon/symbol accent (see
+    // CyberpunkPalette.secondary's own doc comment). The white is purely
+    // the wordmark/swatch gradient's middle stop now (see
+    // CyberpunkPalette.highlight) — the focus border/gradient/text itself
+    // is `primary` (red), not `highlight`.
     CyberpunkPalette(
       id: 'habs',
       label: 'Habs',
@@ -244,11 +246,24 @@ class AppConstants {
       secondary: Color(0xFF1F4FD8),
       highlight: Colors.white,
     ),
+    // "Antique Shine" — a hand-built scheme (see CyberpunkPalette.trueBlack),
+    // not a seeded one: D4AF37 run through ColorScheme.fromSeed in dark mode
+    // muted toward olive/brown, reported directly as looking "yellow-brown"
+    // against a background that was a heavy gold-to-black wash rather than
+    // true OLED black. `highlight` is new here — every other palette except
+    // Habs left it null — but unlike Habs it stays out of the interactive
+    // ColorScheme entirely (see CyberpunkPalette.highlight's doc comment):
+    // a pale champagne tint painted as a wide solid fill read as a washed
+    // "Game Boy" look on real hardware, not gold. It's purely the
+    // wordmark's gradient shine; `primary` (the base gold) drives every
+    // focus/selected/badge surface.
     CyberpunkPalette(
       id: 'dark_gold',
       label: 'Dark / Gold',
-      primary: Color(0xFFD4AF37),
-      secondary: Color(0xFF8C6D1F),
+      primary: Color(0xFFC9A355),
+      secondary: Color(0xFF7A5A22),
+      highlight: Color(0xFFF6E2A8),
+      trueBlack: true,
     ),
   ];
 
