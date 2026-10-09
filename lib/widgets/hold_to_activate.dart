@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -26,6 +27,24 @@ import 'package:flutter/services.dart';
 /// [onHold] is nullable so this can be dropped in unconditionally: with it
 /// null, holding does nothing and a short press still calls [onTap] as
 /// normal.
+///
+/// Mouse/touch gets [onHold] too, via a [RawGestureDetector] holding a
+/// single custom [LongPressGestureRecognizer] (not the keyboard's
+/// `Focus.onKeyEvent` path, and deliberately not a plain `GestureDetector
+/// .onLongPress` either — that only exposes a fixed ~500ms timeout, not
+/// [holdDuration]). Reported directly: holding Select on a real remote
+/// already opened this, but holding the *mouse button* on Windows did
+/// nothing — [onTap] fired immediately on click, same as the keyboard's
+/// `ActivateIntent` double-fire problem the class doc comment above
+/// already solved once for Select, just never solved for pointer input at
+/// all. Unlike that fix, this doesn't need any suppression of the child's
+/// own tap handling: a `LongPressGestureRecognizer` enters the *same*
+/// gesture arena as the child's tap recognizer, and Flutter's own arena
+/// resolution is what keeps a long hold from also firing [onTap] when it
+/// releases — the same reason a plain `GestureDetector` with both
+/// `onTap`/`onLongPress` set never double-fires either. Enabled
+/// unconditionally, not just on Windows — a touch screen benefits from
+/// the same "long-press for options" convention for free.
 class HoldToActivate extends StatefulWidget {
   const HoldToActivate({
     super.key,
@@ -131,7 +150,20 @@ class _HoldToActivateState extends State<HoldToActivate> {
         canRequestFocus: false,
         skipTraversal: true,
         onKeyEvent: _handleKeyEvent,
-        child: widget.child,
+        child: widget.onHold == null
+            ? widget.child
+            : RawGestureDetector(
+                gestures: <Type, GestureRecognizerFactory>{
+                  LongPressGestureRecognizer:
+                      GestureRecognizerFactoryWithHandlers<
+                          LongPressGestureRecognizer>(
+                    () => LongPressGestureRecognizer(
+                        duration: widget.holdDuration),
+                    (instance) => instance.onLongPress = widget.onHold,
+                  ),
+                },
+                child: widget.child,
+              ),
       ),
     );
   }
