@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'screens/catalog_sync_prompt_screen.dart';
 import 'screens/catalog_sync_screen.dart';
@@ -44,6 +45,29 @@ Future<void> main() async {
     // pubspec.yaml's media_kit comment. Every other platform keeps using
     // video_player_hdr exclusively and never touches this at all.
     MediaKit.ensureInitialized();
+  }
+  if (Platform.isWindows) {
+    // See pubspec.yaml's window_manager comment — this app never had real
+    // OS-level fullscreen on Windows before; maximizing the plain window
+    // still left the title bar (and the taskbar, unless auto-hidden)
+    // visible, "only like 98%". Always fullscreen from launch, no toggle
+    // and no windowed mode at all — confirmed directly: this app's
+    // identity is a TV-style UI (same always-immersive convention the
+    // Android TV layout already has), not a resizable desktop app that
+    // happens to also do this. `fullScreen` is part of the initial
+    // `WindowOptions` (not a separate `setFullScreen` call after the
+    // window's already shown) specifically so the window is *created*
+    // already fullscreen — no visible windowed-then-fullscreen flash on
+    // every cold start.
+    await windowManager.ensureInitialized();
+    const windowOptions = WindowOptions(
+      fullScreen: true,
+      titleBarStyle: TitleBarStyle.hidden,
+    );
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
   }
   await _configureImageCache();
   // See persistent_image_cache.dart's doc comment — the package default

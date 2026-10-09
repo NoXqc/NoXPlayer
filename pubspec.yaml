@@ -1,7 +1,7 @@
 name: nox_iptv
 description: "NoX IPTV - an M3U/EPG IPTV player for Android phones, boxes, and Firesticks."
 publish_to: 'none'
-version: 3.52.0+177
+version: 3.52.1+178
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -58,6 +58,17 @@ dependencies:
   # AppUpdateService's own doc comment), so it hands the release zip's
   # URL to the system browser instead and lets the user grab it that way.
   url_launcher: ^6.3.1
+  # Windows only — this app never had real OS-level fullscreen on Windows
+  # at all; the native runner (windows/runner/win32_window.cpp) only ever
+  # shows a normal bordered window, so even maximizing it still leaves the
+  # title bar (and the taskbar, unless auto-hidden) visible. Reported
+  # directly as "can't go truly full screen, only like 98%". The app
+  # always launches fullscreen now (main.dart's own WindowOptions) — no
+  # toggle, no windowed mode — matching the TV-style, always-immersive
+  # identity the Android TV layout already has. window_manager gives that
+  # a real, well-tested `fullScreen`/`show` instead of hand-rolling raw
+  # Win32 window-style changes.
+  window_manager: ^0.5.2
 
 dev_dependencies:
   flutter_test:
