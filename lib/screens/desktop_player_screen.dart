@@ -164,8 +164,9 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
     // live channels are recorded, matching main.dart's own "scoped to
     // live channels only" resume logic — a movie/episode has no "resume
     // where I left off on launch" concept to begin with.
-    if (_isLive)
+    if (_isLive) {
       context.read<StorageService>().setLastChannelId(_currentChannel.id);
+    }
     if (_isLive) {
       _completedSubscription = _player.stream.completed.listen((completed) {
         if (completed && mounted) {
