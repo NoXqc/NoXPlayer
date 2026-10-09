@@ -4,11 +4,41 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:xml/xml_events.dart';
 
 import '../models/epg_program.dart';
 import '../utils/constants.dart';
 import 'storage_service.dart';
+
+/// TEMPORARY — tracing a reported "EPG not ready for ~a minute after the
+/// UI is already up" gap on real hardware (confirmed: 57s on a Formuler).
+/// `debugPrint` alone turned out not reliable enough to actually capture —
+/// this box's logcat "main" buffer measured as rotating within seconds,
+/// losing these lines before they could be read even via a live stream.
+/// Appends to a plain file instead so `adb pull` gets the full trace
+/// regardless of logcat — [getExternalStorageDirectory], not
+/// [getTemporaryDirectory]: this device's `adb` has no root and isn't a
+/// debuggable build (`run-as` refuses it), both confirmed directly, so the
+/// app's private internal storage isn't reachable from the host at all.
+/// The app-scoped *external* directory (`/sdcard/Android/data/<pkg>/
+/// files`) needs no extra permission to write to and `adb pull` can reach
+/// it without root. Shared by `main.dart`'s matching trace calls — one
+/// file, one combined timeline. Delete this function and every call site
+/// once the real bottleneck is found.
+Future<void> traceEpgTiming(String msg) async {
+  final line = '${DateTime.now().toIso8601String()} $msg';
+  debugPrint('NOX_EPG_TIMING: $msg');
+  try {
+    final dir = await getExternalStorageDirectory();
+    if (dir == null) return;
+    final file = File('${dir.path}/nox_epg_trace.txt');
+    await file.writeAsString('$line\n', mode: FileMode.append, flush: true);
+  } catch (_) {
+    // Best-effort — this is throwaway diagnostic code, not something
+    // worth its own error handling.
+  }
+}
 
 /// One playlist's EPG URL plus the channel ids it's allowed to populate
 /// programmes for — see [EpgService.refresh]'s doc comment.
@@ -167,24 +197,32 @@ class EpgService extends ChangeNotifier {
   List<EpgSource> Function()? _sourcesProvider;
 
   Future<void> init() async {
+    await traceEpgTiming('EpgService.init() start');
     lastUpdated = _storage.getEpgLastUpdated();
     // Path, not contents — see StorageService.cacheFilePath. The EPG
     // cache (every programme for every channel) is one of the two largest
     // files this app reads at startup.
     final cachedPath =
         await _storage.cacheFilePath(AppConstants.cacheFileEpgPrograms);
+    await traceEpgTiming('cachedPath resolved (path=${cachedPath != null})');
     if (cachedPath != null) {
       try {
         final decoded = await compute(_readEpgCacheFile, cachedPath);
         _programs
           ..clear()
           ..addAll(decoded);
-      } catch (_) {
+        final programCount =
+            _programs.values.fold<int>(0, (sum, list) => sum + list.length);
+        await traceEpgTiming('compute() decode done — ${_programs.length} '
+            'channels, $programCount programmes');
+      } catch (e) {
         // Corrupt/old cache format — ignore, it will be repopulated on the
         // next successful refresh.
+        await traceEpgTiming('compute() decode FAILED — $e');
       }
     }
     notifyListeners();
+    await traceEpgTiming('EpgService.init() notifyListeners done');
   }
 
   /// (Re)starts the periodic auto-refresh timer, refreshing every source
@@ -263,8 +301,8 @@ class EpgService extends ChangeNotifier {
   }
 
   Future<void> _persistCache() async {
-    final path = await _storage
-        .cacheFilePathForWrite(AppConstants.cacheFileEpgPrograms);
+    final path =
+        await _storage.cacheFilePathForWrite(AppConstants.cacheFileEpgPrograms);
     await compute(_writeEpgCacheFile, (programs: _programs, path: path));
     await _storage.setEpgLastUpdated(lastUpdated ?? DateTime.now());
   }

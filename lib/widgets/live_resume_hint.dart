@@ -112,6 +112,28 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
     return _playback.controller != null && !_playback.isFullscreenActive;
   }
 
+  /// True whenever D-pad focus is currently inside a text-editing widget
+  /// (a `TextField`'s own `EditableText`) — checked generically off the
+  /// currently focused node's own `BuildContext`, not per-screen, so no
+  /// screen with a text field needs to register anything for this.
+  ///
+  /// Added after this exact gesture was confirmed firing from an
+  /// unintended source: the known Fire OS/remote quirk where the
+  /// on-screen keyboard intercepts a real Back press and resynthesizes it
+  /// as internal keyboard-navigation key events (arrowRight among them —
+  /// indistinguishable from a real hold once Flutter sees them, same
+  /// "no way to tell this apart from the user genuinely pressing it"
+  /// problem documented for the Back-becomes-Enter case) pushed a real
+  /// [PlayerScreen] on top of a Settings screen the user was actually
+  /// typing a playlist name into. A held Right while a text field has
+  /// focus is never a deliberate "resume live TV" gesture, so this widget
+  /// now stays out of it entirely in that case — real presses, repeats,
+  /// and releases for that key all just fall through normally instead.
+  bool get _textFieldFocused =>
+      FocusManager.instance.primaryFocus?.context
+          ?.findAncestorWidgetOfExactType<EditableText>() !=
+      null;
+
   /// Neither of the two things already tried for a hold gesture in this
   /// app actually fits Right:
   ///
@@ -154,7 +176,7 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
   /// own use of Right is completely unaffected whenever there's nothing
   /// to resume.
   KeyEventResult _handleGlobalKey(KeyEvent event) {
-    if (!_canResume) return KeyEventResult.ignored;
+    if (!_canResume || _textFieldFocused) return KeyEventResult.ignored;
     if (event.logicalKey != LogicalKeyboardKey.arrowRight)
       return KeyEventResult.ignored;
 
@@ -174,7 +196,18 @@ class _LiveResumeHintState extends State<LiveResumeHint> {
 
   void _resume() {
     _holdTimer = null;
-    if (!mounted || !_canResume) return;
+    // Re-checks [_textFieldFocused] here too, not just in
+    // [_handleGlobalKey]'s own gate — confirmed directly as the real gap
+    // in that first fix: the timer can be armed by a real arrowRight
+    // press *before* focus ever lands in a text field at all (e.g.
+    // navigating `AddPlaylistScreen`'s own Left/Right pane-switching on
+    // the way to the Name field), then fire 1.2s later while the user is
+    // now actively typing, with nothing about *that* moment ever
+    // re-checked. Confirmed isolated to exactly this: reported as not
+    // reproducing at all with a movie playing in the background (where
+    // [_canResume] is false, so this whole widget never arms anything),
+    // only with a live channel.
+    if (!mounted || !_canResume || _textFieldFocused) return;
     final channel = _resumableChannel;
     if (channel == null) return;
     widget.navigatorKey.currentState?.push(

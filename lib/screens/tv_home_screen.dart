@@ -1275,9 +1275,30 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     final groups = playlist.tvGroups.where((g) => !g.isHidden).toList();
     if (groups.isEmpty) return null;
     final playback = context.read<PlaybackService>();
-    final playing = playback.currentChannel;
-    if (playing != null && groups.any((g) => g.title == playing.group)) {
-      return playing.group;
+    // pendingResumeChannel too, not just currentChannel — on a true cold
+    // launch nothing has actually started playing yet (the "Nothing
+    // playing" / "Hold > to resume" pill state, see LiveResumeHint's own
+    // _resumableChannel getter, same fallback), so currentChannel alone
+    // was still null at exactly the moment this screen's first build asks
+    // the question, and fell straight through to `groups.first.title`
+    // regardless of the fix below — confirmed directly: still opened the
+    // first real group, not Favourites, even after that fix landed.
+    final playing = playback.currentChannel ?? playback.pendingResumeChannel;
+    if (playing != null) {
+      // A favorited channel lands on the pinned "Favourites" entry, not
+      // its own real provider group — same priority already established
+      // for returning from fullscreen (see didPopNext's stayOnFavorites),
+      // just missing from this fallback. Reported directly: a cold launch
+      // that auto-resumes a favorited channel opened its real group
+      // instead of Favourites. Checked before the real-group match below,
+      // which would otherwise always win — every channel, favorited or
+      // not, has a real group to match against.
+      if (playlist.favoriteLiveChannels.any((c) => c.id == playing.id)) {
+        return _favoritesGroupSentinel;
+      }
+      if (groups.any((g) => g.title == playing.group)) {
+        return playing.group;
+      }
     }
     return groups.first.title;
   }

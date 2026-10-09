@@ -355,6 +355,9 @@ class _NoxIptvAppState extends State<NoxIptvApp>
         await Future.delayed(_minSplashDuration - elapsed);
       }
       if (mounted) setState(() => _ready = true);
+      // TEMPORARY — see the matching traceEpgTiming block below; this is
+      // the reference point "UI active" actually means for that trace.
+      unawaited(traceEpgTiming('_ready=true (splash gone, UI active)'));
       if (didSync) {
         // The toast needs the real MaterialApp's ScaffoldMessengerKey,
         // which doesn't exist until the tree above actually builds.
@@ -370,16 +373,39 @@ class _NoxIptvAppState extends State<NoxIptvApp>
               MaterialPageRoute(builder: (_) => const AddPlaylistScreen()));
         });
       }
-      // One after another, not all at once. `_autoResumeLastChannel`
-      // itself is now cheap (see its own doc comment — it no longer opens
-      // a decoder), but `_epgService.init` is still a heavy EPG XML parse,
-      // and firing it alongside the catalog still settling was part of
-      // what made the first ~20 seconds of a cold start the app's least
-      // stable moment.
+      // `_epgService.init()` used to run strictly after
+      // `_autoResumeLastChannel`, on the reasoning that it's "a heavy EPG
+      // XML parse" that shouldn't run alongside the catalog still
+      // settling — that reasoning no longer matches what `init()` actually
+      // does: it reads the already-downloaded EPG cache from disk (a
+      // `compute()`-decoded JSON file), not a live XML parse at all — the
+      // real XML parse only happens in `refresh()`/`refreshAll()`, the
+      // network-triggered update this call never touches. Reported
+      // directly as EPG not appearing until ~58s after the UI was already
+      // up and interactive — with no correctness reason left for EPG to
+      // wait its turn behind auto-resume, running them concurrently
+      // instead of strictly sequentially should recover whatever time was
+      // lost purely to queue position, leaving only genuine decode time
+      // (if any) as the real remaining cost.
+      // TEMPORARY — tracing that same gap, alongside the matching
+      // traceEpgTiming calls in EpgService.init() itself — both append to
+      // the same file (nox_epg_trace.txt in the OS temp dir), though that
+      // file turned out unreachable from this test device (no root, not
+      // debuggable, and Android's own scoped-storage restriction blocks
+      // adb from even its app-external directory) — kept only for
+      // `debugPrint`'s own logcat line, on the chance a less locked-down
+      // device can read it. Remove every traceEpgTiming call in this block
+      // once the real bottleneck is confirmed found.
       unawaited(() async {
+        await traceEpgTiming('post-splash chain start');
         await _playbackService.init();
-        await _autoResumeLastChannel();
-        await _epgService.init();
+        await traceEpgTiming('playbackService.init done');
+        await Future.wait([
+          _autoResumeLastChannel(),
+          _epgService.init(),
+        ]);
+        await traceEpgTiming(
+            'autoResumeLastChannel + epgService.init done (concurrent)');
         _epgService.startAutoRefresh(
             _storage.getRefreshInterval(), _epgSources);
         // No-op for most launches (no key set, or already refreshed this

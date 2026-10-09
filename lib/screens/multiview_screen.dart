@@ -10,6 +10,7 @@ import 'package:video_player_platform_interface/video_player_platform_interface.
 import '../models/channel.dart';
 import '../services/playlist_manager.dart';
 import '../widgets/hold_to_activate.dart';
+import '../widgets/tv_menu_tile.dart';
 
 /// TV-remote-first multiview grid — several live channels playing at
 /// once, one with audio focus at a time. Same idea/UX as
@@ -45,7 +46,15 @@ import '../widgets/hold_to_activate.dart';
 /// real-hardware verification specifically on that promote-to-fullscreen
 /// flow, the same as everything else in this app.
 class MultiviewScreen extends StatefulWidget {
-  const MultiviewScreen({super.key});
+  const MultiviewScreen({super.key, this.initialChannel});
+
+  /// Pre-loads cell 0 with this channel on open — set when reached from
+  /// `PlayerScreen`'s own "Open in Multiview" action (see
+  /// `PlayerControls.onOpenMultiview`), so a channel already being
+  /// watched fullscreen becomes the first multiview cell instead of
+  /// landing on an empty grid. Null for the normal entry point (the
+  /// sidebar's own "Multiview" row), which still starts empty as before.
+  final Channel? initialChannel;
 
   @override
   State<MultiviewScreen> createState() => _MultiviewScreenState();
@@ -83,6 +92,24 @@ Future<void> _setAudioEnabled(
   await platform.setAudioTrackTypeDisabled(controller.textureId, !enabled);
 }
 
+/// One line of the sidebar's two connection/stability caveats — no
+/// `maxLines`/`overflow` here unlike their old full-width version: the
+/// sidebar column has as much vertical room as it needs, so the text just
+/// wraps naturally instead of needing to fit two lines at a wider width.
+Widget _warningLine(String text) {
+  return Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Icon(Icons.info_outline, color: Colors.amber, size: 14),
+      const SizedBox(width: 6),
+      Expanded(
+        child: Text(text,
+            style: const TextStyle(color: Colors.white54, fontSize: 11)),
+      ),
+    ],
+  );
+}
+
 class _MultiviewCell {
   Channel? channel;
   VideoPlayerHdrController? controller;
@@ -109,6 +136,8 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
   @override
   void initState() {
     super.initState();
+    final initial = widget.initialChannel;
+    if (initial != null) unawaited(_assign(0, initial));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _cells[0].focusNode.requestFocus();
     });
@@ -384,118 +413,128 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
                   ],
                 ),
               ),
-              // Not a theoretical caveat — confirmed directly on real
-              // hardware: a provider's own backend enforcing its
-              // connection cap *per stream* (not per device) looks
-              // exactly like a local playback bug otherwise. A slot
-              // beyond the account's limit just stalls a few seconds in,
-              // silently, no error shown. See PlaylistProfile
-              // .maxConnections' own doc comment, and that field's "Max
-              // connections" row in Playlist Manager, for the actual
-              // number a given account allows.
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.amber, size: 14),
-                    SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'Multiview is limited by each playlist\'s maximum '
-                        'connections — check Playlist Manager if channels '
-                        'stall after a few seconds.',
-                        style: TextStyle(color: Colors.white54, fontSize: 11),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // Requested directly, after an extensive real-hardware
-              // investigation traced Multiview's periodic freezes/
-              // buffering to the upstream provider's own server closing
-              // and re-establishing each stream's connection every few
-              // seconds — concurrent cells' independent reconnect cycles
-              // occasionally collide, which media3 detects and fails
-              // fast on (see ExoPlayerEventListener.onPlayerError). That
-              // failure is now caught and auto-recovered, but the
-              // provider-side cause itself isn't something this app can
-              // fix — this sets the right expectation instead of letting
-              // a stall look like a silent bug.
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.amber, size: 14),
-                    SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'Freezing or buffering can happen — the app will '
-                        'relaunch that channel automatically. If it '
-                        'doesn\'t, hold Select on the stream and choose '
-                        'Reload.',
-                        style: TextStyle(color: Colors.white54, fontSize: 11),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // A fixed 2x2 Row-of-Rows, not GridView — GridView is a
-              // Scrollable, and its own `childAspectRatio: 16/9` didn't
-              // exactly match every real TV's actual available height,
-              // making it genuinely scrollable by a few pixels. Reported
-              // directly: moving D-pad focus down to the bottom row then
-              // triggered Flutter's default "scroll the newly-focused
-              // widget into view" behavior, shifting the top row
-              // partially off-screen. A plain Row/Column+Expanded layout
-              // always exactly fills whatever space is actually
-              // available, with no Scrollable involved at all — nothing
-              // left for that default behavior to act on.
+              // The two caveats below used to sit full-width above the
+              // grid, costing the grid real vertical space for two lines
+              // of text — moved into a left sidebar instead (requested
+              // directly), freeing that height back to the cells. Since
+              // each cell's frame is aspect-locked to 16:9 (see
+              // `_MultiviewCellTile`), more available height also grows
+              // the frame's *width* proportionally — the sidebar's ~190px
+              // comes back many times over once the cells are taller, net
+              // bigger even though the row is narrower.
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(6),
-                  // Stacked (Column), not side-by-side — requested
-                  // directly: splitting a landscape screen into left/
-                  // right halves squeezes each cell into a tall, narrow
-                  // near-square, badly distorting a widescreen video's
-                  // actual shape. Splitting top/bottom instead lets each
-                  // cell span the full screen width, keeping something
-                  // much closer to its real aspect ratio even though it's
-                  // shorter.
-                  // The cell *frame* (border/header/buttons) fills the
-                  // whole row, same as a quad cell fills its quarter —
-                  // reported directly that constraining the whole frame to
-                  // 16:9 (an earlier version of this fix) made dual cells
-                  // look noticeably smaller than quad's. Only the video
-                  // itself is aspect-constrained now (inside `_buildCell`),
-                  // letterboxing within the full-size frame instead of
-                  // shrinking the frame around it.
-                  // Flex 13:7 instead of a flat 50/50 split when only one
-                  // of the two cells actually has a channel in it — a
-                  // plain even split made a single active stream look
-                  // small (letterboxed within an exactly-half-height row),
-                  // reported directly as needing to be "bigger by 30%".
-                  // 13:7 gives the occupied row exactly 65% of the
-                  // available height, i.e. 1.3x the even-split baseline —
-                  // once both cells are filled they're back to equal flex
-                  // (13:13) and split evenly like a normal multiview grid.
-                  child: Column(
-                    children: [
-                      Expanded(
-                          flex: _cells[0].channel != null ? 13 : 7,
-                          child: Padding(
-                              padding: const EdgeInsets.all(3),
-                              child: _buildCell(0))),
-                      Expanded(
-                          flex: _cells[1].channel != null ? 13 : 7,
-                          child: Padding(
-                              padding: const EdgeInsets.all(3),
-                              child: _buildCell(1))),
-                    ],
-                  ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 190,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Not a theoretical caveat — confirmed
+                            // directly on real hardware: a provider's own
+                            // backend enforcing its connection cap *per
+                            // stream* (not per device) looks exactly like
+                            // a local playback bug otherwise. A slot
+                            // beyond the account's limit just stalls a
+                            // few seconds in, silently, no error shown.
+                            // See PlaylistProfile.maxConnections' own doc
+                            // comment, and that field's "Max connections"
+                            // row in Playlist Manager, for the actual
+                            // number a given account allows.
+                            _warningLine(
+                                'Multiview is limited by each playlist\'s '
+                                'maximum connections — check Playlist '
+                                'Manager if channels stall after a few '
+                                'seconds.'),
+                            const SizedBox(height: 10),
+                            // Requested directly, after an extensive
+                            // real-hardware investigation traced
+                            // Multiview's periodic freezes/buffering to
+                            // the upstream provider's own server closing
+                            // and re-establishing each stream's
+                            // connection every few seconds — concurrent
+                            // cells' independent reconnect cycles
+                            // occasionally collide, which media3 detects
+                            // and fails fast on (see
+                            // ExoPlayerEventListener.onPlayerError). That
+                            // failure is now caught and auto-recovered,
+                            // but the provider-side cause itself isn't
+                            // something this app can fix — this sets the
+                            // right expectation instead of letting a
+                            // stall look like a silent bug.
+                            _warningLine(
+                                'Freezing or buffering can happen — the '
+                                'app will relaunch that channel '
+                                'automatically. If it doesn\'t, hold '
+                                'Select on the stream and choose Reload.'),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // A fixed 2x2 Row-of-Rows, not GridView — GridView is
+                    // a Scrollable, and its own `childAspectRatio: 16/9`
+                    // didn't exactly match every real TV's actual
+                    // available height, making it genuinely scrollable by
+                    // a few pixels. Reported directly: moving D-pad focus
+                    // down to the bottom row then triggered Flutter's
+                    // default "scroll the newly-focused widget into view"
+                    // behavior, shifting the top row partially
+                    // off-screen. A plain Row/Column+Expanded layout
+                    // always exactly fills whatever space is actually
+                    // available, with no Scrollable involved at all —
+                    // nothing left for that default behavior to act on.
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(6),
+                        // Stacked (Column), not side-by-side — requested
+                        // directly: splitting a landscape screen into
+                        // left/right halves squeezes each cell into a
+                        // tall, narrow near-square, badly distorting a
+                        // widescreen video's actual shape. Splitting
+                        // top/bottom instead lets each cell span the
+                        // full available width, keeping something much
+                        // closer to its real aspect ratio even though
+                        // it's shorter.
+                        // The cell *frame* (border/header/buttons) fills
+                        // the whole row, same as a quad cell fills its
+                        // quarter — reported directly that constraining
+                        // the whole frame to 16:9 (an earlier version of
+                        // this fix) made dual cells look noticeably
+                        // smaller than quad's. Only the video itself is
+                        // aspect-constrained now (inside `_buildCell`),
+                        // letterboxing within the full-size frame instead
+                        // of shrinking the frame around it.
+                        // Flex 13:7 instead of a flat 50/50 split when
+                        // only one of the two cells actually has a
+                        // channel in it — a plain even split made a
+                        // single active stream look small (letterboxed
+                        // within an exactly-half-height row), reported
+                        // directly as needing to be "bigger by 30%". 13:7
+                        // gives the occupied row exactly 65% of the
+                        // available height, i.e. 1.3x the even-split
+                        // baseline — once both cells are filled they're
+                        // back to equal flex (13:13) and split evenly
+                        // like a normal multiview grid.
+                        child: Column(
+                          children: [
+                            Expanded(
+                                flex: _cells[0].channel != null ? 13 : 7,
+                                child: Padding(
+                                    padding: const EdgeInsets.all(3),
+                                    child: _buildCell(0))),
+                            Expanded(
+                                flex: _cells[1].channel != null ? 13 : 7,
+                                child: Padding(
+                                    padding: const EdgeInsets.all(3),
+                                    child: _buildCell(1))),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -552,6 +591,12 @@ class _MultiviewCellTile extends StatefulWidget {
 class _MultiviewCellTileState extends State<_MultiviewCellTile> {
   bool _focused = false;
 
+  /// How far past the video's true aspect ratio the frame is stretched to
+  /// reclaim some of the unused width stacking leaves on each cell — see
+  /// this class's own `build` doc comment. A first value to judge on real
+  /// hardware, not a measured "right" one.
+  static const _widthBoost = 1.15;
+
   @override
   Widget build(BuildContext context) {
     // The frame (border included) is now aspect-constrained to the video's
@@ -562,10 +607,26 @@ class _MultiviewCellTileState extends State<_MultiviewCellTile> {
     // (A wider-than-native frame with a BoxFit.cover crop was tried first
     // to also widen the picture itself, but VideoPlayerHdr has no
     // intrinsic size for FittedBox to scale from — it rendered blank.)
+    //
+    // Stacked top/bottom means each cell's available box is much wider
+    // than 16:9 (roughly screen-width by half-screen-height) — a strict
+    // native-ratio frame leaves real unused width on both sides, visibly
+    // marked up directly on a real screenshot and confirmed as worth
+    // reclaiming even at the cost of some stretch, explicitly *not* full
+    // edge-to-edge ("probably not as much but enough"). `_widthBoost`
+    // widens the locked ratio beyond the video's true shape — since this
+    // widget's own `Stack(fit: StackFit.expand, ...)` below has no
+    // internal letterboxing (the frame IS the video's rendered shape),
+    // this genuinely stretches the picture by that same factor rather
+    // than just growing empty frame around it. 1.15 was picked as a
+    // first, modest value to judge on real hardware, not a measured
+    // "right" number — tune directly if it reads as too stretched or not
+    // enough once seen on the actual screen.
     final ratio =
-        widget.controller != null && widget.controller!.value.aspectRatio != 0
-            ? widget.controller!.value.aspectRatio
-            : 16 / 9;
+        (widget.controller != null && widget.controller!.value.aspectRatio != 0
+                ? widget.controller!.value.aspectRatio
+                : 16 / 9) *
+            _widthBoost;
     return Center(
       child: AspectRatio(
         aspectRatio: ratio,
@@ -753,14 +814,24 @@ class _MultiviewFullscreenViewState extends State<_MultiviewFullscreenView> {
   }
 }
 
-/// Search-and-pick list for assigning a channel to a cell — same shape
-/// as `GroupCatalogScreen`'s own picker-style lists, with the same
-/// text-field escape fix `_AddProfileScreenState`/`TmdbSettingsScreen`
-/// already use elsewhere in this app (see either's own, fuller doc
-/// comment): `EditableText` claims arrow keys for itself whenever a text
-/// field has focus, so plain default Down traversal never actually
-/// escapes a focused search field on real remote hardware, regardless of
-/// what's focusable below it.
+/// Group-filtered channel browser for assigning a cell — a left pane lists
+/// groups (All/Favorites/every real group, same "Favorites sits alongside
+/// the real provider groups, not inside one" convention `TvHomeScreen`'s
+/// own sidebar already uses) and a right pane is a search field plus the
+/// filtered channel list. Previously a single flat text-search list with
+/// no group filtering at all — found genuinely lacking next to a
+/// competitor's own add-channel screen, which splits exactly this way.
+///
+/// Left/Right switches between the two panes as independent focus zones
+/// (mirroring `PlayerScreen`'s own top/bottom-bar `FocusScopeNode`
+/// pattern) rather than trusting default directional traversal between
+/// two differently-shaped side-by-side lists — same reasoning
+/// `AddPlaylistScreen`'s mode-button row has for not trusting default
+/// traversal for that shape of layout. The text-field escape fix
+/// (`_handleSearchFieldEscapeKey`) is unchanged from before: `EditableText`
+/// claims arrow keys for itself whenever a text field has focus, so plain
+/// default Down traversal never actually escapes a focused search field on
+/// real remote hardware, regardless of what's focusable below it.
 class _ChannelPickerScreen extends StatefulWidget {
   const _ChannelPickerScreen({required this.channels});
 
@@ -774,14 +845,35 @@ class _ChannelPickerScreenState extends State<_ChannelPickerScreen> {
   final _searchController = TextEditingController();
   final _searchFocus = FocusNode();
   final _firstResultFocus = FocusNode();
+
+  final _groupScope = FocusScopeNode(debugLabel: 'picker-groups');
+  final _contentScope = FocusScopeNode(debugLabel: 'picker-content');
+
+  /// 'All', 'Favorites' (only when at least one favorite exists among
+  /// [widget.channels]), then every real group name in first-seen order.
+  /// Fixed for this screen's lifetime — [widget.channels] is a snapshot
+  /// handed in once by [_MultiviewScreenState._openPicker], not something
+  /// that changes while this is open.
+  late final List<String> _groupEntries;
+  late final List<FocusNode> _groupFocusNodes;
+  int _selectedGroupIndex = 0;
+
   String _query = '';
 
   @override
   void initState() {
     super.initState();
+    final seen = <String>{};
+    final groups = <String>[];
+    for (final c in widget.channels) {
+      if (c.group.isNotEmpty && seen.add(c.group)) groups.add(c.group);
+    }
+    final hasFavorites = widget.channels.any((c) => c.isFavorite);
+    _groupEntries = ['All', if (hasFavorites) 'Favorites', ...groups];
+    _groupFocusNodes = List.generate(_groupEntries.length, (_) => FocusNode());
     HardwareKeyboard.instance.addHandler(_handleSearchFieldEscapeKey);
     WidgetsBinding.instance
-        .addPostFrameCallback((_) => _firstResultFocus.requestFocus());
+        .addPostFrameCallback((_) => _groupFocusNodes.first.requestFocus());
   }
 
   @override
@@ -790,6 +882,11 @@ class _ChannelPickerScreenState extends State<_ChannelPickerScreen> {
     _searchController.dispose();
     _searchFocus.dispose();
     _firstResultFocus.dispose();
+    _groupScope.dispose();
+    _contentScope.dispose();
+    for (final node in _groupFocusNodes) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -802,58 +899,137 @@ class _ChannelPickerScreenState extends State<_ChannelPickerScreen> {
     return true;
   }
 
+  List<Channel> get _filteredChannels {
+    Iterable<Channel> base = widget.channels;
+    final entry = _groupEntries[_selectedGroupIndex];
+    if (entry == 'Favorites') {
+      base = base.where((c) => c.isFavorite);
+    } else if (entry != 'All') {
+      base = base.where((c) => c.group == entry);
+    }
+    if (_query.isNotEmpty) {
+      final q = _query.toLowerCase();
+      base = base.where((c) => c.name.toLowerCase().contains(q));
+    }
+    return base.toList();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final filtered = _query.isEmpty
-        ? widget.channels
-        : widget.channels
-            .where((c) => c.name.toLowerCase().contains(_query.toLowerCase()))
-            .toList();
+    final scheme = Theme.of(context).colorScheme;
+    final filtered = _filteredChannels;
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
         title: const Text('Pick a channel'),
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: TextField(
-              controller: _searchController,
-              focusNode: _searchFocus,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                hintText: 'Search channels...',
-                hintStyle: TextStyle(color: Colors.white54),
-                prefixIcon: Icon(Icons.search, color: Colors.white54),
-                border: OutlineInputBorder(),
+      body: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.arrowLeft): () {
+            // No-op when already there — EditableText claims Left/Right
+            // for caret movement whenever the search field has focus, so
+            // this only ever actually fires while focus is on a group or
+            // channel row, never mid-typing.
+            if (!_groupScope.hasFocus) {
+              _groupFocusNodes[_selectedGroupIndex].requestFocus();
+            }
+          },
+          const SingleActivator(LogicalKeyboardKey.arrowRight): () {
+            if (!_contentScope.hasFocus) _searchFocus.requestFocus();
+          },
+        },
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              width: 260,
+              child: FocusScope(
+                node: _groupScope,
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(8),
+                  itemCount: _groupEntries.length,
+                  itemBuilder: (context, i) {
+                    final entry = _groupEntries[i];
+                    final selected = i == _selectedGroupIndex;
+                    return TvMenuTile(
+                      focusNode: _groupFocusNodes[i],
+                      icon: entry == 'All'
+                          ? Icons.apps
+                          : entry == 'Favorites'
+                              ? Icons.star
+                              : Icons.live_tv,
+                      title: entry,
+                      trailing: selected
+                          ? Icon(Icons.check, color: scheme.primary)
+                          : const SizedBox.shrink(),
+                      // Deliberately doesn't move focus into the content
+                      // pane on its own — matches the competitor screen
+                      // this is modeled on, where picking a group only
+                      // updates the list on the right; "change pane" stays
+                      // a separate, deliberate Right press.
+                      onTap: () => setState(() => _selectedGroupIndex = i),
+                    );
+                  },
+                ),
               ),
-              onChanged: (v) => setState(() => _query = v),
             ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: filtered.length,
-              itemBuilder: (context, i) {
-                final c = filtered[i];
-                return ListTile(
-                  focusNode: i == 0 ? _firstResultFocus : null,
-                  leading: (c.logoUrl != null && c.logoUrl!.isNotEmpty)
-                      ? Image.network(c.logoUrl!,
-                          width: 32,
-                          height: 32,
-                          errorBuilder: (_, __, ___) =>
-                              const Icon(Icons.tv, color: Colors.white54))
-                      : const Icon(Icons.tv, color: Colors.white54),
-                  title:
-                      Text(c.name, style: const TextStyle(color: Colors.white)),
-                  onTap: () => Navigator.of(context).pop(c),
-                );
-              },
+            const VerticalDivider(color: Colors.white24, width: 1),
+            Expanded(
+              child: FocusScope(
+                node: _contentScope,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: TextField(
+                        controller: _searchController,
+                        focusNode: _searchFocus,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          hintText: 'Search channels...',
+                          hintStyle: TextStyle(color: Colors.white54),
+                          prefixIcon: Icon(Icons.search, color: Colors.white54),
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (v) => setState(() => _query = v),
+                      ),
+                    ),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? const Center(
+                              child: Text('No channels found',
+                                  style: TextStyle(color: Colors.white54)),
+                            )
+                          : ListView.builder(
+                              itemCount: filtered.length,
+                              itemBuilder: (context, i) {
+                                final c = filtered[i];
+                                return TvMenuTile(
+                                  focusNode: i == 0 ? _firstResultFocus : null,
+                                  leading: (c.logoUrl != null &&
+                                          c.logoUrl!.isNotEmpty)
+                                      ? Image.network(c.logoUrl!,
+                                          width: 32,
+                                          height: 32,
+                                          errorBuilder: (_, __, ___) =>
+                                              const Icon(Icons.tv,
+                                                  color: Colors.white54))
+                                      : const Icon(Icons.tv,
+                                          color: Colors.white54),
+                                  title: c.name,
+                                  trailing: const SizedBox.shrink(),
+                                  onTap: () => Navigator.of(context).pop(c),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

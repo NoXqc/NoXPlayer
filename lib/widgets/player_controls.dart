@@ -308,6 +308,9 @@ class PlayerControls extends StatelessWidget {
     this.onActivity,
     this.linkedChannel,
     this.channel,
+    this.showMore = false,
+    this.onToggleMore,
+    this.onOpenMultiview,
   });
 
   final VideoPlayerHdrController controller;
@@ -376,6 +379,30 @@ class PlayerControls extends StatelessWidget {
   /// preview panes don't pass it.
   final Channel? channel;
 
+  /// Whether the secondary ("more") action row — Recall, Reload, audio
+  /// track, linked-channel failover — is currently expanded. Owned by the
+  /// caller (`PlayerScreen`'s `_moreVisible`), same "parent owns bar
+  /// visibility" convention [PlayerScreen] already uses for its own top/
+  /// bottom bars — this widget stays presentational, not stateful.
+  final bool showMore;
+
+  /// Reveals/hides the secondary row — null (the default, and what
+  /// `VideoPlayerPane`'s own bare inline construction passes implicitly by
+  /// omission) hides the chevron hint entirely, so a caller that hasn't
+  /// wired this up gets the unchanged single-row layout rather than a
+  /// chevron that does nothing.
+  final VoidCallback? onToggleMore;
+
+  /// Opens Multiview with whatever's currently playing already loaded as
+  /// the first cell — lives in the secondary row, gated on [isLive]
+  /// (Multiview is live-TV only) at the call site, same as Recall/Reload.
+  /// Null hides the button entirely, same convention as every other
+  /// optional action here; kept as a callback rather than this widget
+  /// importing `MultiviewScreen` itself and navigating directly, so this
+  /// file stays navigation-agnostic — [PlayerScreen] owns the actual
+  /// `Navigator.push`.
+  final VoidCallback? onOpenMultiview;
+
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -410,6 +437,8 @@ class PlayerControls extends StatelessWidget {
                     ),
                   ),
                   _QualityBadge(controller: controller),
+                  const SizedBox(width: 4),
+                  _AudioChannelBadge(controller: controller),
                   const SizedBox(width: 8),
                   if (showSeek)
                     Text(
@@ -438,29 +467,19 @@ class PlayerControls extends StatelessWidget {
                         controller.seekTo(Duration(milliseconds: v.toInt())),
                   ),
                 ),
-              // All the action buttons live in one row now — favorite
-              // used to sit alone above the seek bar, which put it out of
-              // reach of normal up/down movement within this bar (Up from
-              // there had nowhere to go but out to the top bar). Grouped
-              // here with play/pause (and skip, for VOD) instead, with
-              // room to add more later.
+              // Transport + favorite — the core, always-relevant actions
+              // for whatever's playing right now. Favorite used to sit
+              // alone above the seek bar, which put it out of reach of
+              // normal up/down movement within this bar (Up from there had
+              // nowhere to go but out to the top bar); grouped here with
+              // play/pause instead for that reason. Recall/Reload/audio
+              // track/linked-channel are situational rather than core
+              // transport, so they live in the secondary row below instead
+              // of crowding this one further as more actions get added —
+              // see [onToggleMore]'s doc comment.
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Recall goes furthest left, ahead of even favorites/
-                  // pause — placed there deliberately, per direct
-                  // feedback: recall means *backward*, so left is where
-                  // it reads correctly, mirroring how rewind conventionally
-                  // sits left of a play head.
-                  if (isLive && channel != null)
-                    IconButton(
-                      icon: const Icon(Icons.history, color: Colors.white),
-                      tooltip: 'Recall — go back to a recent channel',
-                      onPressed: () {
-                        onActivity?.call();
-                        showRecallPicker(context, channel!);
-                      },
-                    ),
                   if (onToggleFavorite != null)
                     IconButton(
                       icon: Icon(
@@ -471,20 +490,6 @@ class PlayerControls extends StatelessWidget {
                           ? 'Remove from favorites'
                           : 'Add to favorites',
                       onPressed: onToggleFavorite,
-                    ),
-                  // Manual recovery for a channel that's silently stalled
-                  // (frozen frame, no spinner, no error) — see
-                  // PlaybackService.reloadCurrentChannel's doc comment for
-                  // why this is a manual button rather than an automatic
-                  // watchdog. Live only, same gating as Recall above.
-                  if (isLive && channel != null)
-                    IconButton(
-                      icon: const Icon(Icons.refresh, color: Colors.white),
-                      tooltip: 'Reload channel',
-                      onPressed: () {
-                        onActivity?.call();
-                        context.read<PlaybackService>().reloadCurrentChannel();
-                      },
                     ),
                   // Episode nav — distinct icon shape (skip_previous/next,
                   // not replay_10/forward_10) so it doesn't read as "seek
@@ -531,11 +536,87 @@ class PlayerControls extends StatelessWidget {
                       tooltip: 'Next episode',
                       onPressed: onNext,
                     ),
-                  _AudioTrackButton(controller: controller),
-                  if (linkedChannel != null)
-                    _LinkedChannelButton(linkedChannel: linkedChannel!),
                 ],
               ),
+              // Chevron hint, shown only while the secondary row is
+              // collapsed and a caller has actually wired up
+              // [onToggleMore] — found by accident on a competitor's own
+              // player (no visual cue there at all that pressing Down
+              // again did anything); this exists specifically so that
+              // isn't true here. Not a focusable control itself — the
+              // *next* Down press is what actually reveals the row (see
+              // PlayerScreen._handleDown), this just advertises that
+              // there's something to find. Tappable too, for a touch/mouse
+              // caller with no D-pad.
+              if (onToggleMore != null && !showMore)
+                GestureDetector(
+                  onTap: () {
+                    onActivity?.call();
+                    onToggleMore!();
+                  },
+                  child: const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Icon(Icons.keyboard_arrow_down,
+                        color: Colors.white54, size: 20),
+                  ),
+                ),
+              // Secondary row — situational actions, collapsed by default.
+              // Every button here uses [_LabeledIconButton], not a bare
+              // `IconButton` — revealing this row at all only solves "I
+              // didn't know this existed"; a bare icon still leaves "I
+              // don't know what it does" for every button except
+              // Favorite/transport in the primary row, where the icons are
+              // already self-explanatory. Reported directly: the swap-
+              // channel button was the only one in this row that actually
+              // explained itself on focus. Recall goes furthest left,
+              // ahead of the rest — placed there deliberately, per direct
+              // feedback: recall means *backward*, so left is where it
+              // reads correctly, mirroring how rewind conventionally sits
+              // left of a play head.
+              if (showMore)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (isLive && channel != null)
+                      _LabeledIconButton(
+                        icon: Icons.history,
+                        label: 'Recall — go back to a recent channel',
+                        onPressed: () {
+                          onActivity?.call();
+                          showRecallPicker(context, channel!);
+                        },
+                      ),
+                    // Manual recovery for a channel that's silently
+                    // stalled (frozen frame, no spinner, no error) — see
+                    // PlaybackService.reloadCurrentChannel's doc comment
+                    // for why this is a manual button rather than an
+                    // automatic watchdog. Live only, same gating as Recall
+                    // above.
+                    if (isLive && channel != null)
+                      _LabeledIconButton(
+                        icon: Icons.refresh,
+                        label: 'Reload channel',
+                        onPressed: () {
+                          onActivity?.call();
+                          context
+                              .read<PlaybackService>()
+                              .reloadCurrentChannel();
+                        },
+                      ),
+                    _AudioTrackButton(controller: controller),
+                    if (linkedChannel != null)
+                      _LinkedChannelButton(linkedChannel: linkedChannel!),
+                    if (isLive && onOpenMultiview != null)
+                      _LabeledIconButton(
+                        icon: Icons.grid_view,
+                        label: 'Open in Multiview',
+                        onPressed: () {
+                          onActivity?.call();
+                          onOpenMultiview!();
+                        },
+                      ),
+                  ],
+                ),
             ],
           );
         },
@@ -688,6 +769,13 @@ class _QualityBadge extends StatefulWidget {
 
 class _QualityBadgeState extends State<_QualityBadge> {
   String? _label;
+
+  /// The same selected video track's own frame rate, shown as a second
+  /// pill alongside the quality label — confirmed as data this widget
+  /// already fetches every refresh (it's what decides FHD vs. plain HD),
+  /// just never previously displayed on its own. Rounded for display
+  /// only; the raw value still goes to [qualityLabelForTrack] unrounded.
+  int? _frameRate;
   Timer? _timer;
 
   @override
@@ -702,6 +790,7 @@ class _QualityBadgeState extends State<_QualityBadge> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       _label = null;
+      _frameRate = null;
       _refresh();
     }
   }
@@ -727,7 +816,13 @@ class _QualityBadgeState extends State<_QualityBadge> {
       if (!mounted || height == null) return;
       final label =
           qualityLabelForTrack(height: height, frameRate: selected?.frameRate);
-      if (label != _label) setState(() => _label = label);
+      final frameRate = selected?.frameRate?.round();
+      if (label != _label || frameRate != _frameRate) {
+        setState(() {
+          _label = label;
+          _frameRate = frameRate;
+        });
+      }
     } catch (_) {
       // Not every stream/platform combination reports track info — leave
       // the badge hidden rather than show something stale/wrong.
@@ -743,6 +838,31 @@ class _QualityBadgeState extends State<_QualityBadge> {
     // one shadow, not two, for the same compositing-cost reason
     // documented there.
     final glowColor = Color.lerp(scheme.primary, scheme.secondary, 0.5)!;
+    final frameRate = _frameRate;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _InfoPill(label, glowColor: glowColor),
+        if (frameRate != null) ...[
+          const SizedBox(width: 4),
+          _InfoPill('$frameRate FPS', glowColor: glowColor),
+        ],
+      ],
+    );
+  }
+}
+
+/// Shared small pill style for [_QualityBadge]/[_AudioChannelBadge] —
+/// extracted once a second badge needed the exact same look rather than
+/// duplicating the container/glow decoration a third time.
+class _InfoPill extends StatelessWidget {
+  const _InfoPill(this.text, {required this.glowColor});
+
+  final String text;
+  final Color glowColor;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -758,7 +878,7 @@ class _QualityBadgeState extends State<_QualityBadge> {
         ],
       ),
       child: Text(
-        label,
+        text,
         style: TextStyle(
             color: glowColor,
             fontSize: 11,
@@ -766,6 +886,87 @@ class _QualityBadgeState extends State<_QualityBadge> {
             letterSpacing: 0.5),
       ),
     );
+  }
+}
+
+/// Real selected audio channel layout (stereo/5.1/7.1), not the stream's
+/// own advertised label — same "decoded, not aspirational" reasoning as
+/// [_QualityBadge], polling on the same cadence for the same reason (no
+/// track-changed event to react to instead). Hidden for a plain mono/
+/// stereo track (`channelCount <= 2`) — not worth a badge for the common
+/// case — or whenever track info isn't available at all.
+class _AudioChannelBadge extends StatefulWidget {
+  const _AudioChannelBadge({required this.controller});
+
+  final VideoPlayerHdrController controller;
+
+  @override
+  State<_AudioChannelBadge> createState() => _AudioChannelBadgeState();
+}
+
+class _AudioChannelBadgeState extends State<_AudioChannelBadge> {
+  String? _label;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
+  }
+
+  @override
+  void didUpdateWidget(_AudioChannelBadge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      _label = null;
+      _refresh();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  static String? _channelLabel(int channels) {
+    return switch (channels) {
+      <= 2 => null,
+      6 => '5.1',
+      8 => '7.1',
+      _ => '${channels}ch',
+    };
+  }
+
+  Future<void> _refresh() async {
+    if (!widget.controller.isAudioTrackSupportAvailable()) return;
+    try {
+      final tracks = await widget.controller.getAudioTracks();
+      VideoAudioTrack? selected;
+      for (final track in tracks) {
+        if (track.isSelected) {
+          selected = track;
+          break;
+        }
+      }
+      final channels = selected?.channelCount;
+      if (!mounted || channels == null) return;
+      final label = _channelLabel(channels);
+      if (label != _label) setState(() => _label = label);
+    } catch (_) {
+      // Same "leave it hidden rather than show something stale/wrong"
+      // reasoning as _QualityBadge.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = _label;
+    if (label == null) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    final glowColor = Color.lerp(scheme.primary, scheme.secondary, 0.5)!;
+    return _InfoPill(label, glowColor: glowColor);
   }
 }
 
@@ -871,9 +1072,9 @@ class _AudioTrackButtonState extends State<_AudioTrackButton> {
   Widget build(BuildContext context) {
     final tracks = _tracks;
     if (tracks == null || tracks.length < 2) return const SizedBox.shrink();
-    return IconButton(
-      icon: const Icon(Icons.multitrack_audio, color: Colors.white),
-      tooltip: 'Audio track',
+    return _LabeledIconButton(
+      icon: Icons.multitrack_audio,
+      label: 'Audio track',
       onPressed: _openPicker,
     );
   }
@@ -883,35 +1084,57 @@ class _AudioTrackButtonState extends State<_AudioTrackButton> {
 /// see [PlayerControls.linkedChannel]'s doc comment. Always shown (not
 /// conditional on anything actually being wrong right now), same
 /// "there whether you need it or not" shape as the skip/next-episode
-/// buttons either side of it.
-///
-/// The bare swap icon means nothing on its own — there's no established
-/// icon convention for "cross-playlist failover" the way there is for
-/// play/pause or skip, and unlike those, this button is entirely absent
-/// for every channel that isn't paired, so it's easy to land on days
-/// after setting one up with no memory of what it does. [IconButton]'s
-/// own `tooltip` doesn't help on a D-pad remote — there's no hover, no
-/// long-press-for-tooltip gesture, so that text was never actually
-/// reaching anyone driving by remote, only screen readers. This shows
-/// the same text as a real on-screen label instead, but only while the
-/// button is actually focused, the same "explain it right where the
-/// selector lands" shape requested directly for this exact button.
-class _LinkedChannelButton extends StatefulWidget {
+/// buttons either side of it. The bare swap icon means nothing on its
+/// own — there's no established icon convention for "cross-playlist
+/// failover" the way there is for play/pause or skip — so this was the
+/// first button to get [_LabeledIconButton]'s on-focus label treatment;
+/// every other situational button in the secondary row has it now too.
+class _LinkedChannelButton extends StatelessWidget {
   const _LinkedChannelButton({required this.linkedChannel});
 
   final Channel linkedChannel;
 
   @override
-  State<_LinkedChannelButton> createState() => _LinkedChannelButtonState();
+  Widget build(BuildContext context) {
+    final playlistName = context
+        .watch<PlaylistManager>()
+        .playlistNameFor(linkedChannel.playlistId);
+    return _LabeledIconButton(
+      icon: Icons.swap_horiz,
+      label: 'Switch to $playlistName: ${linkedChannel.name}',
+      onPressed: () => context.read<PlaybackService>().play(linkedChannel),
+    );
+  }
 }
 
-class _LinkedChannelButtonState extends State<_LinkedChannelButton> {
+/// An icon button that explains itself on focus — [IconButton]'s own
+/// `tooltip` doesn't reach anyone driving by D-pad remote (no hover, no
+/// long-press-for-tooltip gesture, so that text only ever reached a
+/// screen reader). Originally built just for [_LinkedChannelButton];
+/// reported directly that revealing `PlayerControls`'s secondary row at
+/// all only solved "I didn't know this existed" and not "I don't know
+/// what this icon does" for every *other* button in it — this is now
+/// shared by all of them (Recall, Reload, audio track, linked-channel)
+/// instead of leaving one explained and the rest bare.
+class _LabeledIconButton extends StatefulWidget {
+  const _LabeledIconButton(
+      {required this.icon, required this.label, required this.onPressed});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  State<_LabeledIconButton> createState() => _LabeledIconButtonState();
+}
+
+class _LabeledIconButtonState extends State<_LabeledIconButton> {
   // IconButton has no onFocusChange of its own to hook — an explicit
   // FocusNode passed to it, listened to directly, is the reliable way to
   // track its real D-pad focus state regardless of that (a second, outer
   // Focus wrapper risks not being the node the D-pad actually lands on,
   // since IconButton manages its own internally when none is given).
-  final FocusNode _focusNode = FocusNode(debugLabel: 'linked-channel-swap');
+  final FocusNode _focusNode = FocusNode(debugLabel: 'labeled-icon-button');
   bool _focused = false;
 
   @override
@@ -933,34 +1156,28 @@ class _LinkedChannelButtonState extends State<_LinkedChannelButton> {
 
   @override
   Widget build(BuildContext context) {
-    final playlistName = context
-        .watch<PlaylistManager>()
-        .playlistNameFor(widget.linkedChannel.playlistId);
-    final label = 'Switch to $playlistName: ${widget.linkedChannel.name}';
-    // Stack, not the Column this started as — reported directly on real
-    // hardware: a Column made the label a real sibling of the icon, so
-    // the whole row of controls grew taller and visibly shifted every
-    // time it appeared. Clip.none plus Positioned here means only the
-    // IconButton itself (the sole non-positioned child) sizes this
-    // Stack — the label floats up over the video above the toolbar
-    // without the toolbar's own layout ever knowing it's there.
+    // Stack, not a Column — a Column makes the label a real sibling of
+    // the icon, growing (and visibly shifting) the whole row every time a
+    // label appears, confirmed directly on real hardware the first time
+    // this pattern was built. Clip.none plus Positioned below means only
+    // the IconButton itself (the sole non-positioned child) sizes this
+    // Stack — the label floats up over the video without the row's own
+    // layout ever knowing it's there.
     return Stack(
       clipBehavior: Clip.none,
       alignment: Alignment.bottomCenter,
       children: [
         IconButton(
           focusNode: _focusNode,
-          icon: const Icon(Icons.swap_horiz, color: Colors.white),
-          tooltip: label,
-          onPressed: () =>
-              context.read<PlaybackService>().play(widget.linkedChannel),
+          icon: Icon(widget.icon, color: Colors.white),
+          tooltip: widget.label,
+          onPressed: widget.onPressed,
         ),
-        // A negative `bottom` (not just stacked above via normal flow)
-        // is what actually lets this float free of the button's own
-        // footprint — paired with the Stack's own Clip.none above, so it
-        // renders over the video rather than being clipped at the
-        // button's edge. Deliberately quieter than the request's first
-        // pass at this (no border, lower opacity, smaller text) — a
+        // A negative `bottom` (not just stacked above via normal flow) is
+        // what actually lets this float free of the button's own
+        // footprint — paired with Clip.none above, so it renders over the
+        // video rather than being clipped at the button's edge.
+        // Deliberately quiet (no border, lower opacity, small text) — a
         // "ghost" hint reads as unfocused decoration, not another solid
         // control competing with the real button underneath it.
         if (_focused)
@@ -975,7 +1192,7 @@ class _LinkedChannelButtonState extends State<_LinkedChannelButton> {
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  label,
+                  widget.label,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,

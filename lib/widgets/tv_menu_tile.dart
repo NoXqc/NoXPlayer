@@ -25,6 +25,7 @@ class TvMenuTile extends StatefulWidget {
     this.trailing,
     this.autofocus = false,
     this.enabled = true,
+    this.focusNode,
     required this.onTap,
   }) : assert(icon != null || leading != null,
             'TvMenuTile needs either icon or leading');
@@ -44,6 +45,16 @@ class TvMenuTile extends StatefulWidget {
   /// Same meaning as `ListTile.enabled` — dimmed, unfocusable, and
   /// [onTap] never fires (e.g. "this is already the active profile").
   final bool enabled;
+
+  /// Lets a caller drive focus onto this specific row from outside —
+  /// `autofocus` only fires once, on this Element's first build, so a
+  /// caller that needs to re-focus a *specific* row later (e.g. the
+  /// multiview channel picker re-focusing the first result after a group
+  /// filter changes) needs a node it can call `.requestFocus()` on
+  /// directly, same as `ModeButton`/`_SwitchToLinkedChannelButton`
+  /// elsewhere in this app. Null (every existing caller) falls back to an
+  /// owned, internal node, unchanged from before.
+  final FocusNode? focusNode;
   final VoidCallback onTap;
 
   @override
@@ -109,6 +120,7 @@ class _TvMenuTileState extends State<TvMenuTile> {
         active: false,
         borderRadius: 8,
         child: ListTile(
+          focusNode: widget.focusNode,
           autofocus: widget.autofocus,
           enabled: widget.enabled,
           onFocusChange: (f) => setState(() => _focused = f),

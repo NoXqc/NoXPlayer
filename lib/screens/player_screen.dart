@@ -14,6 +14,7 @@ import '../utils/constants.dart';
 import '../utils/tv_theme.dart';
 import '../widgets/epg_guide.dart';
 import '../widgets/player_controls.dart';
+import 'multiview_screen.dart';
 import 'search_screen.dart';
 
 /// Fullscreen playback screen. Pushed when a channel is tapped on a phone,
@@ -40,7 +41,10 @@ import 'search_screen.dart';
 /// - **Up** first reveals the top bar (back/search/fullscreen + the
 ///   current/next EPG line for live channels); pressed again, it moves
 ///   focus onto the back button so Left/Right can reach Search too.
-/// - **Down** does the same for the bottom bar (title/seek bar/play-pause).
+/// - **Down** does the same for the bottom bar (title/seek bar/play-pause);
+///   once focus is inside it with nowhere further to move, a further Down
+///   reveals `PlayerControls`'s own secondary action row (Recall/Reload/
+///   audio track/linked-channel) — see [_moreVisible].
 /// Both bars auto-hide after inactivity so they can't permanently trap the
 /// D-pad the way the seek bar used to.
 class PlayerScreen extends StatefulWidget {
@@ -56,6 +60,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _immersive = false;
   bool _topVisible = false;
   bool _bottomVisible = false;
+
+  /// Whether `PlayerControls`'s secondary ("more") action row — Recall,
+  /// Reload, audio track, linked-channel failover — is expanded. A second
+  /// Down press once focus is already inside the bottom bar with nowhere
+  /// further to move reveals it (see [_handleDown]) — found this exact
+  /// "press Down again" pattern on a competitor's player by accident, with
+  /// no visual cue it existed; [PlayerControls.onToggleMore]'s chevron
+  /// hint is what keeps that from being true here too. Reset alongside
+  /// [_topVisible]/[_bottomVisible] on auto-hide so the bar always starts
+  /// collapsed again next time it's revealed.
+  bool _moreVisible = false;
   Timer? _hideTimer;
 
   /// Refreshed on every build (see [build]) and read from [_toggleImmersive]
@@ -130,6 +145,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         setState(() {
           _topVisible = false;
           _bottomVisible = false;
+          _moreVisible = false;
         });
       }
     });
@@ -220,7 +236,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
     if (_bottomScope.hasFocus) {
-      _tryIntraBarMove(_bottomScope, TraversalDirection.down);
+      if (_tryIntraBarMove(_bottomScope, TraversalDirection.down)) return;
+      // Nowhere further to move within the bar — reveal the secondary
+      // row rather than no-op. This mirrors [_topVisible]/[_bottomVisible]'s
+      // own two-step reveal (one press shows it, the *next* press — now
+      // that it's actually in the tree — is what the intra-bar move above
+      // finds) rather than requesting focus onto it directly this same
+      // frame, before it exists to focus.
+      if (!_moreVisible) setState(() => _moreVisible = true);
       return;
     }
     if (!_bottomVisible) {
@@ -228,6 +251,25 @@ class _PlayerScreenState extends State<PlayerScreen> {
       return;
     }
     _bottomScope.requestFocus();
+  }
+
+  /// `PlaybackService`'s own controller is deliberately kept alive in the
+  /// background for the normal "back out of fullscreen" case (the mobile
+  /// "island"/resume hint) — but here, the same channel is about to start
+  /// playing again from scratch as Multiview's own first cell, an entirely
+  /// separate decode session. Leaving the old one running underneath
+  /// doesn't serve that "resume where I left off" purpose at all in this
+  /// case, it just duplicates the stream — reported directly as its audio
+  /// bleeding through on top of whichever Multiview cell has focus, and on
+  /// hardware already close to its concurrent-decoder ceiling, an extra
+  /// background session is a real stability cost too. Same fix already
+  /// established for `TvHomeScreen`'s own "Multiview" sidebar entry —
+  /// this just applies it to this second entry point, which missed it.
+  Future<void> _openMultiview(Channel channel) async {
+    await _playback.stop();
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => MultiviewScreen(initialChannel: channel)));
   }
 
   void _revealBottomOnTap() {
@@ -545,6 +587,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
                                       onActivity: _resetHideTimer,
                                       linkedChannel: linkedChannel,
                                       channel: channel,
+                                      showMore: _moreVisible,
+                                      onToggleMore: () => setState(
+                                          () => _moreVisible = !_moreVisible),
+                                      onOpenMultiview:
+                                          Channel.isLiveId(channel.rawId)
+                                              ? () => _openMultiview(channel)
+                                              : null,
                                     ),
                                   ),
                                 ),
