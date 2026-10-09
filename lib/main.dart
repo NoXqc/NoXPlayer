@@ -10,6 +10,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'screens/catalog_sync_prompt_screen.dart';
 import 'screens/catalog_sync_screen.dart';
+import 'screens/desktop_player_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings/add_playlist_screen.dart';
 import 'screens/tv_home_screen.dart';
@@ -136,7 +137,7 @@ class NoxIptvApp extends StatefulWidget {
 }
 
 class _NoxIptvAppState extends State<NoxIptvApp>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WindowListener {
   late final StorageService _storage;
   late final CatalogDatabase _catalogDb;
   late final AppPreferences _preferences;
@@ -232,12 +233,29 @@ class _NoxIptvAppState extends State<NoxIptvApp>
   void initState() {
     super.initState();
     _bootstrap();
+    // Windows only — a window can't be minimized while it's *in*
+    // `fullScreen` mode at all (confirmed directly: the sidebar's
+    // Minimize row did nothing with the single `windowManager.minimize()`
+    // call this used to be), so the real sequence is exit fullscreen,
+    // then minimize (see the sidebar's own onTap in tv_home_screen.dart),
+    // then re-enter fullscreen here once the window actually comes back —
+    // onWindowRestore is `window_manager`'s event for exactly that
+    // (clicking the taskbar icon), not something tied to any specific
+    // screen, so this lives at the app root rather than wherever the
+    // Minimize button happens to be.
+    if (Platform.isWindows) windowManager.addListener(this);
   }
 
   @override
   void dispose() {
     _splashController.dispose();
+    if (Platform.isWindows) windowManager.removeListener(this);
     super.dispose();
+  }
+
+  @override
+  void onWindowRestore() {
+    if (Platform.isWindows) windowManager.setFullScreen(true);
   }
 
   /// The splash is meant to be *seen*, not just theoretically present —
@@ -464,14 +482,28 @@ class _NoxIptvAppState extends State<NoxIptvApp>
   /// MyTvOnline has — but that meant opening a real decoder and starting a
   /// network stream concurrently with the catalog/EPG load already running
   /// behind the splash, which was itself enough extra work to make the
-  /// first 10-20s of a cold start feel sluggish. Reported directly. Now
-  /// just finds the channel and hands it to [PlaybackService
-  /// .setPendingResumeChannel] — `LiveResumeHint` surfaces it as a pill the
-  /// user can act on (hold Right to actually start it), nothing opens
-  /// unless they do. No-ops if something's already playing (a real user
-  /// action on this launch beat the background load) or there's nothing to
-  /// resume into.
+  /// first 10-20s of a cold start feel sluggish. Reported directly, and
+  /// scaled back to just finding the channel and handing it to
+  /// [PlaybackService.setPendingResumeChannel] instead — `LiveResumeHint`
+  /// surfaces it as a pill the user can act on (hold Right to actually
+  /// start it), nothing opens unless they do.
   ///
+  /// Windows only, restored to the original direct-open behavior —
+  /// requested directly: a PC doesn't pay the same cold-launch cost a weak
+  /// Android TV box does opening a decoder concurrently with the catalog/
+  /// EPG load, so there's no reason to hold it back there. Pushes straight
+  /// into [DesktopPlayerScreen] (not [PlaybackService]/[PlayerScreen] at
+  /// all — Windows' own, wholly separate player, see that screen's own doc
+  /// comment) via [_navigatorKey] directly, not through a postFrame-
+  /// callback the way [_pendingAutoOpenAddPlaylist] needs to: unlike that
+  /// flag (checked synchronously in the same frame `_ready` flips true),
+  /// this runs after a real awaited disk read below, well after the real
+  /// Navigator already exists — same reasoning [DesktopLiveResumeHint]
+  /// .resume] already pushes through [_navigatorKey] directly with no such
+  /// wrapping.
+  ///
+  /// No-ops if something's already playing (a real user action on this
+  /// launch beat the background load) or there's nothing to resume into.
   /// Scoped to live channels only (not movies/episodes): those are
   /// deliberate choices to open, a live channel is just "what's on".
   ///
@@ -494,7 +526,12 @@ class _NoxIptvAppState extends State<NoxIptvApp>
     // unfiltered search result would.
     for (final channel in _playlistManager.visibleChannels(category: 'tv')) {
       if (channel.id == lastId) {
-        _playbackService.setPendingResumeChannel(channel);
+        if (Platform.isWindows) {
+          _navigatorKey.currentState?.push(MaterialPageRoute(
+              builder: (_) => DesktopPlayerScreen(channel: channel)));
+        } else {
+          _playbackService.setPendingResumeChannel(channel);
+        }
         return;
       }
     }

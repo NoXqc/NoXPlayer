@@ -9,6 +9,7 @@ import '../models/channel.dart';
 import '../services/desktop_mini_player.dart';
 import '../services/epg_service.dart';
 import '../services/playlist_manager.dart';
+import '../services/storage_service.dart';
 
 /// A deliberately standalone, Windows-only playback screen — see
 /// `pubspec.yaml`'s media_kit comment for why this exists at all:
@@ -153,6 +154,18 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
       _player.open(Media(_currentChannel.url));
     }
     if (_isLive) _DesktopLiveHistory.record(_currentChannel);
+    // DesktopPlayerScreen deliberately never calls PlaybackService.play()
+    // (see this class's own doc comment) — meaning nothing on Windows
+    // ever recorded a "last channel" at all, since StorageService
+    // .setLastChannelId is otherwise only ever called from inside
+    // PlaybackService. Confirmed directly: main.dart's own Windows
+    // auto-resume-last-channel (added for exactly this) silently never
+    // found anything to resume into, because this was always null. Only
+    // live channels are recorded, matching main.dart's own "scoped to
+    // live channels only" resume logic — a movie/episode has no "resume
+    // where I left off on launch" concept to begin with.
+    if (_isLive)
+      context.read<StorageService>().setLastChannelId(_currentChannel.id);
     if (_isLive) {
       _completedSubscription = _player.stream.completed.listen((completed) {
         if (completed && mounted) {
@@ -187,6 +200,9 @@ class _DesktopPlayerScreenState extends State<DesktopPlayerScreen> {
     setState(() => _currentChannel = channel);
     _player.open(Media(channel.url));
     if (_isLive) _DesktopLiveHistory.record(channel);
+    // See initState's identical call for why — keeps it current across a
+    // channel switch too, not just the one this screen opened with.
+    if (_isLive) context.read<StorageService>().setLastChannelId(channel.id);
   }
 
   /// Manual reconnect for a stalled live stream — this screen has none of

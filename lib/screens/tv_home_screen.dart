@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:provider/provider.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../models/channel.dart';
 import '../models/epg_program.dart';
@@ -1532,7 +1533,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     // restricted profile exists at all — Main (or any other unrestricted
     // profile) exiting the app behaves exactly as it always has.
     if (context.read<ViewerProfileService>().isActiveRestricted) {
-      SystemNavigator.pop();
+      _closeApp();
       return;
     }
     final confirmed = await showDialog<bool>(
@@ -1570,7 +1571,37 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
     for (final profile in playlist.profiles.where((p) => p.enabled)) {
       playlist.setPlaylistEnabled(profile.id, false);
     }
-    SystemNavigator.pop();
+    _closeApp();
+  }
+
+  /// `SystemNavigator.pop()` is a mobile-oriented API — on Android it maps
+  /// directly to finishing the Activity, but Flutter's Windows desktop
+  /// embedder doesn't reliably implement it as "close the window" at all.
+  /// Confirmed directly: the sidebar's new plain "Close" row did nothing
+  /// with it, right after `windowManager.minimize()` (a real, properly
+  /// supported native call from the same plugin) was confirmed working —
+  /// `windowManager.close()` is the equivalent reliable call for actually
+  /// closing the window. Used here too (not just the dedicated Close row)
+  /// so `_hardExit`'s own final step — and the restricted-viewer plain-
+  /// close path above — both close the window for real on Windows,
+  /// instead of silently leaving it open after disabling every playlist.
+  void _closeApp() {
+    if (Platform.isWindows) {
+      windowManager.close();
+    } else {
+      SystemNavigator.pop();
+    }
+  }
+
+  /// A window can't be minimized while it's *in* `fullScreen` mode at all
+  /// — confirmed directly: a bare `windowManager.minimize()` call did
+  /// nothing. Exiting fullscreen first is what actually makes the
+  /// minimize take effect; `main.dart`'s own `onWindowRestore` listener
+  /// is what re-enters fullscreen once the window comes back (clicking
+  /// the taskbar icon), not anything tied to this specific screen.
+  Future<void> _minimizeWindow() async {
+    await windowManager.setFullScreen(false);
+    await windowManager.minimize();
   }
 
   void _showUpdateToast() {
@@ -2020,6 +2051,36 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
           onTap: _openSettings,
         ),
         const Divider(height: 16, color: Colors.white24),
+        // Windows only — the app always launches fullscreen there now
+        // (see main.dart's WindowOptions) with the title bar hidden
+        // entirely, so there's no OS minimize *or* close button at all
+        // anymore. Reported directly, in two parts: "Exit App" was the
+        // only way to leave the foreground at all (it deliberately
+        // disables every playlist too — see _hardExit's own doc comment,
+        // a real feature, "free up this login for another device," not
+        // something to lose for an ordinary minimize/close), and with no
+        // title bar, Alt+F4 became the *only* way to close the window
+        // short of that. Minimize/Close are the lightweight alternatives:
+        // Minimize just sends the window to the taskbar, Close just quits
+        // normally via _closeApp (the same call `_hardExit` ends with,
+        // minus the playlist-disabling step) — neither touches playback
+        // or playlists.
+        if (Platform.isWindows) ...[
+          _SelectableRow(
+            icon: Icons.remove,
+            label: 'Minimize',
+            selected: false,
+            collapsed: collapsed,
+            onTap: _minimizeWindow,
+          ),
+          _SelectableRow(
+            icon: Icons.close,
+            label: 'Close',
+            selected: false,
+            collapsed: collapsed,
+            onTap: _closeApp,
+          ),
+        ],
         // Deliberately at the very bottom, one row on its own — this kills
         // the app, so it shouldn't be one accidental press away from the
         // tab list above it.
