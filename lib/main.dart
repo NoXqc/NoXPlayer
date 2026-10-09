@@ -10,7 +10,9 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'screens/catalog_sync_prompt_screen.dart';
 import 'screens/catalog_sync_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/settings/add_playlist_screen.dart';
 import 'screens/tv_home_screen.dart';
+import 'screens/welcome_add_playlist_screen.dart';
 import 'services/app_preferences.dart';
 import 'services/catalog_database.dart';
 import 'services/device_memory_service.dart';
@@ -146,6 +148,34 @@ class _NoxIptvAppState extends State<NoxIptvApp>
     _syncPromptCompleter = null;
   }
 
+  /// True while waiting on [WelcomeAddPlaylistScreen]'s answer — shown once,
+  /// right after [PlaylistManager.init] confirms a brand-new install has
+  /// zero playlists configured, since nothing else in the app hints that
+  /// content lives behind Settings > Playlist Manager rather than just
+  /// showing up on its own.
+  bool _newUserPromptPending = false;
+  Completer<bool>? _newUserPromptCompleter;
+
+  /// Set from [WelcomeAddPlaylistScreen]'s answer, consumed once `_ready`
+  /// flips true (see `_buildReadyContent`'s `build` doc comment below) —
+  /// can't just push [AddPlaylistScreen] directly from the prompt itself,
+  /// since the real `MaterialApp`/`Navigator` this screen's bootstrap gate
+  /// runs ahead of doesn't exist yet at that point.
+  bool _pendingAutoOpenAddPlaylist = false;
+
+  Future<bool> _confirmNewUserWantsPlaylist() {
+    final completer = Completer<bool>();
+    _newUserPromptCompleter = completer;
+    if (mounted) setState(() => _newUserPromptPending = true);
+    return completer.future;
+  }
+
+  void _respondToNewUserPrompt(bool wantsToAddPlaylist) {
+    if (mounted) setState(() => _newUserPromptPending = false);
+    _newUserPromptCompleter?.complete(wantsToAddPlaylist);
+    _newUserPromptCompleter = null;
+  }
+
   /// Lets background work (the initial playlist load finishing, "Update
   /// content" finishing) show a brief toast without needing a BuildContext
   /// tied to whatever screen happens to be on top — same trick other IPTV
@@ -225,6 +255,16 @@ class _NoxIptvAppState extends State<NoxIptvApp>
       // already be correct, so there's no way to let the UI go up first
       // this time.
       await _playlistManager.init();
+
+      // Brand-new install, nothing configured yet — ask once up front
+      // rather than leaving a new user to land on an empty TV/Movies/TV
+      // Shows screen with no indication content has to be added via
+      // Settings first. `needsFullSync()` below is always false with zero
+      // playlists (nothing enabled to be stale), so this can't race or
+      // double up with that prompt.
+      if (_playlistManager.profiles.isEmpty) {
+        _pendingAutoOpenAddPlaylist = await _confirmNewUserWantsPlaylist();
+      }
 
       // TiviMate/MyTVOnline3-style: a full catalog sync (every non-hidden
       // category's items, not just category lists) happens a few times a
@@ -320,6 +360,15 @@ class _NoxIptvAppState extends State<NoxIptvApp>
         // which doesn't exist until the tree above actually builds.
         WidgetsBinding.instance
             .addPostFrameCallback((_) => _showToast('Content updated'));
+      }
+      if (_pendingAutoOpenAddPlaylist) {
+        // Same reasoning as the toast above — the real Navigator this
+        // pushes onto doesn't exist until this build lands.
+        _pendingAutoOpenAddPlaylist = false;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _navigatorKey.currentState?.push(
+              MaterialPageRoute(builder: (_) => const AddPlaylistScreen()));
+        });
       }
       // One after another, not all at once. `_autoResumeLastChannel`
       // itself is now cheap (see its own doc comment — it no longer opens
@@ -485,7 +534,7 @@ class _NoxIptvAppState extends State<NoxIptvApp>
     // needed Provider access at all (pure local widget state throughout)
     // — kept outside the wrap below, same as the original structure
     // before that fix, for exactly the reason that structure had it there.
-    if (!_ready && !_syncPromptPending && !_syncing) {
+    if (!_ready && !_newUserPromptPending && !_syncPromptPending && !_syncing) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         home: Scaffold(
@@ -555,10 +604,10 @@ class _NoxIptvAppState extends State<NoxIptvApp>
     // Everything below only ever becomes reachable after
     // `_playlistManager.init()` (which itself runs after every `late
     // final` service field above is assigned) has already completed —
-    // `_syncPromptPending`/`_syncing` are only ever set true later in
-    // `_bootstrap()`, well past that point — so referencing all of them
-    // in this MultiProvider is genuinely safe here, unlike in the splash
-    // branch above.
+    // `_newUserPromptPending`/`_syncPromptPending`/`_syncing` are only ever
+    // set true later in `_bootstrap()`, well past that point — so
+    // referencing all of them in this MultiProvider is genuinely safe here,
+    // unlike in the splash branch above.
     return MultiProvider(
       providers: [
         Provider<StorageService>.value(value: _storage),
@@ -576,6 +625,10 @@ class _NoxIptvAppState extends State<NoxIptvApp>
   }
 
   Widget _buildReadyContent(BuildContext context) {
+    if (_newUserPromptPending) {
+      return WelcomeAddPlaylistScreen(onRespond: _respondToNewUserPrompt);
+    }
+
     if (_syncPromptPending) {
       return CatalogSyncPromptScreen(
         lastSyncedAt: _oldestLastFullSyncAt(),
