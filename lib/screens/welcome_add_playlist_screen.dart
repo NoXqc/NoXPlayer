@@ -54,7 +54,7 @@ class WelcomeAddPlaylistScreen extends StatelessWidget {
                     textAlign: TextAlign.center,
                   ),
                   const Text(
-                    'Welcome to NoX TV Player',
+                    'Welcome to VesperTV',
                     style: TextStyle(
                         color: Colors.white,
                         fontSize: 22,

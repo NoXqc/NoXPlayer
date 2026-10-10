@@ -6,7 +6,7 @@ import '../models/cyberpunk_palette.dart';
 /// keys used by [StorageService]. Centralized here so key names never drift
 /// between the services that read and write them.
 class AppConstants {
-  static const String appName = 'NoXPlayer';
+  static const String appName = 'VesperTV';
   static const Color seedColor = Colors.deepPurple;
 
   /// Screen width above which "auto" layout mode switches to the TV UI.

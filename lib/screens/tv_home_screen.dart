@@ -1542,7 +1542,7 @@ class _TvHomeScreenState extends State<TvHomeScreen> with RouteAware {
         title: const Text('Exit and free up this login?'),
         content: const Text(
           'This disconnects your login here so it can be used on another '
-          'device, then fully closes NoXPlayer. Your channels/movies will '
+          'device, then fully closes VesperTV. Your channels/movies will '
           'need to reload next time you open it.',
         ),
         actions: [

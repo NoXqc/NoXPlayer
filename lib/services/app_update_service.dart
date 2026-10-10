@@ -44,7 +44,7 @@ class AppUpdateService {
   /// call volume (a user tapping "Check for Updates" occasionally), no
   /// token needed and none should be embedded in a distributed APK anyway.
   static const _apiUrl =
-      'https://api.github.com/repos/NoXqc/NoXPlayer/releases/latest';
+      'https://api.github.com/repos/NoXqc/VesperTV/releases/latest';
 
   /// Null if already up to date, the request fails, or the release has no
   /// `.apk` asset attached (shouldn't happen for a real release, but a

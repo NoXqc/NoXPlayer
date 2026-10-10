@@ -132,7 +132,7 @@ class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
           const Text(
             'TMDB (The Movie Database) is a free, independent movie and TV '
             'database — not your IPTV provider. Adding your own free TMDB '
-            'key lets NoXPlayer look up a title\'s actual real-world '
+            'key lets VesperTV look up a title\'s actual real-world '
             'release date, which powers two things: a "TMDB" sort option '
             'on any group\'s "Expand catalog" screen, and a more accurate '
             '"What\'s New" row (ordered by real release date instead of '
@@ -140,7 +140,7 @@ class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
           ),
           const SizedBox(height: 12),
           const Text(
-            'This is completely optional and free — NoXPlayer works '
+            'This is completely optional and free — VesperTV works '
             '100% without it. Without a key, sorting just falls back to '
             'whenever your provider added or updated each title, which is '
             'still available and works fine on its own.',
@@ -150,7 +150,7 @@ class _TmdbSettingsScreenState extends State<TmdbSettingsScreen> {
           const Text(
             'To get one: create a free account at themoviedb.org, then '
             'generate an API key under Settings > API (choose "Personal '
-            'use" when asked) and paste it below. NoXPlayer never collects '
+            'use" when asked) and paste it below. VesperTV never collects '
             'or shares it — it\'s stored only on this device.',
             style: TextStyle(fontSize: 12, color: Colors.white60),
           ),

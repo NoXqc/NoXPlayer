@@ -124,7 +124,7 @@ class _CheckUpdatesScreenState extends State<CheckUpdatesScreen> {
         builder: (context) => AlertDialog(
           title: const Text('Allow installing updates'),
           content: const Text(
-            'Android needs one-time permission for NoXPlayer to install an '
+            'Android needs one-time permission for VesperTV to install an '
             'update it downloaded. The next screen is Android\'s own '
             'settings — turn the toggle on, then come back here and press '
             'Install again.',

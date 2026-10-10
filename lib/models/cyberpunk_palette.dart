@@ -20,7 +20,7 @@ class CyberpunkPalette {
   final String label;
 
   /// Focus border/gradient/text accent, for every palette except
-  /// [isMinimal] ones, where these stay reserved for the NoXPlayer
+  /// [isMinimal] ones, where these stay reserved for the VesperTV
   /// wordmark specifically (see `_TvTopBar`) rather than the theme's own
   /// derived `ColorScheme.primary`, which [withTvThemeIfNeeded]
   /// substitutes a neutral white for instead.

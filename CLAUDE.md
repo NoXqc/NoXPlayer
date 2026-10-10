@@ -1,8 +1,8 @@
-# NoXPlayer — working notes for Claude Code
+# VesperTV — working notes for Claude Code
 
 Flutter IPTV player (M3U + Xtream Codes, XMLTV EPG) for Android phones, Android TV boxes
 (Formuler) and Fire Sticks. Package `com.nox.nox_iptv`. GPL-3.0, open source, always free.
-Repo: https://github.com/NoXqc/NoXPlayer — site: https://noxplayertv.com (GitHub Pages from `docs/`).
+Repo: https://github.com/NoXqc/VesperTV — site: https://vespertv.app (GitHub Pages from `docs/`).
 Community: Discord https://discord.gg/DDeGDHvFY.
 
 The owner tests on real devices and reports back with phone photos of the TV. Most bugs here
@@ -41,17 +41,17 @@ a substitute. Keep replies short; make routine calls yourself.
 2. Build, verify signature (above), **commit + push source first**.
 3. Update the latest GitHub release in place (don't cut a new release per test build):
    `gh release upload <tag> build/app/outputs/flutter-apk/app-release.apk --clobber`
-   then `gh release edit <tag> --tag <new-version> --title "NoXPlayer <ver>" --notes "..."`.
+   then `gh release edit <tag> --tag <new-version> --title "VesperTV <ver>" --notes "..."`.
    The tag must be renamed to the new version or Check for Updates says "up to date".
 4. **Gotcha:** `gh release edit --tag` leaves the old tag behind and the new tag lands on
    whatever `main` was — so commit/push before step 3, and confirm with
    `git ls-remote --tags origin <ver>`. To repoint a tag in place:
-   `gh api -X PATCH repos/NoXqc/NoXPlayer/git/refs/tags/<tag> -f sha=<full-sha> -F force=true`.
+   `gh api -X PATCH repos/NoXqc/VesperTV/git/refs/tags/<tag> -f sha=<full-sha> -F force=true`.
 5. Experimental builds → `--prerelease` (excluded from `/releases/latest`, so the Downloader code
    and Check for Updates skip them). Promote later with
    `gh release edit <tag> --prerelease=false --latest`.
 6. Verify what users actually get: download
-   `https://github.com/NoXqc/NoXPlayer/releases/latest/download/app-release.apk` and compare
+   `https://github.com/NoXqc/VesperTV/releases/latest/download/app-release.apk` and compare
    `sha256sum` with the local build; and `curl -sL http://go.aftvnews.com/1760256 | grep -o https://github[^"' ]*`
    must show that same URL. **Downloader code: `1760256`** (AFTVnews). Old code 7815226 was pinned to 3.20.1 — dead.
 Only release when the owner asks ("update the latest", "fully release").

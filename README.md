@@ -1,4 +1,4 @@
-# NoXPlayer
+# VesperTV
 
 An M3U / Xtream Codes (XC API) IPTV player for Android, with XMLTV EPG
 support. Built and tested on Android TV boxes (Formuler), Firesticks, and
@@ -7,7 +7,7 @@ phones.
 ## Download
 
 Grab the latest APK from the [Releases](../../releases) page —
-`NoXPlayer-universal.apk` works across phones, Android TV boxes, and
+`VesperTV-universal.apk` works across phones, Android TV boxes, and
 Firesticks. Install it directly, or side-load it via
 [Downloader](https://amzn.to/2GYuEz9) on Fire TV / Android TV.
 
