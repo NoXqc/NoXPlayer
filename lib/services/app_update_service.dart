@@ -18,7 +18,7 @@ class UpdateInfo {
   });
 
   /// The release's tag name (e.g. "3.19.1") — same scheme as the app's own
-  /// version, so it's directly comparable via [_isNewer].
+  /// version, so it's directly comparable via [_isDifferent].
   final String version;
   final String releaseNotes;
 
@@ -110,7 +110,7 @@ class AppUpdateService {
     if (latestVersion == null || latestVersion.isEmpty) return null;
 
     final packageInfo = await PackageInfo.fromPlatform();
-    if (!_isNewer(latestVersion, packageInfo.version)) return null;
+    if (!_isDifferent(latestVersion, packageInfo.version)) return null;
 
     // Windows has no package-installer equivalent to hand an `.apk` to —
     // its release asset is a plain `.zip` of the built Release folder
@@ -135,18 +135,21 @@ class AppUpdateService {
     );
   }
 
-  /// Compares two "major.minor.patch"-shaped version strings numerically,
-  /// not lexicographically — a plain string compare would wrongly rank
-  /// "3.9.2" above "3.10.1" (since '9' > '1' as characters). Treats a
-  /// missing/non-numeric segment as 0, so a differently-shaped tag (e.g.
-  /// "3.19" vs "3.19.1") still compares sensibly instead of throwing.
-  bool _isNewer(String remote, String local) {
+  /// True when the release's tag names a different version from the
+  /// installed one — deliberately "different", not "newer". The project was
+  /// renamed to VesperTV and its versioning restarts at 1.0.0 (lower than
+  /// the old 3.x numbers), so a strict "newer" test would never offer that
+  /// release. `/releases/latest` only ever returns the one current release,
+  /// so "different" still can't offer anything stale. Compares numerically
+  /// per segment and treats a missing/non-numeric segment as 0, so a
+  /// differently-shaped tag (e.g. "1.0" vs "1.0.0") counts as the same.
+  bool _isDifferent(String remote, String local) {
     final r = _versionParts(remote);
     final l = _versionParts(local);
     for (var i = 0; i < r.length || i < l.length; i++) {
       final rPart = i < r.length ? r[i] : 0;
       final lPart = i < l.length ? l[i] : 0;
-      if (rPart != lPart) return rPart > lPart;
+      if (rPart != lPart) return true;
     }
     return false;
   }
