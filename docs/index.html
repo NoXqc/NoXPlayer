@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>VesperTV — Always free, Always open source IPTV player for Android TV</title>
 <meta name="description" content="VesperTV is a free, open-source IPTV player for Android TV boxes, Fire Sticks and phones. Bring your own Xtream Codes login or M3U playlist — get a real TV guide, favourites, resume and a remote-first interface. GPL-3.0, no ads, no tracking.">
-<meta name="theme-color" content="#09070E">
+<meta name="theme-color" content="#070608">
 <meta name="color-scheme" content="dark">
 
 <meta property="og:type" content="website">
@@ -14,7 +14,7 @@
 <meta property="og:image" content="assets/shot-live.png">
 <meta name="twitter:card" content="summary_large_image">
 
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%231A0B2E'/%3E%3Cstop offset='.45' stop-color='%237C3AED'/%3E%3Cstop offset='1' stop-color='%23E91E8C'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23g)'/%3E%3Cpath d='M14 40V16h5l9 14V16h5v24h-5l-9-14v14z' fill='%23F4F1F8'/%3E%3Ccircle cx='45' cy='45' r='11' fill='%23F0257F'/%3E%3Cpath d='M41 39l12 6-12 6z' fill='%23FFF'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%230B0906'/%3E%3Cstop offset='.55' stop-color='%23B8860B'/%3E%3Cstop offset='1' stop-color='%23F0C75E'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='15' fill='url(%23g)'/%3E%3Cpath d='M14 40V16h5l9 14V16h5v24h-5l-9-14v14z' fill='%23FFF6DD'/%3E%3Ccircle cx='45' cy='45' r='11' fill='%23070608'/%3E%3Cpath d='M41 39l12 6-12 6z' fill='%23F0C75E'/%3E%3C/svg%3E">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,24 +30,24 @@
 
 :root{
   /* Surfaces */
-  --bg:        #09070E;
-  --bg-lift:   #0E0A16;
+  --bg:        #070608;
+  --bg-lift:   #0D0A08;
   --panel:     rgba(255,255,255,.035);
   --panel-2:   rgba(255,255,255,.06);
   --hair:      rgba(255,255,255,.10);
   --hair-2:    rgba(255,255,255,.18);
 
   /* Ink */
-  --ink:       #F4F1F8;
-  --ink-2:     #BDB4CC;
-  --ink-3:     #8C8399;
+  --ink:       #F6F1E7;
+  --ink-2:     #C4BAA6;
+  --ink-3:     #918771;
 
   /* Brand — app tokens, lifted for contrast on near-black */
-  --violet:      #7C3AED;   /* app primary */
-  --magenta:     #E91E8C;   /* app secondary */
-  --violet-lift: #A78BFA;   /* text-safe violet */
-  --pink-lift:   #F472B6;   /* text-safe magenta */
-  --magenta-dp:  #C81E7A;   /* fill end: keeps white text >=4.5:1 */
+  --violet:      #D4A017;   /* gold — brand primary */
+  --magenta:     #E8892B;   /* amber — brand secondary */
+  --violet-lift: #F0C75E;   /* text-safe gold */
+  --pink-lift:   #FFD98A;   /* text-safe pale gold */
+  --magenta-dp:  #C9781A;   /* fill end: dark text stays >=4.5:1 */
 
   --grad-text: linear-gradient(100deg, var(--violet-lift), var(--pink-lift));
   --grad-fill: linear-gradient(var(--ang, 100deg), var(--violet), var(--magenta-dp));
@@ -126,7 +126,7 @@ code,kbd,.mono{
 .skip{
   position:absolute; left:-9999px; top:0;
   z-index:100;
-  background:var(--violet); color:#fff;
+  background:var(--violet); color:#1A1205;
   padding:12px 18px; border-radius:0 0 var(--r-sm) 0;
   font-weight:600;
 }
@@ -217,10 +217,10 @@ code,kbd,.mono{
 .btn-primary{
   --ang:100deg;
   background:var(--grad-fill);
-  color:#fff;
-  box-shadow:0 1px 0 rgba(255,255,255,.22) inset, 0 12px 34px -12px rgba(233,30,140,.65);
+  color:#1A1205;
+  box-shadow:0 1px 0 rgba(255,255,255,.35) inset, 0 12px 34px -12px rgba(232,160,43,.6);
 }
-.btn-primary:hover{ color:#fff; transform:translateY(-2px); box-shadow:0 1px 0 rgba(255,255,255,.28) inset, 0 20px 44px -14px rgba(233,30,140,.8); }
+.btn-primary:hover{ color:#1A1205; transform:translateY(-2px); box-shadow:0 1px 0 rgba(255,255,255,.28) inset, 0 20px 44px -14px rgba(240,180,60,.75); }
 .btn-ghost{
   background:var(--panel);
   border-color:var(--hair-2);
@@ -241,13 +241,49 @@ code,kbd,.mono{
 .hero::before{
   content:"";
   position:absolute; z-index:-1;
-  left:50%; top:-32vh;
-  width:min(1500px,190vw); aspect-ratio:1;
+  left:50%; top:-46vh;
+  width:min(1600px,200vw); aspect-ratio:1;
   transform:translateX(-50%);
   background:
-    radial-gradient(42% 42% at 38% 42%, rgba(124,58,237,.30), transparent 68%),
-    radial-gradient(38% 38% at 66% 56%, rgba(233,30,140,.24), transparent 70%);
+    radial-gradient(34% 34% at 50% 50%, rgba(255,217,138,.20), rgba(232,137,43,.10) 45%, transparent 70%),
+    radial-gradient(52% 52% at 50% 50%, rgba(212,160,23,.12), transparent 72%);
   pointer-events:none;
+}
+/* Evening sky: fading sun rays fanning from above the fold + a sparse star field */
+.sky{ position:absolute; inset:0; z-index:-1; pointer-events:none; overflow:hidden; }
+.sky::before{
+  content:"";
+  position:absolute; left:50%; top:-60%;
+  width:min(1800px,220vw); aspect-ratio:1;
+  transform:translateX(-50%);
+  background:repeating-conic-gradient(from 0deg at 50% 50%,
+    rgba(255,214,130,.085) 0deg 2.5deg, transparent 2.5deg 12deg);
+  -webkit-mask-image:radial-gradient(closest-side, #000 0%, transparent 58%);
+  mask-image:radial-gradient(closest-side, #000 0%, transparent 58%);
+  opacity:.8;
+}
+.sky::after{
+  content:"";
+  position:absolute; inset:0;
+  background-image:
+    radial-gradient(2.4px 2.4px at 8% 22%, #FFE7A8 50%, transparent 51%),
+    radial-gradient(1.7px 1.7px at 17% 61%, #FFD98A 50%, transparent 51%),
+    radial-gradient(2.7px 2.7px at 27% 14%, #FFF1C9 50%, transparent 51%),
+    radial-gradient(1.7px 1.7px at 36% 74%, #F0C75E 50%, transparent 51%),
+    radial-gradient(2.2px 2.2px at 46% 9%, #FFE7A8 50%, transparent 51%),
+    radial-gradient(1.7px 1.7px at 58% 52%, #FFD98A 50%, transparent 51%),
+    radial-gradient(2.7px 2.7px at 67% 18%, #FFF1C9 50%, transparent 51%),
+    radial-gradient(1.7px 1.7px at 76% 68%, #F0C75E 50%, transparent 51%),
+    radial-gradient(2.4px 2.4px at 85% 27%, #FFE7A8 50%, transparent 51%),
+    radial-gradient(1.7px 1.7px at 93% 55%, #FFD98A 50%, transparent 51%),
+    radial-gradient(2.0px 2.0px at 12% 86%, #FFE7A8 50%, transparent 51%),
+    radial-gradient(2.0px 2.0px at 72% 90%, #FFD98A 50%, transparent 51%);
+  -webkit-mask-image:linear-gradient(180deg,#000 0%,#000 55%,transparent 100%);
+  mask-image:linear-gradient(180deg,#000 0%,#000 55%,transparent 100%);
+}
+@media (prefers-reduced-motion: no-preference){
+  .sky::after{ animation:twinkle 6s ease-in-out infinite alternate; }
+  @keyframes twinkle{ from{ opacity:.55; } to{ opacity:1; } }
 }
 .hero::after{
   content:"";
@@ -337,7 +373,7 @@ h1 .grad{
   content:""; position:absolute; left:22%; top:-6px; bottom:0; width:2px;
   border-radius:2px;
   background:linear-gradient(180deg,var(--pink-lift),var(--violet));
-  box-shadow:0 0 14px 1px rgba(244,114,182,.55);
+  box-shadow:0 0 14px 1px rgba(255,217,138,.55);
 }
 
 /* ============================ Screenshots ============================ */
@@ -346,8 +382,8 @@ h1 .grad{
   position:relative;
   border-radius:var(--r-lg);
   padding:7px;
-  background:linear-gradient(160deg, rgba(167,139,250,.30), rgba(244,114,182,.16) 45%, rgba(255,255,255,.05));
-  box-shadow:0 40px 90px -40px rgba(124,58,237,.55), 0 2px 0 rgba(255,255,255,.05) inset;
+  background:linear-gradient(160deg, rgba(240,199,94,.30), rgba(255,217,138,.16) 45%, rgba(255,255,255,.05));
+  box-shadow:0 40px 90px -40px rgba(212,160,23,.55), 0 2px 0 rgba(255,255,255,.05) inset;
 }
 .shot-frame img{
   display:block; width:100%; height:auto;
@@ -355,7 +391,7 @@ h1 .grad{
   object-fit:cover;
   border-radius:calc(var(--r-lg) - 8px);
   background:
-    linear-gradient(115deg, #17102A 0%, #1E1233 48%, #2A1130 100%);
+    linear-gradient(115deg, #14100A 0%, #1C150B 48%, #241608 100%);
   border:1px solid rgba(0,0,0,.5);
 }
 .shot figcaption{
@@ -453,8 +489,8 @@ h3{ font-size:1.22rem; letter-spacing:-.015em; font-stretch:92%; margin-bottom:9
   padding:28px;
 }
 .install.featured{
-  border-color:rgba(167,139,250,.45);
-  box-shadow:0 0 0 1px rgba(167,139,250,.12), 0 30px 70px -40px rgba(124,58,237,.7);
+  border-color:rgba(240,199,94,.45);
+  box-shadow:0 0 0 1px rgba(240,199,94,.12), 0 30px 70px -40px rgba(212,160,23,.7);
 }
 .step-no{
   font-family:"JetBrains Mono",monospace; font-size:.76rem; font-weight:700;
@@ -470,8 +506,8 @@ h3{ font-size:1.22rem; letter-spacing:-.015em; font-stretch:92%; margin-bottom:9
   display:flex; align-items:center; gap:12px; flex-wrap:wrap;
   margin-top:20px; padding:16px 18px;
   border-radius:var(--r);
-  background:linear-gradient(120deg, rgba(124,58,237,.18), rgba(233,30,140,.14));
-  border:1px solid rgba(167,139,250,.35);
+  background:linear-gradient(120deg, rgba(212,160,23,.18), rgba(232,137,43,.14));
+  border:1px solid rgba(240,199,94,.35);
 }
 .codebox .lbl{ font-size:.72rem; letter-spacing:.13em; text-transform:uppercase; color:var(--ink-2); width:100%; }
 .codebox .val{
@@ -504,8 +540,8 @@ h3{ font-size:1.22rem; letter-spacing:-.015em; font-stretch:92%; margin-bottom:9
   border-top:1px solid var(--hair);
   border-bottom:1px solid var(--hair);
   background:
-    radial-gradient(70% 130% at 50% 0%, rgba(124,58,237,.20), transparent 70%),
-    radial-gradient(60% 120% at 50% 100%, rgba(233,30,140,.16), transparent 70%);
+    radial-gradient(70% 130% at 50% 0%, rgba(212,160,23,.20), transparent 70%),
+    radial-gradient(60% 120% at 50% 100%, rgba(232,137,43,.16), transparent 70%);
 }
 .motto .display{
   font-size:clamp(2.2rem,7vw,4.6rem);
@@ -658,6 +694,7 @@ details .ans p + p{ margin-top:12px; }
 
   <!-- ==================== HERO ==================== -->
   <section class="hero" id="top">
+    <div class="sky" aria-hidden="true"></div>
     <div class="wrap">
       <ul class="chips" aria-label="At a glance">
         <li class="chip">GPL-3.0</li>
