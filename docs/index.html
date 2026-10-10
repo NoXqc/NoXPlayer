@@ -403,6 +403,49 @@ h1 .grad{
   content:""; width:16px; height:1px; background:var(--hair-2); flex:none;
 }
 
+
+/* ============================ Gallery carousel ============================ */
+.gallery{ padding:clamp(34px,6vw,64px) 0 clamp(40px,7vw,80px); }
+.gal-head{ display:flex; align-items:end; justify-content:space-between; gap:16px; margin-bottom:18px; }
+.gal-head h2{ font-size:clamp(1.5rem,3.4vw,2.2rem); }
+.gal-head p{ color:var(--ink-3); font-size:.92rem; margin-top:6px; }
+.gal-btns{ display:flex; gap:10px; flex:none; }
+.gal-btn{
+  width:48px; height:48px; border-radius:50%;
+  display:grid; place-items:center;
+  background:var(--panel); border:1px solid var(--hair-2); color:var(--ink);
+  cursor:pointer; transition:background-color .2s, border-color .2s, transform .2s var(--ease), opacity .2s;
+}
+.gal-btn:hover{ background:var(--panel-2); border-color:rgba(240,199,94,.55); }
+.gal-btn:active{ transform:scale(.94); }
+.gal-btn[disabled]{ opacity:.35; cursor:default; }
+.gal-btn svg{ width:20px; height:20px; }
+.gal-track{
+  list-style:none; margin:0; padding:6px var(--pad) 10px;
+  display:flex; gap:clamp(14px,2.4vw,26px);
+  overflow-x:auto; overscroll-behavior-x:contain;
+  scroll-snap-type:x mandatory;
+  scroll-padding-inline:var(--pad);
+  scrollbar-width:none;
+  cursor:grab;
+  -webkit-overflow-scrolling:touch;
+}
+.gal-track::-webkit-scrollbar{ display:none; }
+.gal-track.dragging{ cursor:grabbing; scroll-snap-type:none; scroll-behavior:auto; }
+.gal-track.dragging img{ pointer-events:none; }
+.gal-track:focus-visible{ outline-offset:-2px; }
+.gal-item{ flex:0 0 min(86%, 940px); scroll-snap-align:center; }
+.gal-item .shot-frame img{ user-select:none; -webkit-user-drag:none; }
+.gal-dots{ display:flex; justify-content:center; gap:9px; margin-top:16px; }
+.gal-dot{
+  width:9px; height:9px; padding:0; border-radius:50%;
+  border:0; background:var(--hair-2); cursor:pointer;
+  transition:width .25s var(--ease), background-color .2s;
+}
+.gal-dot[aria-current="true"]{ width:26px; border-radius:6px; background:var(--violet-lift); }
+@media (max-width:640px){ .gal-btns{ display:none; } .gal-item{ flex-basis:88%; } }
+@media (prefers-reduced-motion: reduce){ .gal-track{ scroll-behavior:auto; } }
+
 /* ============================ Sections ============================ */
 section{ position:relative; }
 .sec{ padding:clamp(62px,10vw,112px) 0; }
@@ -752,6 +795,89 @@ details .ans p + p{ margin-top:12px; }
     </div>
   </section>
 
+
+  <!-- ==================== GALLERY ==================== -->
+  <section class="gallery" id="screens" aria-label="Screenshots">
+    <div class="wrap">
+      <div class="gal-head">
+        <div>
+          <h2>See it in action</h2>
+          <p>Swipe or drag through the screens — real captures from a Formuler box.</p>
+        </div>
+        <div class="gal-btns">
+          <button class="gal-btn" type="button" id="galPrev" aria-label="Previous screenshot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></button>
+          <button class="gal-btn" type="button" id="galNext" aria-label="Next screenshot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></button>
+        </div>
+      </div>
+    </div>
+    <ul class="gal-track" id="galTrack" tabindex="0" role="region" aria-roledescription="carousel" aria-label="VesperTV screenshots">
+        <li class="gal-item" role="group" aria-roledescription="slide" aria-label="1 of 7">
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-guide.png" width="1600" height="900" loading="eager" decoding="async" draggable="false"
+                   alt="VesperTV's timeline guide: a channel list down the left beside a scrolling programme grid showing several hours of schedule, with the focused programme's title, time range and description above it.">
+            </div>
+            <figcaption>Timeline — a full schedule grid, hours at a glance</figcaption>
+          </figure>
+        </li>
+        <li class="gal-item" role="group" aria-roledescription="slide" aria-label="2 of 7">
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-live.png" width="1600" height="900" loading="lazy" decoding="async" draggable="false"
+                   alt="VesperTV's now/next guide: a compact channel list with each row's current programme, and the focused channel's full details underneath.">
+            </div>
+            <figcaption>Now/next — a compact list, one programme at a time</figcaption>
+          </figure>
+        </li>
+        <li class="gal-item" role="group" aria-roledescription="slide" aria-label="3 of 7">
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-movies.png" width="1600" height="900" loading="lazy" decoding="async" draggable="false"
+                   alt="VesperTV movies screen: a hero banner, a category list along the side and a row of film posters with rating badges.">
+            </div>
+            <figcaption>Movies — posters, categories and provider ratings</figcaption>
+          </figure>
+        </li>
+        <li class="gal-item" role="group" aria-roledescription="slide" aria-label="4 of 7">
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-expand-catalog.jpg" width="1600" height="900" loading="lazy" decoding="async" draggable="false"
+                   alt="VesperTV's Expand Catalog screen: a full poster grid for one VOD category, showing many movie posters with rating badges.">
+            </div>
+            <figcaption>Expand catalog — a whole category as one full-screen grid</figcaption>
+          </figure>
+        </li>
+        <li class="gal-item" role="group" aria-roledescription="slide" aria-label="5 of 7">
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-group-menu.png" width="1600" height="900" loading="lazy" decoding="async" draggable="false"
+                   alt="VesperTV's group menu opened over the movies screen, offering Expand catalog, Remove from Favourites, Hide Group and Cancel.">
+            </div>
+            <figcaption>Hold Select on a group — expand, favourite or hide</figcaption>
+          </figure>
+        </li>
+        <li class="gal-item" role="group" aria-roledescription="slide" aria-label="6 of 7">
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-add.png" width="1600" height="900" loading="lazy" decoding="async" draggable="false"
+                   alt="VesperTV's Add Playlist screen: three source options on the left, a name field and URL fields in the middle, and an Add Playlist button on the right.">
+            </div>
+            <figcaption>Adding a playlist — M3U URL, Xtream Codes login, or Smart Add</figcaption>
+          </figure>
+        </li>
+        <li class="gal-item" role="group" aria-roledescription="slide" aria-label="7 of 7">
+          <figure class="shot">
+            <div class="shot-frame">
+              <img src="assets/shot-settings.png" width="1600" height="900" loading="lazy" decoding="async" draggable="false"
+                   alt="VesperTV's settings screen laid out for a remote: large, widely spaced rows for Add Playlist, Playlist Manager, Profiles, Theme, EPG and Check for Updates.">
+            </div>
+            <figcaption>Every screen sized for a D-pad and a sofa</figcaption>
+          </figure>
+        </li>
+    </ul>
+    <div class="gal-dots" id="galDots"><button class="gal-dot" type="button" aria-label="Go to screenshot 1"></button><button class="gal-dot" type="button" aria-label="Go to screenshot 2"></button><button class="gal-dot" type="button" aria-label="Go to screenshot 3"></button><button class="gal-dot" type="button" aria-label="Go to screenshot 4"></button><button class="gal-dot" type="button" aria-label="Go to screenshot 5"></button><button class="gal-dot" type="button" aria-label="Go to screenshot 6"></button><button class="gal-dot" type="button" aria-label="Go to screenshot 7"></button></div>
+  </section>
+
   <!-- ==================== REQUIREMENTS ==================== -->
   <section class="sec" id="requirements">
     <div class="wrap">
@@ -847,13 +973,6 @@ details .ans p + p{ margin-top:12px; }
             </li>
           </ul>
 
-          <figure class="shot">
-            <div class="shot-frame">
-              <img src="assets/shot-add.png" width="1600" height="900" loading="lazy" decoding="async"
-                   alt="VesperTV's Add Playlist screen: a name field and three source options — M3U URL, Xtream Codes login, and Smart Add — with fields for the playlist URL and an optional XMLTV guide URL.">
-            </div>
-            <figcaption>Adding a playlist — M3U URL, Xtream Codes login, or Smart Add</figcaption>
-          </figure>
         </article>
 
         <!-- 02 -->
@@ -864,25 +983,8 @@ details .ans p + p{ margin-top:12px; }
             <p>The part most IPTV apps either skip or render unreadably.</p>
           </div>
 
-          <h4 style="font-size:1.02rem; font-weight:600; letter-spacing:-.01em; color:var(--ink); margin:0 0 16px;">
-            Two guide layouts — more control over how you browse
-          </h4>
 
-          <figure class="shot">
-            <div class="shot-frame">
-              <img src="assets/shot-live.png" width="1600" height="900" loading="lazy" decoding="async"
-                   alt="VesperTV's now/next guide: a compact channel list with each row's current programme and a progress bar, and the focused channel's full details underneath.">
-            </div>
-            <figcaption>Now/next — a compact list, one programme at a time</figcaption>
-          </figure>
 
-          <figure class="shot">
-            <div class="shot-frame">
-              <img src="assets/shot-guide.png" width="1600" height="900" loading="lazy" decoding="async"
-                   alt="VesperTV's timeline guide: a channel list down the left beside a scrolling programme grid showing several hours of schedule, with the currently-focused programme's title, time range and description above it.">
-            </div>
-            <figcaption>Timeline — a full schedule grid, hours at a glance</figcaption>
-          </figure>
 
           <ul class="feat-list" style="margin-top:34px">
             <li>
@@ -953,13 +1055,6 @@ details .ans p + p{ margin-top:12px; }
             </li>
           </ul>
 
-          <figure class="shot">
-            <div class="shot-frame">
-              <img src="assets/shot-movies.png" width="1600" height="900" loading="lazy" decoding="async"
-                   alt="VesperTV movies screen: a grid of film poster artwork with rating badges and a category list along the side.">
-            </div>
-            <figcaption>Movies — poster grid, categories and provider ratings</figcaption>
-          </figure>
         </article>
 
         <!-- 04 -->
@@ -1041,13 +1136,6 @@ details .ans p + p{ margin-top:12px; }
         </ul>
       </div>
 
-      <figure class="shot reveal">
-        <div class="shot-frame">
-          <img src="assets/shot-settings.png" width="1600" height="900" loading="lazy" decoding="async"
-               alt="VesperTV's settings screen laid out for a remote: large, widely spaced rows for Add Playlist, Playlist Manager, Theme, EPG and Check for Updates, each with an icon and a short description.">
-        </div>
-        <figcaption>Every screen sized for a D-pad and a sofa</figcaption>
-      </figure>
     </div>
   </section>
 
@@ -1446,13 +1534,6 @@ details .ans p + p{ margin-top:12px; }
               a big category where scrolling sideways would take a while. Press Back to return
               to normal browsing.
             </p>
-            <figure class="shot">
-              <div class="shot-frame">
-                <img src="assets/shot-expand-catalog.jpg" width="1600" height="900" loading="lazy" decoding="async"
-                     alt="VesperTV's Expand Catalog screen: a full poster grid for one VOD category, showing many movie posters with rating badges.">
-              </div>
-              <figcaption>Expand catalog — a whole category as one full-screen grid</figcaption>
-            </figure>
           </div>
         </details>
 
@@ -1668,6 +1749,55 @@ details .ans p + p{ margin-top:12px; }
 </footer>
 
 <script>
+/* Screenshot carousel: native scroll-snap + arrows, dots, keys and mouse drag */
+(function(){
+  var track=document.getElementById('galTrack'); if(!track) return;
+  var items=[].slice.call(track.children), dots=[].slice.call(document.querySelectorAll('#galDots .gal-dot'));
+  var prev=document.getElementById('galPrev'), next=document.getElementById('galNext');
+  function idx(){
+    var c=track.scrollLeft+track.clientWidth/2, best=0, d=1e9;
+    items.forEach(function(el,i){ var m=el.offsetLeft+el.offsetWidth/2, x=Math.abs(m-c); if(x<d){d=x;best=i;} });
+    return best;
+  }
+  function go(i){
+    i=Math.max(0,Math.min(items.length-1,i));
+    var el=items[i];
+    track.scrollTo({left:el.offsetLeft-(track.clientWidth-el.offsetWidth)/2,behavior:'smooth'});
+  }
+  function sync(){
+    var i=idx();
+    dots.forEach(function(d,n){ d.setAttribute('aria-current', n===i?'true':'false'); });
+    if(prev) prev.disabled=(i===0);
+    if(next) next.disabled=(i===items.length-1);
+  }
+  track.addEventListener('scroll',function(){ window.requestAnimationFrame(sync); },{passive:true});
+  window.addEventListener('resize',sync);
+  if(prev) prev.addEventListener('click',function(){ go(idx()-1); });
+  if(next) next.addEventListener('click',function(){ go(idx()+1); });
+  dots.forEach(function(d,n){ d.addEventListener('click',function(){ go(n); }); });
+  track.addEventListener('keydown',function(e){
+    if(e.key==='ArrowRight'){ e.preventDefault(); go(idx()+1); }
+    else if(e.key==='ArrowLeft'){ e.preventDefault(); go(idx()-1); }
+  });
+  var down=false,sx=0,sl=0,moved=false;
+  track.addEventListener('pointerdown',function(e){
+    if(e.pointerType!=='mouse'||e.button!==0) return;
+    down=true; moved=false; sx=e.clientX; sl=track.scrollLeft;
+  });
+  window.addEventListener('pointermove',function(e){
+    if(!down) return;
+    var dx=e.clientX-sx;
+    if(!moved && Math.abs(dx)>4){ moved=true; track.classList.add('dragging'); }
+    if(moved) track.scrollLeft=sl-dx;
+  });
+  window.addEventListener('pointerup',function(){
+    if(!down) return;
+    down=false;
+    if(moved){ track.classList.remove('dragging'); go(idx()); }
+  });
+  sync();
+})();
+
 (function () {
   "use strict";
 
