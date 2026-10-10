@@ -7,9 +7,20 @@ phones.
 ## Download
 
 Grab the latest APK from the [Releases](../../releases) page —
-`VesperTV-universal.apk` works across phones, Android TV boxes, and
+`app-release.apk` works across phones, Android TV boxes, and
 Firesticks. Install it directly, or side-load it via
 [Downloader](https://amzn.to/2GYuEz9) on Fire TV / Android TV.
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/assets/shot-guide.png" width="49%" alt="Timeline guide">
+  <img src="docs/assets/shot-live.png" width="49%" alt="Live guide with now/next details">
+  <img src="docs/assets/shot-movies.png" width="49%" alt="Movies browse with ratings">
+  <img src="docs/assets/shot-expand-catalog.jpg" width="49%" alt="Expanded movie catalog">
+  <img src="docs/assets/shot-add.png" width="49%" alt="Add Playlist">
+  <img src="docs/assets/shot-group-menu.png" width="49%" alt="Hold Select on a group: expand catalog, favourite, hide">
+</p>
 
 ## Features
 
@@ -20,7 +31,7 @@ Firesticks. Install it directly, or side-load it via
 - Favorites (channels and groups) and group management (hide/show categories)
 - Full remote/D-pad navigation on TV boxes and Firesticks, touch-first layout
   on phones
-- Cyberpunk-styled theming with selectable duo-tone color palettes
+- Theming with selectable palettes, including a black-and-gold "Dark / Gold" look
 
 ## Setup
 
