@@ -1,7 +1,7 @@
 name: nox_iptv
 description: "VesperTV - an M3U/EPG IPTV player for Android phones, boxes, and Firesticks."
 publish_to: 'none'
-version: 3.53.0+182
+version: 3.53.1+183
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -90,9 +90,9 @@ flutter:
 # how those source images were built). Run with `dart run
 # flutter_launcher_icons`. The Android TV banner is separate — Android TV's
 # leanback launcher has no adaptive-icon equivalent, so that's just a plain
-# drawable replaced by hand (see android/app/src/main/res/drawable*/banner.png).
+# drawable replaced by hand (see android/app/src/main/res/drawable*/vespertv_banner.png).
 flutter_launcher_icons:
-  android: "ic_launcher"
+  android: "vespertv_launcher"
   ios: true
   image_path: "assets/icon/icon_flat.png"
   adaptive_icon_background: "assets/icon/icon_background.png"

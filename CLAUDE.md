@@ -95,7 +95,7 @@ outward-facing** (deleting releases, force-pushes, posting). Only commit/release
   `apksigner verify --print-certs app-release.apk` → SHA-256 must be
   `c92a346ac5b6191a373b3572fa0fbd72abdd5f64db497bd321617b8cc4562431`.
 - Never commit the keystore/passwords. Losing the key = existing installs can never update.
-- Android requires `versionCode` (the `+N` in `pubspec.yaml`, currently **+182**) to never go
+- Android requires `versionCode` (the `+N` in `pubspec.yaml`, currently **+183**) to never go
   down, even if the visible version resets. Always bump N on every build you intend to install.
 
 ## 6. Release workflow
@@ -152,10 +152,16 @@ Only release when the owner asks ("update the latest", "cut it", "fully release"
 
 ## 8. Branding assets & website
 - **Logo:** `python assets/icon/gen_icon.py` (Pillow) regenerates `icon_flat/background/foreground.png`,
-  `tv_banner.png` and the five `android/app/src/main/res/drawable-*/banner.png`. Then
+  `tv_banner.png` and the five `android/app/src/main/res/drawable-*/vespertv_banner.png`. Then
   `dart run flutter_launcher_icons` for launcher icons (Android adaptive, iOS, Windows `.ico`, web,
   macOS). The splash and welcome screen load `assets/icon/icon_flat.png`. Revert incidental
   line-ending-only diffs the icon tool causes (e.g. `ios/Runner.xcodeproj/project.pbxproj`).
+  **Android icon/banner resource names were changed on purpose** (3.53.1) to
+  `@mipmap/vespertv_launcher` and `@drawable/vespertv_banner` (pubspec `flutter_launcher_icons.android:
+  "vespertv_launcher"`): the Fire TV launcher kept showing the old purple "N" tile after updating
+  to the new artwork, even after clearing caches and restarting, because it caches the icon per
+  resource. A new resource name forces a fresh load. If the artwork changes again, rename again
+  (e.g. `vespertv_launcher2`) rather than only replacing the PNGs.
 - **Palettes:** the default fresh-install theme is **Platinum** (`id: 'minimal'`, first entry of
   `cyberpunkPalettes`); its `primary`/`secondary` only drive the wordmark and small accent bars and
   are now brand gold `F0C75E`/`C9781A` (they used to be the old purple/magenta — that was the bug
@@ -302,9 +308,10 @@ rejected (HDR + Android-TV hardware-decode risk).
 
 ## 13. Status & open items (as of 2026-10-10)
 - **Shipped:** rebrand to VesperTV, logo, gold site with carousel + Windows section, release
-  **3.53.0** (`+182`; the "bridge" release; its notes carry the rename TL;DR).
+  **3.53.1** (`+183`; 3.53.0 was the "bridge" release carrying the rename TL;DR; 3.53.1 renamed the
+  Android icon resources to beat the Fire TV icon cache).
 - **Planned, waiting on the owner's go:** a clean **1.0.0** release — delete the old releases
-  (`gh release delete <tag> --cleanup-tag`), set `pubspec` to `1.0.0+N` with **N > 182**, keep the
+  (`gh release delete <tag> --cleanup-tag`), set `pubspec` to `1.0.0+N` with **N > 183**, keep the
   rename TL;DR in the notes. Do this only after people have had time to update to 3.53.0 (anyone
   still on ≤3.52.3 can't see 1.0.0 and must reinstall from vespertv.app), and **ask before deleting**.
 - **Ideas discussed, not started:** Sports tab with live scores (needs a free API key, BYO; hard

@@ -13,8 +13,8 @@
     <application
         android:label="VesperTV"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:banner="@drawable/banner"
+        android:icon="@mipmap/vespertv_launcher"
+        android:banner="@drawable/vespertv_banner"
         android:usesCleartextTraffic="true"
         android:largeHeap="true">
         <!-- Impeller (Vulkan) crashes on startup on several budget Amlogic/Mali

@@ -112,7 +112,7 @@ def main():
     ban.save("assets/icon/tv_banner.png")
     for dens, (w, h) in {"mdpi": (160, 90), "hdpi": (240, 135), "xhdpi": (320, 180),
                          "xxhdpi": (480, 270), "xxxhdpi": (640, 360)}.items():
-        path = f"android/app/src/main/res/drawable-{dens}/banner.png"
+        path = f"android/app/src/main/res/drawable-{dens}/vespertv_banner.png"
         try:
             cur = Image.open(path).size
         except OSError:
