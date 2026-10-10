@@ -8,6 +8,7 @@ import 'package:video_player_hdr/video_player_hdr.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 import '../models/channel.dart';
+import '../services/epg_service.dart';
 import '../services/playlist_manager.dart';
 import '../widgets/hold_to_activate.dart';
 import '../widgets/tv_menu_tile.dart';
@@ -78,6 +79,12 @@ class MultiviewScreen extends StatefulWidget {
 /// instead of toggling it in place whenever its role needs to change,
 /// specifically so this is never called against a controller that's
 /// already stable/playing.
+///
+/// Re-confirmed directly a second time: tried again on the theory that
+/// recent stability gains pointed more at the upstream provider than this
+/// mechanism, but toggling in place made things measurably *worse* (worse
+/// stalling, and audio sometimes not activating on switch at all) — not
+/// provider-related after all. Leave this alone.
 Future<void> _setAudioEnabled(
     VideoPlayerHdrController controller, bool enabled) async {
   final platform = VideoPlayerPlatform.instance;
@@ -246,10 +253,13 @@ class _MultiviewScreenState extends State<MultiviewScreen> {
 
   /// Recreates both the newly- and previously-active cells via [_assign]
   /// rather than toggling either one's audio state in place — see this
-  /// file's own doc comment on `_setAudioEnabled` for why. Costs a brief
-  /// reconnect/rebuffer on both instead of an instant mute/unmute, the
-  /// accepted trade-off for never touching an already-stable cell's audio
-  /// state again. A no-op if [index] is already the active cell.
+  /// file's own doc comment on `_setAudioEnabled` for why, confirmed
+  /// twice now (an in-place attempt was re-tried directly and made things
+  /// measurably worse: worse stalling, and audio sometimes not activating
+  /// on switch at all). Costs a brief reconnect/rebuffer on both instead
+  /// of an instant mute/unmute, the accepted trade-off for never touching
+  /// an already-stable cell's audio state again. A no-op if [index] is
+  /// already the active cell.
   Future<void> _setActive(int index) async {
     final newChannel = _cells[index].channel;
     if (newChannel == null) return;
@@ -914,10 +924,17 @@ class _ChannelPickerScreenState extends State<_ChannelPickerScreen> {
     return base.toList();
   }
 
+  static String _hhmm(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final filtered = _filteredChannels;
+    // What's airing now under each channel, same lookup the player's own
+    // remaining-time label uses — epgId (rawId or a manual override), not
+    // the composite `id`.
+    final epg = context.watch<EpgService>();
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -1005,7 +1022,11 @@ class _ChannelPickerScreenState extends State<_ChannelPickerScreen> {
                               itemCount: filtered.length,
                               itemBuilder: (context, i) {
                                 final c = filtered[i];
+                                final now = epg.getCurrentProgram(c.epgId);
                                 return TvMenuTile(
+                                  subtitle: now == null
+                                      ? null
+                                      : '${_hhmm(now.start)}–${_hhmm(now.stop)}  ${now.title}',
                                   focusNode: i == 0 ? _firstResultFocus : null,
                                   leading: (c.logoUrl != null &&
                                           c.logoUrl!.isNotEmpty)
