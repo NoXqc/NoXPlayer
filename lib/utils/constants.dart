@@ -207,15 +207,17 @@ class AppConstants {
     // StorageService.getPaletteId's fallback and AppPreferences._paletteById's
     // orElse, both of which fall back to cyberpunkPalettes.first.
     //
-    // primary/secondary here are the same purple/magenta as the
-    // Neon Purple entry below — not shown as a colored gradient/fill
-    // anywhere (see CyberpunkPalette.isMinimal), just kept as the
-    // wordmark's own accent so it isn't plain white too.
+    // primary/secondary here are VesperTV's brand gold/amber (this used to
+    // be the Neon Purple pair, from before the rename) — not shown as a
+    // colored gradient/fill anywhere (see CyberpunkPalette.isMinimal), just
+    // kept as the wordmark's own accent (and the small section-header
+    // accent bars) so the default theme reads as the brand rather than
+    // plain white.
     CyberpunkPalette(
       id: 'minimal',
       label: 'Platinum',
-      primary: Color(0xFF7C3AED),
-      secondary: Color(0xFFE91E8C),
+      primary: Color(0xFFF0C75E),
+      secondary: Color(0xFFC9781A),
       isMinimal: true,
     ),
     CyberpunkPalette(

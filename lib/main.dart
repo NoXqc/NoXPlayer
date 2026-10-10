@@ -644,7 +644,7 @@ class _NoxIptvAppState extends State<NoxIptvApp>
                         boxShadow: [
                           BoxShadow(
                             color:
-                                const Color(0xFFE91E8C).withValues(alpha: glow),
+                                const Color(0xFFF0C75E).withValues(alpha: glow),
                             blurRadius: 40,
                             spreadRadius: 6,
                           ),
@@ -666,7 +666,7 @@ class _NoxIptvAppState extends State<NoxIptvApp>
                     ShaderMask(
                       blendMode: BlendMode.srcIn,
                       shaderCallback: (bounds) => const LinearGradient(
-                        colors: [Color(0xFF7C3AED), Color(0xFFE91E8C)],
+                        colors: [Color(0xFFF0C75E), Color(0xFFC9781A)],
                       ).createShader(bounds),
                       child: const Text(
                         AppConstants.appName,
