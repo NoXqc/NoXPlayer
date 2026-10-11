@@ -18,7 +18,7 @@ tracking, bring-your-own playlist (the app ships no channels).
 - **Site:** https://vespertv.app (GitHub Pages from `docs/`, HTTPS enforced). DNS is at Cloudflare,
   4 `A` records (185.199.108-111.153) on the apex + `www` CNAME → `noxqc.github.io`, all
   **DNS only / grey cloud** (an orange proxy cloud breaks Pages' certificate issuance). `docs/CNAME`
-  = `vespertv.app`. The old `noxplayertv.com` site is gone.
+  = `vespertv.app`. The old `noxplayertv.com` *marketing site* is gone, but **keep that domain registered** - it is still used by other infrastructure (details are in a private notes file on the owner's PC, outside the repo).
 - **Community:** Discord https://discord.gg/DDeGDHvFY. **Downloader (AFTVnews) code: `1760256`**.
 - **Package / identifiers deliberately NOT renamed** (renaming would orphan every install's data and
   break in-place updates): Android `applicationId` `com.nox.nox_iptv`, Dart package `nox_iptv`,
