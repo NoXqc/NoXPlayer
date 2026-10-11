@@ -158,10 +158,12 @@ Only release when the owner asks ("update the latest", "cut it", "fully release"
   line-ending-only diffs the icon tool causes (e.g. `ios/Runner.xcodeproj/project.pbxproj`).
   **Android icon/banner resource names were changed on purpose** (3.53.1) to
   `@mipmap/vespertv_launcher` and `@drawable/vespertv_banner` (pubspec `flutter_launcher_icons.android:
-  "vespertv_launcher"`): the Fire TV launcher kept showing the old purple "N" tile after updating
-  to the new artwork, even after clearing caches and restarting, because it caches the icon per
-  resource. A new resource name forces a fresh load. If the artwork changes again, rename again
-  (e.g. `vespertv_launcher2`) rather than only replacing the PNGs.
+  "vespertv_launcher"`) as an attempt to make the Fire TV home screen drop the old purple "N" tile.
+  **It did not work:** on the owner's Fire Stick the tile stays purple after updating to 3.53.1,
+  clearing caches and restarting, while phones show the new gold V. The APK is correct (verified by
+  extracting the icon/banner); Fire OS keeps the icon it captured at first install. Only an
+  uninstall + reinstall refreshes it (which wipes that device's playlists/settings) — known,
+  unfixable from the app. Leave the new resource names as they are.
 - **Palettes:** the default fresh-install theme is **Platinum** (`id: 'minimal'`, first entry of
   `cyberpunkPalettes`); its `primary`/`secondary` only drive the wordmark and small accent bars and
   are now brand gold `F0C75E`/`C9781A` (they used to be the old purple/magenta — that was the bug
@@ -257,6 +259,7 @@ rejected (HDR + Android-TV hardware-decode risk).
 | Windows: last channel not resumed at launch | nothing recorded it | `DesktopPlayerScreen` records `setLastChannelId`; `_autoResumeLastChannel` pushes it |
 | Windows build `LNK1104` | exe still running | kill `nox_iptv` first |
 | Rebranded APK still purple (default theme) | Platinum's accent pair + splash were hardcoded purple/magenta | gold values in `constants.dart` and `main.dart` splash |
+| Fire TV home tile still shows the old purple "N" after updating (phones show the gold V) | Fire OS keeps the launcher icon captured at first install | **not fixable in-app**; renaming the icon resources (3.53.1) did not help; only uninstall + reinstall refreshes it |
 | Updater never offers a lower-numbered release (1.0.0 < 3.x) | strict "newer" compare | `_isDifferent` (§6.7) |
 | `gh release edit --notes` referenced "notes below" and wiped them | `--notes` replaces body | write self-contained notes with `--notes-file` |
 | Release asset update didn't change what `/latest` serves | tag left on old commit | repoint tag to HEAD (§6.4) |
